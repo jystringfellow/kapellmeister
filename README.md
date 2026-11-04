@@ -15,7 +15,7 @@ km config [-worktree DIR]                         # show the effective settings 
 Seats default to claude plans, codex implements, copilot reviews, claude gates and classifies.
 Override any seat with `-planner`, `-implementer`, `-reviewer`, `-gate` or `-classifier`, as an
 agent (`claude`, `codex`, `copilot`, `agy`) or `provider:profile[:model]`. Append `@small`,
-`@medium` or `@large` to pin a seat’s tier, for example `-reviewer claude@large`. A seat with an
+`@medium` or `@large` to pin a seat's tier, for example `-reviewer claude@large`. A seat with an
 explicit model always runs that model and cannot also use `@tier`.
 
 ## Configuration
@@ -61,7 +61,7 @@ large = { model = "claude-sonnet-5.5" }
 
 Select a named ensemble for a run with `km run -ensemble thorough` alongside the usual task and
 repository flags. Its seats overlay `[seats]`, then built-in defaults for omitted roles. Without
-`-ensemble`, the run uses `[seats]` as usual. Role flags override the selected ensemble’s seats;
+`-ensemble`, the run uses `[seats]` as usual. Role flags override the selected ensemble's seats;
 unknown ensemble names are an error listing the defined names. `km config` lists each ensemble
 and its seats. Ensembles belong only in `~/.kapellmeister/config.toml`, because they name agents
 that depend on your accounts.
@@ -111,9 +111,11 @@ defaults are:
 | gate | medium | medium–large |
 | classify | small | small |
 
-A pin such as `claude@large` or `codex:km-codex@small` replaces the step’s default tier and sizing
-does not move it. The repository’s `[steps.<step>]` min and max still clamp it: a gate pinned to
+A pin such as `claude@large` or `codex:km-codex@small` replaces the step's default tier and sizing
+does not move it. The repository's `[steps.<step>]` min and max still clamp it: a gate pinned to
 small runs at medium with the default gate floor. Pins work in `[seats]`, ensembles and role flags.
+A pin needs a `[tiers.<provider>]` table (built in or configured) for the seat's provider;
+`km run` and `km rig` refuse to start otherwise.
 An explicit model (`provider:profile:model`) cannot also carry `@tier`.
 
 Models must be IDs (CAO rejects display names). Effort applies to Claude Code and Codex only,

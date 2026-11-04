@@ -193,6 +193,47 @@ func runSeats(s loop.Settings, ensemble string, roles map[string]*string) (loop.
 	return s, seats, err
 }
 
+func checkPins(policy loop.Policy, specs map[string]string, seats loop.Seats) error {
+	resolved := map[string]loop.Seat{
+		"planner": seats.Planner, "implementer": seats.Implementer, "reviewer": seats.Reviewer,
+		"gate": seats.Gate, "classifier": seats.Classifier,
+	}
+	for _, role := range loop.SeatRoles {
+		seat := resolved[role]
+		if seat.Tier != "" && len(policy.Tiers[seat.Provider]) == 0 {
+			return fmt.Errorf("%s: seat %q: no [tiers.%s] to pin a tier against", role, specs[role], seat.Provider)
+		}
+	}
+	return nil
+}
+
+func (c common) baseSettings() (loop.Settings, error) {
+	paths, err := exec.Command("git", "-C", *c.repo, "ls-tree", "--name-only", *c.base, "--", loop.ConfigFile).Output()
+	if err != nil {
+		return loop.Settings{}, fmt.Errorf("reading config at %s: %w", *c.base, err)
+	}
+	if len(paths) == 0 {
+		return c.settings("")
+	}
+	data, err := exec.Command("git", "-C", *c.repo, "show", *c.base+":"+loop.ConfigFile).Output()
+	if err != nil {
+		return loop.Settings{}, fmt.Errorf("reading config at %s: %w", *c.base, err)
+	}
+	dir, err := os.MkdirTemp("", "km-config-")
+	if err != nil {
+		return loop.Settings{}, err
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, loop.ConfigFile)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return loop.Settings{}, err
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return loop.Settings{}, err
+	}
+	return c.settings(dir)
+}
+
 func runCommand(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	c := commonFlags(fs)
@@ -221,6 +262,17 @@ func runCommand(args []string) error {
 		if err := fetchRepo(*c.repo); err != nil {
 			return err
 		}
+		s, err := c.baseSettings()
+		if err != nil {
+			return err
+		}
+		s, seats, err := runSeats(s, *ensemble, roles)
+		if err != nil {
+			return err
+		}
+		if err := checkPins(s.Policy, seatSpecs(s, roles), seats); err != nil {
+			return err
+		}
 		if wt, err = addWorktree(*c.repo, *c.base); err != nil {
 			return err
 		}
@@ -234,6 +286,9 @@ func runCommand(args []string) error {
 	}
 	s, seats, err := runSeats(s, *ensemble, roles)
 	if err != nil {
+		return err
+	}
+	if err := checkPins(s.Policy, seatSpecs(s, roles), seats); err != nil {
 		return err
 	}
 	verifyCmd, checkCmd, err := loop.ResolveHooks(wt, *c.verify)
@@ -295,7 +350,8 @@ func rigCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	cls, err := resolveSeat(seatSpecs(userSettings, classifier)["classifier"])
+	classifierSpec := seatSpecs(userSettings, classifier)["classifier"]
+	cls, err := resolveSeat(classifierSpec)
 	if err != nil {
 		return err
 	}
@@ -306,10 +362,17 @@ func rigCommand(args []string) error {
 
 	rigID := newRunID()
 	rigDir := filepath.Join(loop.StateDir(), "rigs", rigID)
-	if err := os.MkdirAll(rigDir, 0o755); err != nil {
+	if err := fetchRepo(*c.repo); err != nil {
 		return err
 	}
-	if err := fetchRepo(*c.repo); err != nil {
+	baseSettings, err := c.baseSettings()
+	if err != nil {
+		return err
+	}
+	if err := checkPins(baseSettings.Policy, map[string]string{"classifier": classifierSpec}, loop.Seats{Classifier: cls}); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(rigDir, 0o755); err != nil {
 		return err
 	}
 	worktrees := make([]string, len(pods))
