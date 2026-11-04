@@ -1,0 +1,16 @@
+---
+name: oko-spike-claude
+description: oko spike seat on Claude Code Haiku 5.5, low effort
+provider: claude_code
+model: claude-haiku-5-5
+role: developer
+claudeConfig:
+  effort: low
+mcpServers:
+  cao-mcp-server:
+    type: stdio
+    command: cao-mcp-server
+    args: []
+---
+
+You are a seat in an oko spike run. Follow the task exactly and keep replies short.
