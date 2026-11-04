@@ -23,3 +23,9 @@ CAO refuses to run on native Windows, so kapellmeister supports Windows only und
 
 No spec documents. Behavior lives in tests, reasons in commits and PRs, and decisions that span
 changes here. Checked-in specs became a second source of truth that drifted from the code.
+
+## 2026-11-04: Ensembles live only in ~/.kapellmeister
+
+Ensembles name agents, and agents depend on the user's accounts, the same reason `[seats]` is
+machine-only. The repository config rejects `[ensembles]`; user config accepts it. Evidence:
+`TestEnsemblesInTheRepositoryConfigAreRejected` and `TestANamedEnsembleLoadsFromTheUserConfig`.

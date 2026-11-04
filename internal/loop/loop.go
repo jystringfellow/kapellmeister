@@ -21,14 +21,34 @@ type Seat struct {
 	Provider string `json:"provider"`
 	Profile  string `json:"profile"`
 	Model    string `json:"model,omitempty"`
+	Tier     string `json:"tier,omitempty"`
+}
+
+func SplitTier(spec string) (string, string, error) {
+	i := strings.LastIndex(spec, "@")
+	if i < 0 {
+		return spec, "", nil
+	}
+	base, tier := spec[:i], spec[i+1:]
+	if tierIndex(tier) < 0 {
+		return "", "", fmt.Errorf("seat %q: unknown tier %q (want %s)", spec, tier, strings.Join(TierNames, ", "))
+	}
+	if parts := strings.SplitN(base, ":", 3); len(parts) == 3 && parts[2] != "" {
+		return "", "", fmt.Errorf("seat %q: an explicit model is never re-tiered; drop @%s or the model", spec, tier)
+	}
+	return base, tier, nil
 }
 
 func ParseSeat(spec string) (Seat, error) {
-	parts := strings.SplitN(spec, ":", 3)
+	base, tier, err := SplitTier(spec)
+	if err != nil {
+		return Seat{}, err
+	}
+	parts := strings.SplitN(base, ":", 3)
 	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
 		return Seat{}, fmt.Errorf("seat %q: want provider:profile[:model]", spec)
 	}
-	s := Seat{Provider: parts[0], Profile: parts[1]}
+	s := Seat{Provider: parts[0], Profile: parts[1], Tier: tier}
 	if len(parts) == 3 {
 		s.Model = parts[2]
 	}

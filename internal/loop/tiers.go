@@ -57,6 +57,7 @@ type Assignment struct {
 const (
 	SourceExplicit  = "explicit"
 	SourceDefault   = "default"
+	SourcePinned    = "pinned"
 	SourceSized     = "sized"
 	SourceEscalated = "escalated"
 )
@@ -240,7 +241,9 @@ func (p *Policy) Seat(stepKey string, seat Seat, want string, bump int) (Seat, A
 	}
 	source := SourceDefault
 	tier := step.Tier
-	if want != "" {
+	if seat.Tier != "" {
+		tier, source = seat.Tier, SourcePinned
+	} else if want != "" {
 		tier, source = want, SourceSized
 	}
 	if bump > 0 {
@@ -251,6 +254,7 @@ func (p *Policy) Seat(stepKey string, seat Seat, want string, bump int) (Seat, A
 		tier = shifted
 	}
 	tier = clampTier(tier, step.Min, step.Max)
+	seat.Tier = ""
 	resolved, effort := p.At(seat, tier)
 	return resolved, Assignment{Tier: tier, Effort: effort, Source: source}
 }

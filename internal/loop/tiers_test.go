@@ -364,3 +364,142 @@ func TestEffortProfilesAreGeneratedOnlyForKapellmeistersOwnBases(t *testing.T) {
 		t.Fatalf("custom base should name the profile to install, got %v", err)
 	}
 }
+
+func TestASeatSpecCanPinATier(t *testing.T) {
+	for _, tier := range TierNames {
+		spec := "codex:km-codex@" + tier
+		seat, err := ParseSeat(spec)
+		if err != nil || seat != (Seat{Provider: "codex", Profile: "km-codex", Tier: tier}) {
+			t.Fatalf("%s: %+v, %v", spec, seat, err)
+		}
+	}
+}
+
+func TestAnExplicitModelCannotAlsoPinATier(t *testing.T) {
+	for _, spec := range []string{"codex:km-codex:gpt-6-astra@large", "codex:km-codex:vendor/model:version@small"} {
+		if _, err := ParseSeat(spec); err == nil || !strings.Contains(err.Error(), "explicit model") || !strings.Contains(err.Error(), spec) {
+			t.Fatalf("%s: %v", spec, err)
+		}
+	}
+}
+
+func TestAnUnknownPinnedTierNamesTheValidTiers(t *testing.T) {
+	for _, spec := range []string{"codex:km-codex@huge", "codex:km-codex@", "codex:km-codex@Large"} {
+		if _, err := ParseSeat(spec); err == nil || !strings.Contains(err.Error(), "small, medium, large") || !strings.Contains(err.Error(), spec) {
+			t.Fatalf("%s: %v", spec, err)
+		}
+	}
+}
+
+func TestAPinnedTierReplacesTheStepDefaultAndSizingDoesNotMoveIt(t *testing.T) {
+	p := defaultPolicy()
+	pinned := claudeSeat
+	pinned.Tier = "large"
+	for _, want := range []string{"", "small", "medium", "large"} {
+		seat, a := p.Seat("implement", pinned, want, 0)
+		if seat != (Seat{Provider: "claude_code", Profile: "km-claude-xhigh", Model: "claude-opus-5-5"}) || a != (Assignment{Tier: "large", Effort: "xhigh", Source: "pinned"}) {
+			t.Fatalf("size %q: %+v %+v", want, seat, a)
+		}
+	}
+	eng, fake, _ := tieredEngine(t, SizingOn)
+	eng.Config.Seats.Reviewer = pinned
+	planSays(fake, "Size: small — one fix")
+	run(t, eng)
+	if s := stepNamed(t, fake, "review", 1); s.Seat.Model != "claude-opus-5-5" || s.Assignment.Source != "pinned" {
+		t.Fatalf("review = %+v", s)
+	}
+	if s := stepNamed(t, fake, "implement", 1); s.Seat.Model != "gpt-6-luna" || s.Assignment.Source != SourceSized {
+		t.Fatalf("implement = %+v", s)
+	}
+}
+
+func TestAPinnedTierIsClampedToTheStepsBounds(t *testing.T) {
+	repo := t.TempDir()
+	writeConfig(t, repo, "[steps.implement]\nmin = \"medium\"\n")
+	s, err := LoadSettings(t.TempDir(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ step, pin, want string }{
+		{"gate", "small", "medium"},
+		{"classify", "large", "small"},
+		{"implement", "small", "medium"},
+	} {
+		pinned := claudeSeat
+		pinned.Tier = tc.pin
+		seat, a := s.Policy.Seat(tc.step, pinned, "", 0)
+		if a.Tier != tc.want || a.Source != "pinned" || seat.Tier != "" {
+			t.Fatalf("%s pinned %s: %+v %+v", tc.step, tc.pin, seat, a)
+		}
+	}
+}
+
+func TestAPinnedSeatIsRecordedWithTierSourcePinned(t *testing.T) {
+	eng, _, records := tieredEngine(t, SizingOff)
+	eng.Config.Seats.Gate.Tier = "large"
+	var progress bytes.Buffer
+	eng.Progress = &progress
+	run(t, eng)
+	got := recordsOf(t, records, "gate")
+	if len(got) != 1 || got[0].TierSource != "pinned" || got[0].Tier != "large" || got[0].Seat.Tier != "" {
+		t.Fatalf("gate records = %+v", got)
+	}
+	if !strings.Contains(progress.String(), "(large, pinned)") {
+		t.Fatalf("progress lacks pinned source:\n%s", progress.String())
+	}
+}
+
+func TestAPinnedImplementerEscalatesWithinItsBounds(t *testing.T) {
+	eng, fake, records := tieredEngine(t, SizingOff)
+	eng.Config.Seats.Implementer.Tier = "small"
+	eng.Config.Policy.Steps["implement"] = StepPolicy{Tier: "medium", Min: "small", Max: "medium"}
+	eng.Config.MaxRounds = 5
+	fake.verdicts["review"] = []string{"CHANGES", "CHANGES", "CHANGES", "CHANGES"}
+	run(t, eng)
+	first, second, third := stepNamed(t, fake, "implement", 1), stepNamed(t, fake, "implement", 2), stepNamed(t, fake, "implement", 3)
+	if first.Seat.Model != "gpt-6-luna" || first.Assignment.Source != "pinned" || second.Seat != first.Seat || second.ReuseTerminal == "" {
+		t.Fatalf("first two rounds = %+v %+v", first, second)
+	}
+	if third.ReuseTerminal != "" || third.Seat.Model != "gpt-6.1-sol" || third.Assignment.Source != SourceEscalated {
+		t.Fatalf("third round = %+v", third)
+	}
+	if !strings.Contains(strings.Join(fake.released, " "), second.ReuseTerminal) {
+		t.Fatalf("old terminal not released: %v", fake.released)
+	}
+	if fifth := stepNamed(t, fake, "implement", 5); fifth.Seat != third.Seat || fifth.ReuseTerminal == "" {
+		t.Fatalf("escalation exceeded the maximum: %+v", fifth)
+	}
+	esc := recordsOf(t, records, "escalate")
+	if len(esc) != 1 || esc[0].Round != 2 || esc[0].Tier != "medium" || !strings.Contains(esc[0].Detail, "small → medium") {
+		t.Fatalf("escalate records = %+v", esc)
+	}
+}
+
+func TestAnEnsembleWithoutEscalationKeepsThePinnedImplementerOnItsTier(t *testing.T) {
+	home := writeUserConfig(t, "[ensembles.steady]\nimplementer = \"codex:km-codex@small\"\nescalate = false\n")
+	s, err := LoadSettings(home, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err = s.WithEnsemble("steady")
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng, fake, records := tieredEngine(t, SizingOff)
+	eng.Config.Policy = &s.Policy
+	eng.Config.Seats.Implementer, err = ParseSeat(s.Seats["implementer"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake.verdicts["review"] = []string{"CHANGES", "CHANGES"}
+	run(t, eng)
+	for round := 1; round <= 3; round++ {
+		s := stepNamed(t, fake, "implement", round)
+		if s.Seat.Model != "gpt-6-luna" || s.Assignment.Source != "pinned" || (round > 1 && s.ReuseTerminal == "") {
+			t.Fatalf("implement[%d] = %+v", round, s)
+		}
+	}
+	if got := recordsOf(t, records, "escalate"); len(got) != 0 {
+		t.Fatalf("escalation disabled, got %+v", got)
+	}
+}
