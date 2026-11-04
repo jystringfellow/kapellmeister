@@ -3,11 +3,11 @@ package rig
 import (
 	"testing"
 
-	"github.com/jystringfellow/oko/internal/loop"
+	"github.com/jystringfellow/kapellmeister/internal/loop"
 )
 
 func TestRotationSeatsEveryAgentInEveryRoleOnceAndNeverTwiceInAPod(t *testing.T) {
-	pods, err := Rotation(DefaultAgents, loop.Seat{Provider: "claude_code", Profile: "oko-claude"})
+	pods, err := Rotation(DefaultAgents, loop.Seat{Provider: "claude_code", Profile: "km-claude"})
 	if err != nil {
 		t.Fatal(err)
 	}

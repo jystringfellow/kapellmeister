@@ -160,7 +160,7 @@ type Engine struct {
 var verdictRE = regexp.MustCompile(`\b(APPROVE|CHANGES|UNCLEAR)\b`)
 
 func RunDirRel(runID string) string {
-	return filepath.Join(".oko", "runs", runID)
+	return filepath.Join(".kapellmeister", "runs", runID)
 }
 
 func (e *Engine) Run(ctx context.Context) (Result, error) {
@@ -410,7 +410,7 @@ func TerminalLabel(runID, stepName string) string {
 	} else if strings.HasPrefix(stepName, "classify-") {
 		role = "classifier"
 	}
-	return "oko " + runID + " · " + role
+	return "km " + runID + " · " + role
 }
 
 var errNoReply = errors.New("no reply file")
@@ -590,7 +590,7 @@ func (e *Engine) progress(format string, args ...any) {
 }
 
 func PrepareRunDir(worktree, runID string) error {
-	runs := filepath.Join(worktree, ".oko", "runs")
+	runs := filepath.Join(worktree, ".kapellmeister", "runs")
 	if err := os.MkdirAll(filepath.Join(runs, runID), 0o755); err != nil {
 		return err
 	}
@@ -606,7 +606,7 @@ func Retrying(v Verifier, retries int) Verifier {
 				return r, err
 			}
 			if attempt > 1 {
-				fmt.Fprintf(&out, "\n--- oko: attempt %d ---\n", attempt)
+				fmt.Fprintf(&out, "\n--- km: attempt %d ---\n", attempt)
 			}
 			out.WriteString(r.Output)
 			if r.ExitCode == 0 || attempt > retries {

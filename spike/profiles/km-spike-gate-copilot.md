@@ -1,8 +1,8 @@
 ---
-name: oko-spike-gate-agy
-description: oko spike read-only gate on Antigravity Flash
-provider: antigravity_cli
-model: "Gemini 3.8 Flash (Low)"
+name: km-spike-gate-copilot
+description: kapellmeister spike read-only gate on Copilot CLI Haiku 5.5
+provider: copilot_cli
+model: claude-haiku-5.5
 role: reviewer
 mcpServers:
   cao-mcp-server:

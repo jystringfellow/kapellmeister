@@ -23,12 +23,12 @@ type Seat struct {
 }
 
 var seats = []Seat{
-	{"claude", "claude_code", "oko-spike-claude", "oko-spike-gate-claude"},
-	{"codex", "codex", "oko-spike-codex", "oko-spike-gate-codex"},
-	{"codex-profile", "codex", "oko-spike-codex", "oko-spike-gate-codex-profile"},
-	{"copilot-auto", "copilot_cli", "oko-spike-copilot-auto", ""},
-	{"copilot-haiku", "copilot_cli", "oko-spike-copilot-haiku", "oko-spike-gate-copilot"},
-	{"agy", "antigravity_cli", "oko-spike-agy", "oko-spike-gate-agy"},
+	{"claude", "claude_code", "km-spike-claude", "km-spike-gate-claude"},
+	{"codex", "codex", "km-spike-codex", "km-spike-gate-codex"},
+	{"codex-profile", "codex", "km-spike-codex", "km-spike-gate-codex-profile"},
+	{"copilot-auto", "copilot_cli", "km-spike-copilot-auto", ""},
+	{"copilot-haiku", "copilot_cli", "km-spike-copilot-haiku", "km-spike-gate-copilot"},
+	{"agy", "antigravity_cli", "km-spike-agy", "km-spike-gate-agy"},
 }
 
 const classifierSeat = "claude"
@@ -75,7 +75,7 @@ type Record struct {
 
 var (
 	baseURL  = envOr("CAO_API_BASE_URL", "http://127.0.0.1:9889")
-	stateDir = envOr("OKO_SPIKE_STATE", "results")
+	stateDir = envOr("KAPELLMEISTER_SPIKE_STATE", "results")
 )
 
 func main() {
@@ -181,7 +181,7 @@ func echoProbe(fx *Fixture, seat Seat, timeout float64) {
 	id := stepID("echo", seat.Name, "a")
 	payload := echoPayload()
 	prompt := fmt.Sprintf("Do two things with the text between the BEGIN and END markers below, copying it exactly, character for character, without the markers:\n"+
-		"1. Write it to the file .oko/replies/%s.md in the current directory.\n"+
+		"1. Write it to the file .kapellmeister/replies/%s.md in the current directory.\n"+
 		"2. Then reply with exactly that text as your entire final message, with nothing before or after it.\n\nBEGIN\n%s\nEND", id, payload)
 	rec := runStep("echo", seat.Name, "a", fx.Worktrees["a"], id, StepRequest{Provider: seat.Provider, Agent: seat.Profile, Prompt: prompt, Timeout: timeout})
 	rec.Findings = map[string]any{"capture_vs_truth": compareReply(rec.LastMessage, payload)}
@@ -252,7 +252,7 @@ func gateProbe(fx *Fixture, seat Seat, timeout float64) {
 	rec.Findings = map[string]any{"worktree_modified": strings.TrimSpace(status) != "", "git_status": strings.TrimSpace(status)}
 	save(rec)
 	_, _ = git(wt, "restore", "--staged", "--worktree", ".")
-	_, _ = git(wt, "clean", "-fdq", "--exclude=.oko")
+	_, _ = git(wt, "clean", "-fdq", "--exclude=.kapellmeister")
 }
 
 func precedenceProbes(fx *Fixture, timeout float64) {
@@ -261,9 +261,9 @@ func precedenceProbes(fx *Fixture, timeout float64) {
 		name string
 		req  StepRequest
 	}{
-		{"profile-claude_step-codex", StepRequest{Provider: "codex", Agent: "oko-spike-claude", Prompt: prompt, Timeout: timeout}},
-		{"profile-bare_step-codex-model", StepRequest{Provider: "codex", Agent: "oko-spike-bare", Model: "gpt-6-luna", Prompt: prompt, Timeout: timeout}},
-		{"profile-claude_step-model-override", StepRequest{Provider: "claude_code", Agent: "oko-spike-claude", Model: "claude-sonnet-5-5", Prompt: prompt, Timeout: timeout}},
+		{"profile-claude_step-codex", StepRequest{Provider: "codex", Agent: "km-spike-claude", Prompt: prompt, Timeout: timeout}},
+		{"profile-bare_step-codex-model", StepRequest{Provider: "codex", Agent: "km-spike-bare", Model: "gpt-6-luna", Prompt: prompt, Timeout: timeout}},
+		{"profile-claude_step-model-override", StepRequest{Provider: "claude_code", Agent: "km-spike-claude", Model: "claude-sonnet-5-5", Prompt: prompt, Timeout: timeout}},
 	}
 	for _, c := range cases {
 		rec := runStep("precedence", c.name, "a", fx.Worktrees["a"], "", c.req)
@@ -292,7 +292,7 @@ func runStep(probe, seat, repo, wt, replyID string, req StepRequest) Record {
 	}
 	_ = call(http.MethodDelete, "/terminals/"+resp.TerminalID, nil, nil, 30*time.Second)
 	if replyID != "" {
-		path := filepath.Join(wt, ".oko", "replies", replyID+".md")
+		path := filepath.Join(wt, ".kapellmeister", "replies", replyID+".md")
 		if data, err := os.ReadFile(path); err == nil {
 			s := string(data)
 			rec.ReplyFile = &s

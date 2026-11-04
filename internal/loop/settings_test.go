@@ -41,7 +41,7 @@ rounds = 5
 
 [seats]
 implementer = "claude"
-gate = "codex:oko-codex:gpt-6-astra"
+gate = "codex:km-codex:gpt-6-astra"
 
 [rig]
 agents = ["claude", "codex", "copilot", "claude"]
@@ -80,7 +80,7 @@ mode = "shadow"
 	if s.Rounds != 2 {
 		t.Fatalf("the repo's rounds should win, got %d", s.Rounds)
 	}
-	if s.Seats["implementer"] != "claude" || s.Seats["gate"] != "codex:oko-codex:gpt-6-astra" || s.Seats["planner"] != "claude" {
+	if s.Seats["implementer"] != "claude" || s.Seats["gate"] != "codex:km-codex:gpt-6-astra" || s.Seats["planner"] != "claude" {
 		t.Fatalf("seats = %v", s.Seats)
 	}
 	if strings.Join(s.RigAgents, ",") != "claude,codex,copilot,claude" {
@@ -122,7 +122,7 @@ func TestEnvironmentCAOURLWinsOverTheUserConfig(t *testing.T) {
 }
 
 func TestSectionsInTheWrongLayerAreRejectedWithWhereTheyBelong(t *testing.T) {
-	if _, err := LoadSettings(writeUserConfig(t, "[test]\nverify = \"make\"\n"), ""); err == nil || !strings.Contains(err.Error(), "[test] belongs in the repository's .oko/config.toml") {
+	if _, err := LoadSettings(writeUserConfig(t, "[test]\nverify = \"make\"\n"), ""); err == nil || !strings.Contains(err.Error(), "[test] belongs in the repository's .kapellmeister/config.toml") {
 		t.Fatalf("user [test]: %v", err)
 	}
 	for _, section := range []string{"[seats]\nimplementer = \"claude\"\n", "[cao]\nurl = \"x\"\n", "[rig]\nagents = [\"claude\"]\n"} {
@@ -152,17 +152,17 @@ func TestInvalidMachineSettingsNameTheFileAndKey(t *testing.T) {
 }
 
 func TestHomeAndStateFollowTheirEnvironmentOverrides(t *testing.T) {
-	t.Setenv(HomeEnv, "/tmp/oko-home")
+	t.Setenv(HomeEnv, "/tmp/km-home")
 	t.Setenv(StateEnv, "")
-	if Home() != "/tmp/oko-home" || StateDir() != "/tmp/oko-home/state" {
+	if Home() != "/tmp/km-home" || StateDir() != "/tmp/km-home/state" {
 		t.Fatalf("home %q state %q", Home(), StateDir())
 	}
-	t.Setenv(StateEnv, "/tmp/oko-state")
-	if StateDir() != "/tmp/oko-state" {
+	t.Setenv(StateEnv, "/tmp/km-state")
+	if StateDir() != "/tmp/km-state" {
 		t.Fatalf("state %q", StateDir())
 	}
 	t.Setenv(HomeEnv, "")
-	if home, _ := os.UserHomeDir(); Home() != filepath.Join(home, ".oko") {
+	if home, _ := os.UserHomeDir(); Home() != filepath.Join(home, ".kapellmeister") {
 		t.Fatalf("home %q", Home())
 	}
 }

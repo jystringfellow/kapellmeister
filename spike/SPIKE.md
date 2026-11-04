@@ -1,4 +1,4 @@
-# oko spike: CAO seat behaviour
+# kapellmeister spike: CAO seat behaviour
 
 Run 2026-11-03 against CAO 2.5.4 (`main` at `ab9bbaab`), tmux backend. Raw records are in
 `results/results.jsonl`; `go run . report` prints them.
@@ -60,7 +60,7 @@ Seats: Claude Code `claude-haiku-5-5` (effort low), Codex `gpt-6-luna` (effort l
     step state and attempts; the `emit_output` payload did not appear in either, and
     `workflow_run_event` had no rows for this script run. CAO does record `terminals`
     (model, `model_honored`), `workflow_run` (inputs, plan, git baseline) and `decision_records`.
-    oko must record its own rounds, verdicts, durations and outcomes.
+    kapellmeister must record its own rounds, verdicts, durations and outcomes.
 14. **Codex's `codexConfig.sandbox_mode: read-only` does not hold.** CAO launches Codex with
     `--yolo`, and the gate seat edited `clamp.go`. A `codexProfile` pointing at a
     `$CODEX_HOME/<name>.config.toml` with `sandbox_mode = "read-only"` drops `--yolo`, and that gate
@@ -70,7 +70,7 @@ Seats: Claude Code `claude-haiku-5-5` (effort low), Codex `gpt-6-luna` (effort l
     The Claude profile run with `provider: codex` launched Codex on `claude-haiku-5-5`, and Codex
     replied "The 'claude-haiku-5-5' model is not supported when using Codex with a ChatGPT account."
     CAO still recorded the step as `completed` with `model_honored: true`. A bare profile with
-    `provider: codex` and `model: gpt-6-luna` worked. So oko must send provider and model together,
+    `provider: codex` and `model: gpt-6-luna` worked. So kapellmeister must send provider and model together,
     and cannot trust `completed` or `model_honored` as success; it needs its own check of the reply
     file.
 16. **Marketplace plugins re-trigger Codex hook review.** Codex keys hook trust to a content hash in
@@ -81,9 +81,9 @@ Seats: Claude Code `claude-haiku-5-5` (effort low), Codex `gpt-6-luna` (effort l
 17. **Seats end their turn while background work is still running.** Claude Code ("1 shell still
     running") and agy (a running `go test` plus a 30 s timer) both backgrounded the full suite and
     went idle, so CAO reported `completed` before the reply file existed. A nudge sent straight away
-    recovered Claude but returned from agy in 4 s, with agy still busy. oko now waits up to
+    recovered Claude but returned from agy in 4 s, with agy still busy. kapellmeister now waits up to
     `-reply-grace` (15 min) for the reply file before nudging, and tells implementers to run
-    targeted tests in the foreground and leave the full suite to oko's verify.
+    targeted tests in the foreground and leave the full suite to kapellmeister's verify.
 18. **The full workgraph suite flakes under load.** With four pods verifying back to back, a timing
     fact (`TestGitHubPRWatchPushHintWakesThePoller`) failed once and passed on retry. The baseline
     and one retry tell real failures from flakes; seats were told about the retry and correctly
@@ -106,26 +106,26 @@ Seats: Claude Code `claude-haiku-5-5` (effort low), Codex `gpt-6-luna` (effort l
 - **Seats inherit the user's local CLI setup by default** (their hooks, plugins, skills and
   instructions), and each seat can opt into an isolated home instead (`CODEX_HOME`,
   `CLAUDE_CONFIG_DIR` and similar) per seat in config.
-- **oko runs a preflight per seat** that launches it once and fails fast on a trust or hook-review
+- **kapellmeister runs a preflight per seat** that launches it once and fails fast on a trust or hook-review
   screen, telling the user to trust it inside a CAO-launched session, rather than waiting out a
   step's timeout.
 - **Replies come from files, never from screen capture**; a missing or empty reply file fails the
   step whatever CAO's status says.
-- **Reviewer and gate seats stay writable; oko enforces read-only itself**: it snapshots the tree
+- **Reviewer and gate seats stay writable; kapellmeister enforces read-only itself**: it snapshots the tree
   (status, `git diff HEAD --binary`, HEAD) before and after each review and gate step and fails the
   run on any change. This works for every provider, so agy can sit as gate.
 - **A missing reply is awaited, then nudged once** in the same terminal before the step fails.
 - **Verify runs once as a baseline before planning** and retries a failure once; a failing baseline
   stops the run before any agent spends tokens.
-- **oko drives its own loop over run-step rather than a CAO workflow.** Script workflows need a
+- **kapellmeister drives its own loop over run-step rather than a CAO workflow.** Script workflows need a
   fresh `cao workflow approve` whenever their inputs change (every new worktree), cannot read
-  `workflow_return`, and record almost nothing about the run (findings 9, 10, 12, 13), so oko would
+  `workflow_return`, and record almost nothing about the run (findings 9, 10, 12, 13), so kapellmeister would
   still own replies, telemetry and approval-free runs. Rechecked 2026-11-04: CAO main has not
   changed workflows since.
 - **Seats run on tiers (small, medium, large), not fixed models.** Each provider maps a tier to a
-  model and, for Claude and Codex, an effort; oko installs `oko-<agent>-<effort>` profiles as
+  model and, for Claude and Codex, an effort; kapellmeister installs `km-<agent>-<effort>` profiles as
   needed and passes the model per step. Each step has a default tier and bounds (gate never below
-  medium, classify always small), all overridable in `.oko/config.toml`. A seat given an explicit
+  medium, classify always small), all overridable in `.kapellmeister/config.toml`. A seat given an explicit
   `provider:profile:model` is never re-tiered.
 - **A size decider picks the implement, review and gate tiers, shadow first.** The planner ends its
   plan with `Size: small|medium|large — reason`, or a configured command answers JSON on stdout,

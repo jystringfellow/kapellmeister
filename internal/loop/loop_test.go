@@ -347,8 +347,8 @@ func TestEveryStepIsRecorded(t *testing.T) {
 }
 
 func TestParseSeat(t *testing.T) {
-	s, err := ParseSeat("codex:oko-codex:gpt-6-luna")
-	if err != nil || s != (Seat{Provider: "codex", Profile: "oko-codex", Model: "gpt-6-luna"}) {
+	s, err := ParseSeat("codex:km-codex:gpt-6-luna")
+	if err != nil || s != (Seat{Provider: "codex", Profile: "km-codex", Model: "gpt-6-luna"}) {
 		t.Fatalf("got %+v, %v", s, err)
 	}
 	if _, err := ParseSeat("codex"); err == nil {
@@ -405,7 +405,7 @@ func TestRepoHooksSupplyVerifyAndCheckUnlessVerifyIsGiven(t *testing.T) {
 	if v, c, _ := ResolveHooks(dir, ""); v != "" || c != "" {
 		t.Fatalf("no hooks: got %q %q", v, c)
 	}
-	if err := os.MkdirAll(filepath.Join(dir, ".oko"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".kapellmeister"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	for _, hook := range []string{VerifyHook, CheckHook} {
@@ -413,7 +413,7 @@ func TestRepoHooksSupplyVerifyAndCheckUnlessVerifyIsGiven(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if v, c, _ := ResolveHooks(dir, ""); v != "./.oko/verify" || c != "./.oko/check" {
+	if v, c, _ := ResolveHooks(dir, ""); v != "./.kapellmeister/verify" || c != "./.kapellmeister/check" {
 		t.Fatalf("hooks: got %q %q", v, c)
 	}
 	if v, _, _ := ResolveHooks(dir, "make test"); v != "make test" {
@@ -429,12 +429,12 @@ func TestRepoHooksSupplyVerifyAndCheckUnlessVerifyIsGiven(t *testing.T) {
 
 func TestImplementerIsPointedAtTheCheckHookAndAwayFromTheFullSuite(t *testing.T) {
 	eng, fake, _ := newEngine(t, passing)
-	eng.Config.CheckCommand = "./.oko/check"
+	eng.Config.CheckCommand = "./.kapellmeister/check"
 	run(t, eng)
 	for _, s := range fake.steps {
 		switch s.Name {
 		case "implement":
-			if !strings.Contains(s.Prompt, "./.oko/check <tests or packages>") || !strings.Contains(s.Prompt, "Do not run the full suite") {
+			if !strings.Contains(s.Prompt, "./.kapellmeister/check <tests or packages>") || !strings.Contains(s.Prompt, "Do not run the full suite") {
 				t.Fatalf("implement prompt: %s", s.Prompt)
 			}
 		case "review", "gate":
@@ -447,7 +447,7 @@ func TestImplementerIsPointedAtTheCheckHookAndAwayFromTheFullSuite(t *testing.T)
 
 func TestRepoConfigCommandsWinOverHookScripts(t *testing.T) {
 	dir := newRepo(t)
-	if err := os.MkdirAll(filepath.Join(dir, ".oko"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".kapellmeister"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, VerifyHook), []byte("#!/bin/sh\n"), 0o755); err != nil {
@@ -471,7 +471,7 @@ func TestRepoConfigCommandsWinOverHookScripts(t *testing.T) {
 
 func TestRepoConfigWithUnknownKeysIsRejected(t *testing.T) {
 	dir := newRepo(t)
-	if err := os.MkdirAll(filepath.Join(dir, ".oko"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".kapellmeister"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, ConfigFile), []byte("[test]\nverfy = \"x\"\n"), 0o644); err != nil {
@@ -547,11 +547,11 @@ func TestTerminalsAreLabelledWithRunAndRole(t *testing.T) {
 		got[s.Name] = s.Label
 	}
 	want := map[string]string{
-		"plan":            "oko r1 · planner",
-		"implement":       "oko r1 · implementer",
-		"review":          "oko r1 · reviewer",
-		"gate":            "oko r1 · gate",
-		"classify-review": "oko r1 · classifier",
+		"plan":            "km r1 · planner",
+		"implement":       "km r1 · implementer",
+		"review":          "km r1 · reviewer",
+		"gate":            "km r1 · gate",
+		"classify-review": "km r1 · classifier",
 	}
 	for name, label := range want {
 		if got[name] != label {

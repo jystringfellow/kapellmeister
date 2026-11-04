@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jystringfellow/oko/internal/loop"
+	"github.com/jystringfellow/kapellmeister/internal/loop"
 )
 
 var Roles = []string{"planner", "implementer", "reviewer", "gate"}
@@ -15,10 +15,10 @@ type Agent struct {
 }
 
 var DefaultAgents = []Agent{
-	{"claude", loop.Seat{Provider: "claude_code", Profile: "oko-claude"}},
-	{"codex", loop.Seat{Provider: "codex", Profile: "oko-codex"}},
-	{"copilot", loop.Seat{Provider: "copilot_cli", Profile: "oko-copilot"}},
-	{"agy", loop.Seat{Provider: "antigravity_cli", Profile: "oko-agy"}},
+	{"claude", loop.Seat{Provider: "claude_code", Profile: "km-claude"}},
+	{"codex", loop.Seat{Provider: "codex", Profile: "km-codex"}},
+	{"copilot", loop.Seat{Provider: "copilot_cli", Profile: "km-copilot"}},
+	{"agy", loop.Seat{Provider: "antigravity_cli", Profile: "km-agy"}},
 }
 
 type Pod struct {

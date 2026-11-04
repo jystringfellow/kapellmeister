@@ -5,7 +5,7 @@ import (
 	"slices"
 )
 
-const seatInstructions = "You are a seat in an oko engineering loop. Follow each step's instructions exactly, write requested files exactly where asked, and keep chat replies short.\n"
+const seatInstructions = "You are a seat in a kapellmeister engineering loop. Follow each step's instructions exactly, write requested files exactly where asked, and keep chat replies short.\n"
 
 var effortConfigKey = map[string]string{
 	"claude_code": "claudeConfig:\n  effort: %s\n",
@@ -13,20 +13,20 @@ var effortConfigKey = map[string]string{
 }
 
 var generatedBases = map[string]string{
-	"claude_code": "oko-claude",
-	"codex":       "oko-codex",
+	"claude_code": "km-claude",
+	"codex":       "km-codex",
 }
 
 func EffortProfileSource(provider, base, effort string) (string, error) {
 	if generatedBases[provider] != base {
-		return "", fmt.Errorf("profile %s is not installed in CAO, and oko only generates effort profiles for %s; install a copy of %s with %s effort as %s",
+		return "", fmt.Errorf("profile %s is not installed in CAO, and kapellmeister only generates effort profiles for %s; install a copy of %s with %s effort as %s",
 			EffortProfile(base, effort), generatedBaseList(), base, effort, EffortProfile(base, effort))
 	}
 	if !slices.Contains(effortLevels[provider], effort) {
 		return "", fmt.Errorf("%s does not support effort %q", provider, effort)
 	}
 	name := EffortProfile(base, effort)
-	return fmt.Sprintf("---\nname: %s\ndescription: oko seat at %s effort; oko passes the model per step\nprovider: %s\nrole: developer\n"+effortConfigKey[provider]+"---\n\n%s",
+	return fmt.Sprintf("---\nname: %s\ndescription: kapellmeister seat at %s effort; kapellmeister passes the model per step\nprovider: %s\nrole: developer\n"+effortConfigKey[provider]+"---\n\n%s",
 		name, effort, provider, effort, seatInstructions), nil
 }
 

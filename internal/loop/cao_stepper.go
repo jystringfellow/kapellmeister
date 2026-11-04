@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/jystringfellow/oko/internal/cao"
+	"github.com/jystringfellow/kapellmeister/internal/cao"
 )
 
 type CAOStepper struct {

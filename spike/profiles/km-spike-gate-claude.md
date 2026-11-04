@@ -1,6 +1,6 @@
 ---
-name: oko-spike-gate-claude
-description: oko spike read-only gate on Claude Code Haiku 5.5
+name: km-spike-gate-claude
+description: kapellmeister spike read-only gate on Claude Code Haiku 5.5
 provider: claude_code
 model: claude-haiku-5-5
 role: reviewer

@@ -13,11 +13,11 @@ import (
 )
 
 const (
-	HomeEnv        = "OKO_HOME"
-	StateEnv       = "OKO_STATE_DIR"
+	HomeEnv        = "KAPELLMEISTER_HOME"
+	StateEnv       = "KAPELLMEISTER_STATE_DIR"
 	CAOURLEnv      = "CAO_API_BASE_URL"
 	UserConfigFile = "config.toml"
-	homeDirName    = ".oko"
+	homeDirName    = ".kapellmeister"
 )
 
 var SeatRoles = []string{"planner", "implementer", "reviewer", "gate", "classifier"}

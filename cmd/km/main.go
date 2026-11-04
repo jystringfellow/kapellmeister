@@ -20,16 +20,16 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/jystringfellow/oko/internal/cao"
-	"github.com/jystringfellow/oko/internal/loop"
-	"github.com/jystringfellow/oko/internal/rig"
+	"github.com/jystringfellow/kapellmeister/internal/cao"
+	"github.com/jystringfellow/kapellmeister/internal/loop"
+	"github.com/jystringfellow/kapellmeister/internal/rig"
 )
 
 const usage = `usage:
-  oko run -repo DIR (-task TEXT | -task-file FILE) [flags]   one pod
-  oko rig -repo DIR (-task TEXT | -task-file FILE) [flags]   every agent in every seat, one pod per rotation
-  oko preflight -worktree DIR [-agents LIST] [-tier T]       check each agent starts and answers
-  oko config [-worktree DIR]                                  show the effective settings and the files they come from`
+  km run -repo DIR (-task TEXT | -task-file FILE) [flags]   one pod
+  km rig -repo DIR (-task TEXT | -task-file FILE) [flags]   every agent in every seat, one pod per rotation
+  km preflight -worktree DIR [-agents LIST] [-tier T]       check each agent starts and answers
+  km config [-worktree DIR]                                  show the effective settings and the files they come from`
 
 func main() {
 	if len(os.Args) < 2 {
@@ -51,7 +51,7 @@ func main() {
 		os.Exit(2)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "oko:", err)
+		fmt.Fprintln(os.Stderr, "km:", err)
 		os.Exit(1)
 	}
 }
@@ -70,7 +70,7 @@ func commonFlags(fs *flag.FlagSet) common {
 		base:       fs.String("base", "origin/main", "ref each detached worktree starts at"),
 		task:       fs.String("task", "", "task text"),
 		taskFile:   fs.String("task-file", "", "file holding the task text"),
-		verify:     fs.String("verify", "", "command oko runs in the worktree before planning and after each implementation round; defaults to [test] verify in .oko/config.toml, then an executable .oko/verify"),
+		verify:     fs.String("verify", "", "command kapellmeister runs in the worktree before planning and after each implementation round; defaults to [test] verify in .kapellmeister/config.toml, then an executable .kapellmeister/verify"),
 		rounds:     fs.Int("rounds", 0, "maximum implement/review/gate rounds (default [run] rounds, else 3)"),
 		retries:    fs.Int("verify-retries", 0, "times to rerun a failing verify before counting it as failed (default [run] verify_retries, else 1)"),
 		preflight:  fs.Duration("preflight-timeout", 0, "how long each seat gets to answer the readiness check; 0 skips it (default [run] preflight_timeout, else 4m)"),
@@ -301,7 +301,7 @@ func rigCommand(args []string) error {
 		return err
 	}
 
-	fmt.Printf("oko rig %s\n  state  %s\n", rigID, rigDir)
+	fmt.Printf("km rig %s\n  state  %s\n", rigID, rigDir)
 	for i, p := range pods {
 		fmt.Printf("  %s  %s\n        %s\n", p.Name, p.CastLine(), worktrees[i])
 	}
@@ -441,7 +441,7 @@ func preflightCommand(args []string) error {
 
 func configCommand(args []string) error {
 	fs := flag.NewFlagSet("config", flag.ContinueOnError)
-	worktree := fs.String("worktree", ".", "repository whose .oko/config.toml to layer over "+loop.UserConfigPath(loop.Home()))
+	worktree := fs.String("worktree", ".", "repository whose .kapellmeister/config.toml to layer over "+loop.UserConfigPath(loop.Home()))
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -644,7 +644,7 @@ func runPod(ctx context.Context, p podRun) (podSummary, error) {
 		return podSummary{}, err
 	}
 	if p.Pod == "" {
-		fmt.Fprintf(p.Progress, "oko run %s\n  worktree  %s\n  state     %s\n", p.RunID, p.Config.Worktree, p.StateDir)
+		fmt.Fprintf(p.Progress, "km run %s\n  worktree  %s\n  state     %s\n", p.RunID, p.Config.Worktree, p.StateDir)
 	}
 	eng := &loop.Engine{Config: p.Config, Stepper: loop.CAOStepper{Client: p.Client}, Verify: p.Verify, Records: telemetry, Progress: p.Progress}
 	start := time.Now()
@@ -653,7 +653,7 @@ func runPod(ctx context.Context, p podRun) (podSummary, error) {
 		return podSummary{}, err
 	}
 	if err := copyDir(res.RunDir, filepath.Join(p.StateDir, "replies")); err != nil {
-		fmt.Fprintln(os.Stderr, "oko: copying replies:", err)
+		fmt.Fprintln(os.Stderr, "km: copying replies:", err)
 	}
 	stat, _ := exec.Command("git", "-C", p.Config.Worktree, "diff", "HEAD", "--stat").CombinedOutput()
 	sum := podSummary{Pod: p.Pod, Cast: p.Cast, Result: res, DurationMS: time.Since(start).Milliseconds(), DiffStat: string(stat)}
@@ -730,7 +730,7 @@ func fetchRepo(repo string) error {
 }
 
 func addWorktree(repo, base string) (string, error) {
-	wt, err := os.MkdirTemp("", "wt-oko-")
+	wt, err := os.MkdirTemp("", "wt-km-")
 	if err != nil {
 		return "", err
 	}

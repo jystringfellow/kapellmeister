@@ -1,12 +1,12 @@
 ---
-name: oko-spike-codex
-description: oko spike seat on Codex GPT-6-Luna, low effort
+name: km-spike-gate-codex
+description: kapellmeister spike read-only gate on Codex GPT-6-Luna
 provider: codex
 model: gpt-6-luna
-role: developer
+role: reviewer
 codexConfig:
   model_reasoning_effort: low
-  sandbox_mode: workspace-write
+  sandbox_mode: read-only
   mcp_servers.cao-mcp-server.tools.workflow_return.approval_mode: approve
   mcp_servers.cao-mcp-server.tools.send_message.approval_mode: approve
 mcpServers:
@@ -16,4 +16,4 @@ mcpServers:
     args: []
 ---
 
-You are a seat in an oko spike run. Follow the task exactly and keep replies short.
+You are a read-only gate. You may read files but must not modify anything.

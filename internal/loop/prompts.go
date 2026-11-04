@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-const ground = `You are the %s in an oko engineering loop, working in this git worktree.
+const ground = `You are the %s in a kapellmeister engineering loop, working in this git worktree.
 First read and follow every agent instruction file at the repository root (AGENTS.md, CLAUDE.md, GEMINI.md, .github/copilot-instructions.md, and any others present), whichever your tool loads by default.
 Never commit, push, stash, create branches, or switch branches.
 `
@@ -55,18 +55,18 @@ When done, reply with one short sentence.
 
 func testingLine(check string) string {
 	if check != "" {
-		return fmt.Sprintf("To run tests, use `%s`; it prints only failures. Run it in the foreground and wait for it. Do not run the full suite: oko runs the full verification after you finish.\n", CheckUsage(check))
+		return fmt.Sprintf("To run tests, use `%s`; it prints only failures. Run it in the foreground and wait for it. Do not run the full suite: kapellmeister runs the full verification after you finish.\n", CheckUsage(check))
 	}
-	return "Run only the tests that cover your change, in the foreground, and wait for them to finish. Do not start background tasks or timers, and do not end your turn while anything you started is still running. Do not run the full suite: oko runs the full verification after you finish.\n"
+	return "Run only the tests that cover your change, in the foreground, and wait for them to finish. Do not start background tasks or timers, and do not end your turn while anything you started is still running. Do not run the full suite: kapellmeister runs the full verification after you finish.\n"
 }
 
-const verifiedNote = "Do not re-run the test suite; oko's verification result above is authoritative.\n"
+const verifiedNote = "Do not re-run the test suite; kapellmeister's verification result above is authoritative.\n"
 
 func verifyLine(command string, v VerifyResult, path string) string {
 	if command == "" {
 		return "No verify command is configured.\n"
 	}
-	line := fmt.Sprintf("oko ran `%s`; it exited %d. Its output is in %s.\n", command, v.ExitCode, path)
+	line := fmt.Sprintf("kapellmeister ran `%s`; it exited %d. Its output is in %s.\n", command, v.ExitCode, path)
 	if v.Attempts > 1 && v.ExitCode == 0 {
 		line += fmt.Sprintf("It failed first and passed on attempt %d, so treat any test that failed as possibly flaky and say whether this change could have caused it.\n", v.Attempts)
 	}

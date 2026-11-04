@@ -1,6 +1,6 @@
 ---
-name: oko-spike-gate-codex-profile
-description: oko spike read-only gate on Codex GPT-6-Luna via a named codexProfile
+name: km-spike-gate-codex-profile
+description: kapellmeister spike read-only gate on Codex GPT-6-Luna via a named codexProfile
 provider: codex
 model: gpt-6-luna
 role: reviewer

@@ -57,7 +57,7 @@ func TestClampBelow(t *testing.T) {
 `
 
 func buildFixture(stateDir string) (*Fixture, error) {
-	root, err := os.MkdirTemp("", "oko-spike-")
+	root, err := os.MkdirTemp("", "km-spike-")
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +82,7 @@ func buildFixture(stateDir string) (*Fixture, error) {
 		steps := [][]string{
 			{"init", "-q", "-b", "main"},
 			{"add", "-A"},
-			{"-c", "user.name=oko", "-c", "user.email=oko@example.invalid", "commit", "-q", "-m", "base"},
+			{"-c", "user.name=km", "-c", "user.email=km@example.invalid", "commit", "-q", "-m", "base"},
 		}
 		if err := gitAll(origin, steps); err != nil {
 			return nil, err
@@ -91,18 +91,18 @@ func buildFixture(stateDir string) (*Fixture, error) {
 			return nil, err
 		}
 		if err := gitAll(origin, [][]string{
-			{"-c", "user.name=oko", "-c", "user.email=oko@example.invalid", "commit", "-q", "-am", "clamp: tidy upper bound"},
+			{"-c", "user.name=km", "-c", "user.email=km@example.invalid", "commit", "-q", "-am", "clamp: tidy upper bound"},
 		}); err != nil {
 			return nil, err
 		}
-		if err := os.WriteFile(filepath.Join(origin, ".git", "info", "exclude"), []byte(".oko/\n"), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(origin, ".git", "info", "exclude"), []byte(".kapellmeister/\n"), 0o644); err != nil {
 			return nil, err
 		}
 		wt := filepath.Join(root, "wt-"+name)
 		if err := gitAll(origin, [][]string{{"worktree", "add", "-q", "--detach", wt, "HEAD"}}); err != nil {
 			return nil, err
 		}
-		if err := os.MkdirAll(filepath.Join(wt, ".oko", "replies"), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(wt, ".kapellmeister", "replies"), 0o755); err != nil {
 			return nil, err
 		}
 		f.Worktrees[name] = wt

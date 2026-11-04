@@ -7,9 +7,9 @@ import (
 )
 
 const (
-	ConfigFile = ".oko/config.toml"
-	VerifyHook = ".oko/verify"
-	CheckHook  = ".oko/check"
+	ConfigFile = ".kapellmeister/config.toml"
+	VerifyHook = ".kapellmeister/verify"
+	CheckHook  = ".kapellmeister/check"
 	ArgsToken  = "{args}"
 )
 

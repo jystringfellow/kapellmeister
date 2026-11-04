@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jystringfellow/oko/internal/loop"
+	"github.com/jystringfellow/kapellmeister/internal/loop"
 )
 
 func TestFlagsOverrideConfigOnlyWhenGiven(t *testing.T) {
@@ -19,7 +19,7 @@ func TestFlagsOverrideConfigOnlyWhenGiven(t *testing.T) {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	c := commonFlags(fs)
 	roles := seatFlags(fs, loop.SeatRoles...)
-	if err := fs.Parse([]string{"-rounds", "2", "-sizing", "on", "-implementer", "claude_code:oko-claude:claude-fable-5-1"}); err != nil {
+	if err := fs.Parse([]string{"-rounds", "2", "-sizing", "on", "-implementer", "claude_code:km-claude:claude-fable-5-1"}); err != nil {
 		t.Fatal(err)
 	}
 	s, err := c.settings("")
@@ -33,13 +33,13 @@ func TestFlagsOverrideConfigOnlyWhenGiven(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if seats.Reviewer != (loop.Seat{Provider: "antigravity_cli", Profile: "oko-agy"}) {
+	if seats.Reviewer != (loop.Seat{Provider: "antigravity_cli", Profile: "km-agy"}) {
 		t.Fatalf("reviewer = %+v, want the configured agent", seats.Reviewer)
 	}
-	if seats.Implementer != (loop.Seat{Provider: "claude_code", Profile: "oko-claude", Model: "claude-fable-5-1"}) {
+	if seats.Implementer != (loop.Seat{Provider: "claude_code", Profile: "km-claude", Model: "claude-fable-5-1"}) {
 		t.Fatalf("implementer = %+v, want the flag", seats.Implementer)
 	}
-	if seats.Planner != (loop.Seat{Provider: "claude_code", Profile: "oko-claude"}) {
+	if seats.Planner != (loop.Seat{Provider: "claude_code", Profile: "km-claude"}) {
 		t.Fatalf("planner = %+v, want the default agent", seats.Planner)
 	}
 }

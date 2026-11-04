@@ -6,9 +6,9 @@ from pathlib import Path
 from cao_workflow import emit_output, get_inputs, step
 
 SEATS = [
-    ("claude_code", "oko-spike-claude"),
-    ("codex", "oko-spike-codex"),
-    ("copilot_cli", "oko-spike-copilot-haiku"),
+    ("claude_code", "km-spike-claude"),
+    ("codex", "km-spike-codex"),
+    ("copilot_cli", "km-spike-copilot-haiku"),
 ]
 
 INPUTS = {
@@ -24,7 +24,7 @@ provider, profile = rng.choice(SEATS)
 
 verify = subprocess.run(["go", "test", "./..."], cwd=worktree, capture_output=True, text=True)
 
-report_path = worktree / ".oko" / "replies" / f"workflow-review-{seed}.md"
+report_path = worktree / ".kapellmeister" / "replies" / f"workflow-review-{seed}.md"
 prompt = (
     "Review the most recent commit in this repository (run `git show HEAD`). "
     f"The test suite result was: exit {verify.returncode}.\n"

@@ -11,9 +11,9 @@ import (
 )
 
 var (
-	claudeSeat = Seat{Provider: "claude_code", Profile: "oko-claude"}
-	codexSeat  = Seat{Provider: "codex", Profile: "oko-codex"}
-	agySeat    = Seat{Provider: "antigravity_cli", Profile: "oko-agy"}
+	claudeSeat = Seat{Provider: "claude_code", Profile: "km-claude"}
+	codexSeat  = Seat{Provider: "codex", Profile: "km-codex"}
+	agySeat    = Seat{Provider: "antigravity_cli", Profile: "km-agy"}
 )
 
 func defaultPolicy() *Policy {
@@ -24,22 +24,22 @@ func defaultPolicy() *Policy {
 func TestEachStepResolvesToItsTierModelAndEffortProfile(t *testing.T) {
 	p := defaultPolicy()
 	seat, a := p.Seat("implement", claudeSeat, "", 0)
-	if seat != (Seat{Provider: "claude_code", Profile: "oko-claude-high", Model: "claude-sonnet-5-5"}) || a != (Assignment{Tier: "medium", Effort: "high", Source: SourceDefault}) {
+	if seat != (Seat{Provider: "claude_code", Profile: "km-claude-high", Model: "claude-sonnet-5-5"}) || a != (Assignment{Tier: "medium", Effort: "high", Source: SourceDefault}) {
 		t.Fatalf("implement resolved to %+v %+v", seat, a)
 	}
 	seat, a = p.Seat("classify", codexSeat, "large", 0)
-	if seat.Model != "gpt-6-luna" || seat.Profile != "oko-codex-medium" || a.Tier != "small" {
+	if seat.Model != "gpt-6-luna" || seat.Profile != "km-codex-medium" || a.Tier != "small" {
 		t.Fatalf("classify is pinned to small, got %+v %+v", seat, a)
 	}
 	seat, a = p.Seat("gate", agySeat, "small", 0)
-	if seat != (Seat{Provider: "antigravity_cli", Profile: "oko-agy", Model: "gemini-3.8-flash-high"}) || a.Tier != "medium" || a.Effort != "" {
+	if seat != (Seat{Provider: "antigravity_cli", Profile: "km-agy", Model: "gemini-3.8-flash-high"}) || a.Tier != "medium" || a.Effort != "" {
 		t.Fatalf("gate never drops below medium and agy has no effort profile, got %+v %+v", seat, a)
 	}
 }
 
 func TestExplicitModelsAndUntieredProvidersAreLeftAlone(t *testing.T) {
 	p := defaultPolicy()
-	explicit := Seat{Provider: "claude_code", Profile: "oko-claude", Model: "claude-fable-5-1"}
+	explicit := Seat{Provider: "claude_code", Profile: "km-claude", Model: "claude-fable-5-1"}
 	if seat, a := p.Seat("implement", explicit, "large", 3); seat != explicit || a.Source != SourceExplicit {
 		t.Fatalf("explicit seat changed: %+v %+v", seat, a)
 	}
@@ -55,7 +55,7 @@ func TestExplicitModelsAndUntieredProvidersAreLeftAlone(t *testing.T) {
 
 func writeConfig(t *testing.T, dir, body string) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Join(dir, ".oko"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".kapellmeister"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, ConfigFile), []byte(body), 0o644); err != nil {
@@ -85,7 +85,7 @@ escalate_after = 0
 	if got := p.Tiers["claude_code"]["large"]; got != (TierSpec{Model: "claude-fable-5-1", Effort: "xhigh"}) {
 		t.Fatalf("large tier = %+v, want the model replaced and the default effort kept", got)
 	}
-	if seat, a := p.Seat("classify", claudeSeat, "", 0); seat.Profile != "oko-claude" || a.Effort != "" {
+	if seat, a := p.Seat("classify", claudeSeat, "", 0); seat.Profile != "km-claude" || a.Effort != "" {
 		t.Fatalf("inherit effort should keep the base profile, got %+v %+v", seat, a)
 	}
 	if _, a := p.Seat("implement", claudeSeat, "small", 0); a.Tier != "medium" {
@@ -193,7 +193,7 @@ func TestShadowSizingRecordsThePlannersSizeWithoutApplyingIt(t *testing.T) {
 		t.Fatalf("size record = %+v", sized)
 	}
 	impl := recordsOf(t, records, "implement")[0]
-	if impl.Tier != "medium" || impl.Effort != "high" || impl.TierSource != SourceDefault || impl.Seat.Profile != "oko-codex-high" {
+	if impl.Tier != "medium" || impl.Effort != "high" || impl.TierSource != SourceDefault || impl.Seat.Profile != "km-codex-high" {
 		t.Fatalf("implement record = %+v", impl)
 	}
 }
@@ -335,24 +335,24 @@ func TestCommandDeciderFailuresFallBack(t *testing.T) {
 func TestEffortVariantsCoverEveryTierAStepCanReach(t *testing.T) {
 	p := defaultPolicy()
 	got := p.EffortVariants(map[string][]Seat{
-		"implement": {claudeSeat, agySeat, {Provider: "codex", Profile: "oko-codex", Model: "pinned"}},
+		"implement": {claudeSeat, agySeat, {Provider: "codex", Profile: "km-codex", Model: "pinned"}},
 		"classify":  {codexSeat},
 	})
 	var names []string
 	for _, v := range got {
 		names = append(names, v.Name())
 	}
-	if strings.Join(names, " ") != "oko-codex-medium oko-claude-medium oko-claude-high oko-claude-xhigh" {
+	if strings.Join(names, " ") != "km-codex-medium km-claude-medium km-claude-high km-claude-xhigh" {
 		t.Fatalf("variants = %v", names)
 	}
 }
 
-func TestEffortProfilesAreGeneratedOnlyForOkosOwnBases(t *testing.T) {
-	src, err := EffortProfileSource("codex", "oko-codex", "xhigh")
+func TestEffortProfilesAreGeneratedOnlyForKapellmeistersOwnBases(t *testing.T) {
+	src, err := EffortProfileSource("codex", "km-codex", "xhigh")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"name: oko-codex-xhigh\n", "provider: codex\n", "codexConfig:\n  model_reasoning_effort: xhigh\n", seatInstructions} {
+	for _, want := range []string{"name: km-codex-xhigh\n", "provider: codex\n", "codexConfig:\n  model_reasoning_effort: xhigh\n", seatInstructions} {
 		if !strings.Contains(src, want) {
 			t.Fatalf("profile lacks %q:\n%s", want, src)
 		}

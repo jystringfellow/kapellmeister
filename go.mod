@@ -1,4 +1,4 @@
-module github.com/jystringfellow/oko
+module github.com/jystringfellow/kapellmeister
 
 go 1.27
 

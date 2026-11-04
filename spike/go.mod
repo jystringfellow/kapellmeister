@@ -1,3 +1,3 @@
-module github.com/jystringfellow/oko/spike
+module github.com/jystringfellow/kapellmeister/spike
 
 go 1.27
