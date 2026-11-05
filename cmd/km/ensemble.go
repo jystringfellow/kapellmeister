@@ -84,3 +84,19 @@ func worktreeDir(path string) (string, error) {
 	}
 	return filepath.EvalSymlinks(abs)
 }
+
+func sizeMembers(policy loop.Policy, members []ensemble.Member) {
+	for i, m := range members {
+		members[i].Chair, _ = policy.Chair(roleSteps[m.Part], m.Chair, "", 0)
+	}
+}
+
+func failedChairs(report ensemble.Report) []string {
+	var failed []string
+	for _, c := range report.Chairs {
+		if !c.OK {
+			failed = append(failed, c.Address)
+		}
+	}
+	return failed
+}

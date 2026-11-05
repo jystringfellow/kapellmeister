@@ -8,6 +8,9 @@ works in a throwaway detached worktree and leaves its change uncommitted for you
 ```sh
 km run -repo ~/Code/app -task-file task.md [-ensemble thorough]  # one ensemble
 km audition -worktree DIR [-ensemble thorough]   # can this ensemble play? no real work
+km rehearse -worktree DIR -task-file task.md [-ensemble thorough]  # brief and leave standing
+km ensemble list                                # list standing ensembles
+km ensemble down SESSION                        # take one down
 km preflight -worktree DIR [-tier large]          # check each agent starts and answers
 km config [-worktree DIR]                         # show the effective settings and their files
 ```
@@ -38,12 +41,30 @@ cue, or if it never closes the cue. The report names the problem, and `report.js
 the queue. The session is torn down afterwards unless you pass `-keep`. A chair's own `timeout`
 does not apply to its audition, which does no work.
 
+## Rehearse
+
+`km rehearse -worktree DIR (-task TEXT | -task-file FILE) [-ensemble NAME]` prepares an ensemble
+for work and leaves its CAO session standing. Before booting any chair, it runs the baseline verify
+command: `-verify CMD`, then `[test] verify`, then an executable `.kapellmeister/verify`. A failing
+baseline stops the rehearsal; when no command resolves, km reports that it skipped the baseline.
+
+Each chair receives one briefing through CAO's inbox with its address, part, section-mates and the
+full task. The briefing asks it to read and understand the task without changing files, then close
+its cue with `km cue done`. `-timeout` defaults to `[run] preflight_timeout`. The per-chair report and
+queue live under `.kapellmeister/runs/rehearse-*/` in the worktree.
+
+The session stays up even when a chair fails. km records the standing ensemble in
+`<state>/ensembles/<session>.json` for `km play` to use later; `km play` is not available yet.
+Use `km ensemble list` to see recorded sessions and `km ensemble down SESSION` to delete one and
+remove its record. `down` also accepts `-cao URL` before the session name and removes the record
+when CAO says the session is already gone.
+
 ## Ensemble files
 
 An ensemble file seats chairs in sections. A repository can check one in at
 `.kapellmeister/ensembles/NAME.toml` for everyone who works in it, and you can keep your own at
 `~/.kapellmeister/ensembles/NAME.toml`. Yours wins when both have the same name. Select one with
-`-ensemble NAME` on `km run` or `km audition`.
+`-ensemble NAME` on `km run`, `km audition` or `km rehearse`.
 
 ```toml
 # .kapellmeister/ensembles/thorough.toml

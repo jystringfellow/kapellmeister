@@ -19,9 +19,10 @@ import (
 )
 
 type behaviour struct {
-	bootFails bool
-	ignores   bool
-	screen    string
+	bootFails      bool
+	ignores        bool
+	screen         string
+	screenAfterCue string
 }
 
 type fakeTerminal struct {
@@ -39,6 +40,7 @@ type fakeCAO struct {
 	order      []string
 	deleted    []string
 	next       int
+	onCue      func()
 }
 
 var cueCommand = regexp.MustCompile(`'([^']+)' cue done -queue '([^']+)' (\S+)`)
@@ -79,6 +81,9 @@ func (f *fakeCAO) serve(w http.ResponseWriter, r *http.Request) {
 			f.t.Errorf("cue to %s sent as %q, want km", term.profile, q.Get("sender_id"))
 		}
 		term.cues = append(term.cues, q.Get("message"))
+		if f.onCue != nil {
+			f.onCue()
+		}
 		if !f.behaviours[term.profile].ignores {
 			m := cueCommand.FindStringSubmatch(q.Get("message"))
 			if m == nil {
@@ -89,7 +94,13 @@ func (f *fakeCAO) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		fmt.Fprint(w, `{"success":true}`)
 	case r.Method == http.MethodGet && len(parts) == 3 && parts[2] == "output":
-		json.NewEncoder(w).Encode(map[string]string{"output": f.behaviours[f.terminals[parts[1]].profile].screen})
+		term := f.terminals[parts[1]]
+		b := f.behaviours[term.profile]
+		screen := b.screen
+		if len(term.cues) > 0 && b.screenAfterCue != "" {
+			screen = b.screenAfterCue
+		}
+		json.NewEncoder(w).Encode(map[string]string{"output": screen})
 	case r.Method == http.MethodGet && len(parts) == 2 && parts[0] == "terminals":
 		term := f.terminals[parts[1]]
 		json.NewEncoder(w).Encode(map[string]any{"id": term.id, "session_name": term.session, "agent_profile": term.profile, "status": "idle"})

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -55,9 +56,7 @@ func auditionCommand(args []string) error {
 		return err
 	}
 	policy := s.Policy
-	for i, m := range members {
-		members[i].Chair, _ = policy.Chair(roleSteps[m.Part], m.Chair, "", 0)
-	}
+	sizeMembers(policy, members)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	client := cao.NewClient(firstNonEmpty(*caoURL, s.CAOURL))
@@ -75,20 +74,22 @@ func auditionCommand(args []string) error {
 	}
 	printAudition(os.Stdout, report, *keep)
 	if !report.OK {
-		var failed []string
-		for _, c := range report.Chairs {
-			if !c.OK {
-				failed = append(failed, c.Address)
-			}
-		}
+		failed := failedChairs(report)
 		return fmt.Errorf("audition failed for %d chair(s): %s", len(failed), strings.Join(failed, ", "))
 	}
 	return nil
 }
 
 func printAudition(w *os.File, r ensemble.Report, kept bool) {
+	printChairTable(w, r, "CUE")
+	if kept && r.Session != "" {
+		fmt.Fprintf(w, "session %s kept; attach with `tmux attach -t %s`\n", r.Session, r.Session)
+	}
+}
+
+func printChairTable(w io.Writer, r ensemble.Report, cueHeader string) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "CHAIR\tAGENT\tBOOT\tCUE\tRESULT")
+	fmt.Fprintf(tw, "CHAIR\tAGENT\tBOOT\t%s\tRESULT\n", cueHeader)
 	for _, c := range r.Chairs {
 		result := "ok"
 		if !c.OK {
@@ -101,9 +102,6 @@ func printAudition(w *os.File, r ensemble.Report, kept bool) {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", c.Address, c.Chair, millis(c.BootMS), cue, result)
 	}
 	tw.Flush()
-	if kept && r.Session != "" {
-		fmt.Fprintf(w, "session %s kept; attach with `tmux attach -t %s`\n", r.Session, r.Session)
-	}
 }
 
 func millis(ms int64) string {
