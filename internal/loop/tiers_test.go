@@ -143,7 +143,7 @@ func tieredEngine(t *testing.T, mode string) (*Engine, *fakeStepper, *bytes.Buff
 	p := defaultPolicy()
 	p.Sizing.Mode = mode
 	eng.Config.Policy = p
-	eng.Config.Seats = Seats{Planner: claudeSeat, Implementer: codexSeat, Reviewer: claudeSeat, Gate: claudeSeat, Classifier: claudeSeat}
+	eng.Config.Seats = Seats{Planner: claudeSeat, Implementer: codexSeat, Reviewers: []Seat{claudeSeat}, Gate: claudeSeat, Classifier: claudeSeat}
 	return eng, fake, records
 }
 
@@ -402,7 +402,7 @@ func TestAPinnedTierReplacesTheStepDefaultAndSizingDoesNotMoveIt(t *testing.T) {
 		}
 	}
 	eng, fake, _ := tieredEngine(t, SizingOn)
-	eng.Config.Seats.Reviewer = pinned
+	eng.Config.Seats.Reviewers = []Seat{pinned}
 	planSays(fake, "Size: small — one fix")
 	run(t, eng)
 	if s := stepNamed(t, fake, "review", 1); s.Seat.Model != "claude-opus-5-5" || s.Assignment.Source != "pinned" {

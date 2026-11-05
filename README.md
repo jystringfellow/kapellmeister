@@ -18,6 +18,11 @@ agent (`claude`, `codex`, `copilot`, `agy`) or `provider:profile[:model]`. Appen
 `@medium` or `@large` to pin a seat's tier, for example `-reviewer claude@large`. A seat with an
 explicit model always runs that model and cannot also use `@tier`.
 
+The reviewer role can have several seats. Use `-reviewer copilot,claude@large` to replace the
+whole configured reviewer list for one run. Each reviewer runs concurrently in its own CAO
+terminal and resolves its tier separately: pinned reviewers keep their tier, while unpinned
+reviewers follow sizing. Other roles have one seat; `km rig` keeps one reviewer per pod.
+
 ## Configuration
 
 kapellmeister layers two files over its built-in defaults; flags override both for one run. Every key is
@@ -48,7 +53,8 @@ implementer = "claude"
 reviewer = "copilot"
 
 [ensembles.thorough]
-reviewer = "claude@large"
+reviewer = ["copilot", "claude@large"]
+gate_when = "any"
 gate = "claude@large"
 escalate = false
 
@@ -64,7 +70,40 @@ repository flags. Its seats overlay `[seats]`, then built-in defaults for omitte
 `-ensemble`, the run uses `[seats]` as usual. Role flags override the selected ensemble's seats;
 unknown ensemble names are an error listing the defined names. `km config` lists each ensemble
 and its seats. Ensembles belong only in `~/.kapellmeister/config.toml`, because they name agents
-that depend on your accounts.
+that depend on your accounts. In `[seats]` and ensembles, `reviewer` accepts either a single
+string or an array such as `reviewer = ["copilot", "claude@large"]`. Other roles reject arrays.
+`km config` shows the reviewer lists and `gate_when`.
+
+An ensemble's `gate_when` controls whether a round that passed verification goes to the gate:
+
+- `any` (the default): at least one reviewer approves.
+- `all`: every reviewer approves.
+- `always`: the gate runs even when all reviewers request changes.
+
+An omitted `gate_when` defaults to `any`; an explicitly empty value is invalid.
+A run without an ensemble uses `any`. Failed verification always skips the gate and sends the
+round back to the implementer. With one reviewer, `any` and `all` both require its approval.
+
+The gate reads every available review, checks the diff itself, and sorts each finding into
+**blocking** or **nit**, with a reason. It approves when the task is done, verification passed,
+and nothing blocks. Its gate file lists nits without sending them back for another round.
+If approval is withheld, the implementer gets the gate file when present, every available review
+file, and the verification output. When the gate ran, its blocking findings supersede reviewer
+requests; findings it classifies as nits need no change. Each round without approval still counts
+toward escalation.
+
+A reviewer whose step errors or leaves no reply after its one nudge is recorded as `FAILED`.
+It counts as not approving for `gate_when`; surviving reviews continue through the round, and
+the gate is told which reviewers failed so it can weigh the missing review. If every reviewer
+fails, the run fails. Reviewers share the worktree: a snapshot before they start and another
+after they all finish enforce read-only access as a group. A worktree change fails the run and
+names the whole group, including when a reviewer's step also errors.
+
+With one reviewer, replies remain `review-<round>.md` and the terminal label remains
+`km <run> · reviewer`. Multiple reviewers are numbered in config order as `reviewer-1`,
+`reviewer-2`, and so on, with replies `review-<round>-<n>.md` and labels
+`km <run> · reviewer-<n>`. Each review has a sibling `.verdict` file. Replies live under
+`.kapellmeister/runs/<run>/` in the worktree.
 
 ## Repository configuration
 
@@ -147,4 +186,6 @@ in the selected ensemble to turn escalation off for that run. `true` or an omitt
 
 Each run writes `telemetry.jsonl` under `~/.kapellmeister/state/runs/<run>/`: one record per step with its seat, tier, effort, tier source (`default`,
 `pinned`, `sized`, `escalated` or `explicit`), the model CAO reported, durations and verdicts, plus `size`
-and `escalate` records for each decision.
+and `escalate` records for each decision. With several reviewers, their review, nudge,
+classification and verdict records include `seat_name` (`reviewer-1`, `reviewer-2`, etc.).
+A failed review has verdict `FAILED` and its error; single-reviewer records omit `seat_name`.

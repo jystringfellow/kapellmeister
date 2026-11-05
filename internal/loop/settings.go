@@ -35,20 +35,56 @@ type RunConfig struct {
 	PreflightTimeout string `toml:"preflight_timeout"`
 }
 
+const (
+	GateWhenAny    = "any"
+	GateWhenAll    = "all"
+	GateWhenAlways = "always"
+)
+
+type SeatSpec struct {
+	Spec string
+	List bool
+}
+
+func (s *SeatSpec) UnmarshalTOML(v any) error {
+	switch v := v.(type) {
+	case string:
+		s.Spec = v
+	case []any:
+		s.List = true
+		if len(v) == 0 {
+			return errors.New("want at least one seat")
+		}
+		specs := make([]string, len(v))
+		for i, value := range v {
+			spec, ok := value.(string)
+			if !ok || strings.TrimSpace(spec) == "" || strings.Contains(spec, ",") {
+				return errors.New("want non-empty seat specs without commas")
+			}
+			specs[i] = spec
+		}
+		s.Spec = strings.Join(specs, ",")
+	default:
+		return errors.New("want a seat spec or a list of seat specs")
+	}
+	return nil
+}
+
 type Ensemble struct {
-	Planner     string `toml:"planner" json:"planner,omitempty"`
-	Implementer string `toml:"implementer" json:"implementer,omitempty"`
-	Reviewer    string `toml:"reviewer" json:"reviewer,omitempty"`
-	Gate        string `toml:"gate" json:"gate,omitempty"`
-	Classifier  string `toml:"classifier" json:"classifier,omitempty"`
-	Escalate    *bool  `toml:"escalate" json:"escalate,omitempty"`
+	GateWhen    string   `toml:"gate_when" json:"gate_when,omitempty"`
+	Planner     SeatSpec `toml:"planner" json:"planner,omitempty"`
+	Implementer SeatSpec `toml:"implementer" json:"implementer,omitempty"`
+	Reviewer    SeatSpec `toml:"reviewer" json:"reviewer,omitempty"`
+	Gate        SeatSpec `toml:"gate" json:"gate,omitempty"`
+	Classifier  SeatSpec `toml:"classifier" json:"classifier,omitempty"`
+	Escalate    *bool    `toml:"escalate" json:"escalate,omitempty"`
 }
 
 func (e Ensemble) Seats() map[string]string {
 	seats := map[string]string{}
 	for role, spec := range map[string]string{
-		"planner": e.Planner, "implementer": e.Implementer, "reviewer": e.Reviewer,
-		"gate": e.Gate, "classifier": e.Classifier,
+		"planner": e.Planner.Spec, "implementer": e.Implementer.Spec, "reviewer": e.Reviewer.Spec,
+		"gate": e.Gate.Spec, "classifier": e.Classifier.Spec,
 	} {
 		if spec != "" {
 			seats[role] = spec
@@ -63,7 +99,7 @@ type FileConfig struct {
 		URL string `toml:"url"`
 	} `toml:"cao"`
 	Run       RunConfig           `toml:"run"`
-	Seats     map[string]string   `toml:"seats"`
+	Seats     map[string]SeatSpec `toml:"seats"`
 	Ensembles map[string]Ensemble `toml:"ensembles"`
 	Rig       struct {
 		Agents []string `toml:"agents"`
@@ -74,6 +110,7 @@ type FileConfig struct {
 }
 
 type Settings struct {
+	GateWhen         string              `json:"gate_when"`
 	Files            []string            `json:"files"`
 	CAOURL           string              `json:"cao_url"`
 	Rounds           int                 `json:"rounds"`
@@ -104,6 +141,7 @@ func (s Settings) WithEnsemble(name string) (Settings, error) {
 		seats[role] = spec
 	}
 	s.Seats = seats
+	s.GateWhen = firstSet(ensemble.GateWhen, GateWhenAny)
 	if ensemble.Escalate != nil && !*ensemble.Escalate {
 		off := 0
 		s.Policy.Sizing.EscalateAfter = &off
@@ -132,6 +170,7 @@ func UserConfigPath(home string) string {
 
 func DefaultSettings() Settings {
 	return Settings{
+		GateWhen:         GateWhenAny,
 		CAOURL:           "http://127.0.0.1:9889",
 		Rounds:           3,
 		VerifyRetries:    1,
@@ -183,8 +222,29 @@ func LoadSettings(home, worktree string) (Settings, error) {
 		if !slices.Contains(SeatRoles, role) {
 			return s, fmt.Errorf("%s: seats.%s: unknown role (want %s)", userPath, role, strings.Join(SeatRoles, ", "))
 		}
-		s.Seats[role] = user.Seats[role]
+		if user.Seats[role].List && role != "reviewer" {
+			return s, fmt.Errorf("%s: seats.%s: only reviewer takes a list of seats", userPath, role)
+		}
+		s.Seats[role] = user.Seats[role].Spec
 	}
+	for _, name := range sortedKeys(user.Ensembles) {
+		ensemble := user.Ensembles[name]
+		specs := map[string]SeatSpec{"planner": ensemble.Planner, "implementer": ensemble.Implementer, "reviewer": ensemble.Reviewer, "gate": ensemble.Gate, "classifier": ensemble.Classifier}
+		for _, role := range SeatRoles {
+			if specs[role].List && role != "reviewer" {
+				return s, fmt.Errorf("%s: ensembles.%s.%s: only reviewer takes a list of seats", userPath, name, role)
+			}
+		}
+		if !user.md.IsDefined("ensembles", name, "gate_when") {
+			continue
+		}
+		switch ensemble.GateWhen {
+		case GateWhenAny, GateWhenAll, GateWhenAlways:
+		default:
+			return s, fmt.Errorf("%s: ensembles.%s.gate_when: %q is not any, all or always", userPath, name, ensemble.GateWhen)
+		}
+	}
+
 	if len(user.Rig.Agents) > 0 {
 		s.RigAgents = user.Rig.Agents
 	}
