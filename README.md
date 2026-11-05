@@ -114,7 +114,7 @@ defaults are:
 A pin such as `claude@large` or `codex:km-codex@small` replaces the step's default tier and sizing
 does not move it. The repository's `[steps.<step>]` min and max still clamp it: a gate pinned to
 small runs at medium with the default gate floor. Pins work in `[seats]`, ensembles and role flags.
-A pin needs a `[tiers.<provider>]` table (built in or configured) for the seat's provider;
+A pin needs a `[tiers.<provider>]` table (built in or configured) with the tier it resolves to;
 `km run` and `km rig` refuse to start otherwise.
 An explicit model (`provider:profile:model`) cannot also carry `@tier`.
 
