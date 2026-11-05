@@ -18,10 +18,11 @@ import (
 )
 
 type Chair struct {
-	Provider string `json:"provider"`
-	Profile  string `json:"profile"`
-	Model    string `json:"model,omitempty"`
-	Tier     string `json:"tier,omitempty"`
+	Provider string        `json:"provider"`
+	Profile  string        `json:"profile"`
+	Model    string        `json:"model,omitempty"`
+	Tier     string        `json:"tier,omitempty"`
+	Timeout  time.Duration `json:"timeout,omitempty"`
 }
 
 func SplitTier(spec string) (string, string, error) {
@@ -411,6 +412,9 @@ func (e *Engine) step(ctx context.Context, s Step) (StepResult, error) {
 		labelName = s.Name
 	}
 	s.Label = TerminalLabel(e.Config.RunID, labelName)
+	if s.Timeout == 0 {
+		s.Timeout = s.Chair.Timeout
+	}
 	if s.Timeout == 0 {
 		s.Timeout = e.Config.StepTimeout
 	}

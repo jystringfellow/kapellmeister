@@ -348,3 +348,37 @@ func TestAnExplicitlyEmptyGateWhenIsRejectedNamingTheFileAndKey(t *testing.T) {
 		t.Fatalf("explicitly empty gate_when: %v", err)
 	}
 }
+
+func TestEveryKnownAgentIsAvailableUnlessTheUserConfigSaysOtherwise(t *testing.T) {
+	s, err := LoadSettings(t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(s.Agents, ",") != "claude,codex,copilot,agy" {
+		t.Fatalf("agents = %v, want every known agent", s.Agents)
+	}
+	s, err = LoadSettings(writeUserConfig(t, "[agents]\navailable = [\"copilot\", \"claude\"]\n"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(s.Agents, ",") != "copilot,claude" {
+		t.Fatalf("agents = %v, want copilot,claude", s.Agents)
+	}
+}
+
+func TestAnUnknownAvailableAgentIsRejectedNamingTheFileAndAgent(t *testing.T) {
+	home := writeUserConfig(t, "[agents]\navailable = [\"claude\", \"gemini\"]\n")
+	_, err := LoadSettings(home, "")
+	if err == nil || !strings.Contains(err.Error(), UserConfigPath(home)+": agents.available: unknown agent \"gemini\"") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestAvailableAgentsBelongInTheUserConfig(t *testing.T) {
+	repo := t.TempDir()
+	writeConfig(t, repo, "[agents]\navailable = [\"claude\"]\n")
+	home := t.TempDir()
+	if _, err := LoadSettings(home, repo); err == nil || !strings.Contains(err.Error(), "[agents] belongs in "+UserConfigPath(home)) {
+		t.Fatalf("err = %v", err)
+	}
+}

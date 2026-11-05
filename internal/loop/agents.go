@@ -32,3 +32,28 @@ func SelectAgents(names string) ([]Agent, error) {
 	}
 	return out, nil
 }
+
+func AgentNames() []string {
+	var names []string
+	for _, a := range DefaultAgents {
+		names = append(names, a.Name)
+	}
+	return names
+}
+
+func ResolveChair(spec string) (Chair, error) {
+	base, tier, err := SplitTier(spec)
+	if err != nil {
+		return Chair{}, err
+	}
+	if !strings.Contains(base, ":") {
+		agents, err := SelectAgents(base)
+		if err != nil {
+			return Chair{}, fmt.Errorf("chair %q: want an agent (%s) or provider:profile[:model], with optional @small|@medium|@large", spec, strings.Join(AgentNames(), ", "))
+		}
+		chair := agents[0].Chair
+		chair.Tier = tier
+		return chair, nil
+	}
+	return ParseChair(spec)
+}

@@ -16,21 +16,25 @@ import (
 )
 
 type Member struct {
-	Part  string     `json:"part"`
-	Name  string     `json:"name"`
-	Chair loop.Chair `json:"chair"`
+	Section string     `json:"section"`
+	Part    string     `json:"part"`
+	Name    string     `json:"name"`
+	Chair   loop.Chair `json:"chair"`
 }
 
 func (m Member) Address(ensemble string) string {
-	return m.Part + "." + m.Name + "@" + ensemble
+	return m.Section + "." + m.Name + "@" + ensemble
 }
 
 func MembersOf(c loop.Chairs) []Member {
-	members := []Member{{"planner", "planner", c.Planner}, {"implementer", "implementer", c.Implementer}}
-	for i, r := range c.Reviewers {
-		members = append(members, Member{"reviewer", loop.ReviewerName(i, len(c.Reviewers)), r})
+	solo := func(part string, chair loop.Chair) Member {
+		return Member{Section: part, Part: part, Name: part, Chair: chair}
 	}
-	return append(members, Member{"gate", "gate", c.Gate}, Member{"classifier", "classifier", c.Classifier})
+	members := []Member{solo("planner", c.Planner), solo("implementer", c.Implementer)}
+	for i, r := range c.Reviewers {
+		members = append(members, Member{Section: "reviewer", Part: "reviewer", Name: loop.ReviewerName(i, len(c.Reviewers)), Chair: r})
+	}
+	return append(members, solo("gate", c.Gate), solo("classifier", c.Classifier))
 }
 
 type Audition struct {
@@ -139,11 +143,11 @@ func (a Audition) booted(ctx context.Context, m Member, t cao.Terminal, err erro
 		r.Model = *t.Model
 	}
 	r.Honored = t.ModelHonored
-	if err := a.Client.SetGroup(ctx, t.ID, []string{a.Ensemble, m.Part}); err != nil {
+	if err := a.Client.SetGroup(ctx, t.ID, []string{a.Ensemble, m.Section}); err != nil {
 		r.Problem = "group: " + err.Error()
 		return
 	}
-	if err := a.Client.SetMetadata(ctx, t.ID, map[string]any{"chair": m.Address(a.Ensemble), "part": m.Part, "ensemble": a.Ensemble}); err != nil {
+	if err := a.Client.SetMetadata(ctx, t.ID, map[string]any{"chair": m.Address(a.Ensemble), "section": m.Section, "part": m.Part, "ensemble": a.Ensemble}); err != nil {
 		r.Problem = "metadata: " + err.Error()
 	}
 }
@@ -156,7 +160,7 @@ func (a Audition) cue(ctx context.Context, m Member, queue string, r *ChairRepor
 		r.Problem = "blocked before the cue: " + blocker
 		return
 	}
-	id := "audition-" + m.Part + "-" + m.Name
+	id := "audition-" + m.Section + "-" + m.Name
 	start := time.Now()
 	if err := a.Client.SendMessage(ctx, r.TerminalID, "km", a.cueText(id, m, queue)); err != nil {
 		r.Problem = "cue: " + err.Error()

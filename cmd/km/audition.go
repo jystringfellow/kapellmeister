@@ -19,10 +19,12 @@ import (
 
 const defaultEnsembleName = "default"
 
+var ensembleHelp = "ensemble to seat: a file in " + ensemble.RepoDir + "/NAME.toml or " + loop.Home() + "/" + ensemble.UserDir + "/NAME.toml, or [ensembles.NAME] in " + loop.UserConfigPath(loop.Home()) + "; role flags override only [ensembles] and [chairs] (default: your [chairs])"
+
 func auditionCommand(args []string) error {
 	fs := flag.NewFlagSet("audition", flag.ContinueOnError)
 	worktree := fs.String("worktree", "", "git worktree the chairs start in")
-	name := fs.String("ensemble", "", "named ensemble from [ensembles.NAME] in "+loop.UserConfigPath(loop.Home())+"; role flags override it (default: your [chairs])")
+	name := fs.String("ensemble", "", ensembleHelp)
 	roles := chairFlags(fs, loop.ChairRoles...)
 	timeout := fs.Duration("timeout", 0, "how long each chair gets to close its cue (default [run] preflight_timeout, else 4m)")
 	keep := fs.Bool("keep", false, "leave the ensemble's CAO session running after the audition")
@@ -33,7 +35,7 @@ func auditionCommand(args []string) error {
 	if *worktree == "" {
 		return errors.New("-worktree is required")
 	}
-	wt, err := filepath.EvalSymlinks(*worktree)
+	wt, err := worktreeDir(*worktree)
 	if err != nil {
 		return err
 	}
@@ -41,11 +43,8 @@ func auditionCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	s, chairs, err := runChairs(s, *name, roles)
+	s, chairs, members, err := lineUp(s, wt, *name, roles)
 	if err != nil {
-		return err
-	}
-	if err := checkPins(s.Policy, chairSpecs(s, roles), chairs); err != nil {
 		return err
 	}
 	if *timeout == 0 {
@@ -56,7 +55,6 @@ func auditionCommand(args []string) error {
 		return err
 	}
 	policy := s.Policy
-	members := ensemble.MembersOf(chairs)
 	for i, m := range members {
 		members[i].Chair, _ = policy.Chair(roleSteps[m.Part], m.Chair, "", 0)
 	}

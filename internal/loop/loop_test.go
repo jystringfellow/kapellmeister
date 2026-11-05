@@ -569,3 +569,17 @@ func TestTerminalsAreLabelledWithRunAndRole(t *testing.T) {
 		}
 	}
 }
+
+func TestAChairsOwnTimeoutBoundsItsStepsAndTheStepTimeoutBoundsTheRest(t *testing.T) {
+	eng, fake, _ := newEngine(t, passing)
+	eng.Config.StepTimeout = 40 * time.Minute
+	eng.Config.Chairs.Implementer.Timeout = 90 * time.Minute
+	eng.Config.Chairs.Reviewers[0].Timeout = 5 * time.Minute
+	run(t, eng)
+	want := map[string]time.Duration{"plan": 40 * time.Minute, "implement": 90 * time.Minute, "review": 5 * time.Minute, "gate": 40 * time.Minute}
+	for _, s := range fake.steps {
+		if limit, ok := want[s.Name]; ok && s.Timeout != limit {
+			t.Errorf("%s ran with timeout %s, want %s", s.Name, s.Timeout, limit)
+		}
+	}
+}

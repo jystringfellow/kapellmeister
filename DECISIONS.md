@@ -50,3 +50,17 @@ CAO bugs live in the CAO stepper and are removed once the fix ships. This scopes
 decision: km keeps its own loop, the score, but not its own team plumbing. Evidence: the
 ensemble spike in `spike/SPIKE.md`, which found CAO covers boot, sections and sibling discovery,
 and lacks acknowledged messages, an operator mailbox and restart recovery.
+
+## 2026-11-05: Repositories may check in ensembles as files
+
+This narrows "Ensembles live only in ~/.kapellmeister". Codeowners often know which ensemble gets
+the best results in their codebase, so a repository may check in
+`.kapellmeister/ensembles/NAME.toml`, which seats chairs in sections. The machine-bound part stays
+with the user. A repository file names only agents, each with an optional tier, never profiles or
+models. Each chair lists agents in order of preference and plays the first one in the user's
+`[agents] available`. This follows OpenRig's split between a portable spec and machine bindings.
+A user's own file of the same name shadows the repository's. `[ensembles]` in the repository config
+stays rejected. Evidence: `TestARepositoryEnsembleNamesOnlyAgentsWhileAUserEnsembleMayNameAnyChair`,
+`TestAChairPlaysTheFirstOfItsAgentsThatTheUserHas`,
+`TestAUserEnsembleFileShadowsTheRepositorysOfTheSameName` and
+`TestEnsemblesInTheRepositoryConfigAreRejected`.
