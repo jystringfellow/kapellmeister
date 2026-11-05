@@ -26,7 +26,7 @@ changes here. Checked-in specs became a second source of truth that drifted from
 
 ## 2026-11-04: Ensembles live only in ~/.kapellmeister
 
-Ensembles name agents, and agents depend on the user's accounts, the same reason `[seats]` is
+Ensembles name agents, and agents depend on the user's accounts, the same reason `[chairs]` is
 machine-only. The repository config rejects `[ensembles]`; user config accepts it. Evidence:
 `TestEnsemblesInTheRepositoryConfigAreRejected` and `TestANamedEnsembleLoadsFromTheUserConfig`.
 

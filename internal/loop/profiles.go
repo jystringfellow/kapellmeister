@@ -5,7 +5,7 @@ import (
 	"slices"
 )
 
-const seatInstructions = "You are a seat in a kapellmeister engineering loop. Follow each step's instructions exactly, write requested files exactly where asked, and keep chat replies short.\n"
+const chairInstructions = "You are a chair in a kapellmeister engineering loop. Follow each step's instructions exactly, write requested files exactly where asked, and keep chat replies short.\n"
 
 var effortConfigKey = map[string]string{
 	"claude_code": "claudeConfig:\n  effort: %s\n",
@@ -26,8 +26,8 @@ func EffortProfileSource(provider, base, effort string) (string, error) {
 		return "", fmt.Errorf("%s does not support effort %q", provider, effort)
 	}
 	name := EffortProfile(base, effort)
-	return fmt.Sprintf("---\nname: %s\ndescription: kapellmeister seat at %s effort; kapellmeister passes the model per step\nprovider: %s\nrole: developer\n"+effortConfigKey[provider]+"---\n\n%s",
-		name, effort, provider, effort, seatInstructions), nil
+	return fmt.Sprintf("---\nname: %s\ndescription: kapellmeister chair at %s effort; kapellmeister passes the model per step\nprovider: %s\nrole: developer\n"+effortConfigKey[provider]+"---\n\n%s",
+		name, effort, provider, effort, chairInstructions), nil
 }
 
 func generatedBaseList() string {
@@ -40,7 +40,7 @@ type EffortVariant struct {
 
 func (v EffortVariant) Name() string { return EffortProfile(v.Base, v.Effort) }
 
-func (p *Policy) EffortVariants(steps map[string][]Seat) []EffortVariant {
+func (p *Policy) EffortVariants(steps map[string][]Chair) []EffortVariant {
 	if p == nil {
 		return nil
 	}
@@ -51,16 +51,16 @@ func (p *Policy) EffortVariants(steps map[string][]Seat) []EffortVariant {
 		if !ok {
 			continue
 		}
-		for _, seat := range steps[key] {
-			if seat.Model != "" {
+		for _, chair := range steps[key] {
+			if chair.Model != "" {
 				continue
 			}
 			for i := tierIndex(step.Min); i >= 0 && i <= tierIndex(step.Max); i++ {
-				spec := p.Tiers[seat.Provider][TierNames[i]]
+				spec := p.Tiers[chair.Provider][TierNames[i]]
 				if spec.Effort == "" || spec.Effort == InheritEffort {
 					continue
 				}
-				v := EffortVariant{Provider: seat.Provider, Base: seat.Profile, Effort: spec.Effort}
+				v := EffortVariant{Provider: chair.Provider, Base: chair.Profile, Effort: spec.Effort}
 				if !seen[v] {
 					seen[v] = true
 					out = append(out, v)

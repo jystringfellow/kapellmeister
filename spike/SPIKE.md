@@ -1,9 +1,9 @@
-# kapellmeister spike: CAO seat behaviour
+# kapellmeister spike: CAO chair behaviour
 
 Run 2026-11-03 against CAO 2.5.4 (`main` at `ab9bbaab`), tmux backend. Raw records are in
 `results/results.jsonl`; `go run . report` prints them.
 
-Seats: Claude Code `claude-haiku-5-5` (effort low), Codex `gpt-6-luna` (effort low), Copilot
+Chairs: Claude Code `claude-haiku-5-5` (effort low), Codex `gpt-6-luna` (effort low), Copilot
 `auto` (Fusion), Copilot `claude-haiku-5.5`, Antigravity `Gemini 3.8 Flash (Low)`.
 
 ## Matrix
@@ -21,7 +21,7 @@ Seats: Claude Code `claude-haiku-5-5` (effort low), Codex `gpt-6-luna` (effort l
 
 ## Findings
 
-1. **Starting each seat at its repo's worktree root works across repos.** No seat saw the other
+1. **Starting each chair at its repo's worktree root works across repos.** No chair saw the other
    repo's canary.
 2. **Each CLI reads a different set of instruction files.** Claude Code needs `CLAUDE.md`; agy
    reads `AGENTS.md` and `GEMINI.md`; Copilot reads all four. A repo with only `AGENTS.md` gives
@@ -52,7 +52,7 @@ Seats: Claude Code `claude-haiku-5-5` (effort low), Codex `gpt-6-luna` (effort l
     had to be trusted once inside a CAO-launched session. After that every Codex step ran in 14–33 s.
 
 12. **The script-tier workflow works for us once approved** (`run-c21a79b41df24b79`, 46 s): a seeded
-    random seat pick, a `subprocess` `go test`, `working_directory` set to the detached worktree, and
+    random chair pick, a `subprocess` `go test`, `working_directory` set to the detached worktree, and
     a review written to a file, which was complete and correct. The same step's captured
     `last_message`, stored in `workflow_run_step.result_json`, was Copilot's
     `$ Shell Show most recent commit…` progress line, which confirms finding 3 inside workflows.
@@ -62,7 +62,7 @@ Seats: Claude Code `claude-haiku-5-5` (effort low), Codex `gpt-6-luna` (effort l
     (model, `model_honored`), `workflow_run` (inputs, plan, git baseline) and `decision_records`.
     kapellmeister must record its own rounds, verdicts, durations and outcomes.
 14. **Codex's `codexConfig.sandbox_mode: read-only` does not hold.** CAO launches Codex with
-    `--yolo`, and the gate seat edited `clamp.go`. A `codexProfile` pointing at a
+    `--yolo`, and the gate chair edited `clamp.go`. A `codexProfile` pointing at a
     `$CODEX_HOME/<name>.config.toml` with `sandbox_mode = "read-only"` drops `--yolo`, and that gate
     refused: "I'm not able to edit files in this read-only workspace." Codex gates must use
     `codexProfile`.
@@ -76,17 +76,17 @@ Seats: Claude Code `claude-haiku-5-5` (effort low), Codex `gpt-6-luna` (effort l
 16. **Marketplace plugins re-trigger Codex hook review.** Codex keys hook trust to a content hash in
     `~/.codex/config.toml`. A git marketplace that auto-updates re-extracts the plugin, the hash
     changes, and the next launch stops at "1 hook needs review before it can run", which a
-    CAO-launched seat cannot answer. The per-seat preflight caught it in under a minute, where the
+    CAO-launched chair cannot answer. The per-chair preflight caught it in under a minute, where the
     rig before it lost three 40-minute timeouts.
-17. **Seats end their turn while background work is still running.** Claude Code ("1 shell still
+17. **Chairs end their turn while background work is still running.** Claude Code ("1 shell still
     running") and agy (a running `go test` plus a 30 s timer) both backgrounded the full suite and
     went idle, so CAO reported `completed` before the reply file existed. A nudge sent straight away
     recovered Claude but returned from agy in 4 s, with agy still busy. kapellmeister now waits up to
     `-reply-grace` (15 min) for the reply file before nudging, and tells implementers to run
     targeted tests in the foreground and leave the full suite to kapellmeister's verify.
-18. **The full workgraph suite flakes under load.** With four pods verifying back to back, a timing
+18. **The full workgraph suite flakes under load.** With four ensembles verifying back to back, a timing
     fact (`TestGitHubPRWatchPushHintWakesThePoller`) failed once and passed on retry. The baseline
-    and one retry tell real failures from flakes; seats were told about the retry and correctly
+    and one retry tell real failures from flakes; chairs were told about the retry and correctly
     judged the flake unrelated.
 19. **Effort is a profile setting in CAO 2.5.4, never a run-step field.** The model goes per step
     (`model` on run-step; every provider honours it, agy only when its profile pins no model), but
@@ -103,15 +103,15 @@ Seats: Claude Code `claude-haiku-5-5` (effort low), Codex `gpt-6-luna` (effort l
 
 ## Decisions
 
-- **Seats inherit the user's local CLI setup by default** (their hooks, plugins, skills and
-  instructions), and each seat can opt into an isolated home instead (`CODEX_HOME`,
-  `CLAUDE_CONFIG_DIR` and similar) per seat in config.
-- **kapellmeister runs a preflight per seat** that launches it once and fails fast on a trust or hook-review
+- **Chairs inherit the user's local CLI setup by default** (their hooks, plugins, skills and
+  instructions), and each chair can opt into an isolated home instead (`CODEX_HOME`,
+  `CLAUDE_CONFIG_DIR` and similar) per chair in config.
+- **kapellmeister runs a preflight per chair** that launches it once and fails fast on a trust or hook-review
   screen, telling the user to trust it inside a CAO-launched session, rather than waiting out a
   step's timeout.
 - **Replies come from files, never from screen capture**; a missing or empty reply file fails the
   step whatever CAO's status says.
-- **Reviewer and gate seats stay writable; kapellmeister enforces read-only itself**: it snapshots the tree
+- **Reviewer and gate chairs stay writable; kapellmeister enforces read-only itself**: it snapshots the tree
   (status, `git diff HEAD --binary`, HEAD) before and after each review and gate step and fails the
   run on any change. This works for every provider, so agy can sit as gate.
 - **A missing reply is awaited, then nudged once** in the same terminal before the step fails.
@@ -122,10 +122,10 @@ Seats: Claude Code `claude-haiku-5-5` (effort low), Codex `gpt-6-luna` (effort l
   `workflow_return`, and record almost nothing about the run (findings 9, 10, 12, 13), so kapellmeister would
   still own replies, telemetry and approval-free runs. Rechecked 2026-11-04: CAO main has not
   changed workflows since.
-- **Seats run on tiers (small, medium, large), not fixed models.** Each provider maps a tier to a
+- **Chairs run on tiers (small, medium, large), not fixed models.** Each provider maps a tier to a
   model and, for Claude and Codex, an effort; kapellmeister installs `km-<agent>-<effort>` profiles as
   needed and passes the model per step. Each step has a default tier and bounds (gate never below
-  medium, classify always small), all overridable in `.kapellmeister/config.toml`. A seat given an explicit
+  medium, classify always small), all overridable in `.kapellmeister/config.toml`. A chair given an explicit
   `provider:profile:model` is never re-tiered.
 - **A size decider picks the implement, review and gate tiers, shadow first.** The planner ends its
   plan with `Size: small|medium|large — reason`, or a configured command answers JSON on stdout,

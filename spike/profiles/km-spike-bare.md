@@ -1,6 +1,6 @@
 ---
 name: km-spike-bare
-description: kapellmeister spike seat with no provider or model, so the step decides
+description: kapellmeister spike chair with no provider or model, so the step decides
 role: developer
 mcpServers:
   cao-mcp-server:
@@ -9,4 +9,4 @@ mcpServers:
     args: []
 ---
 
-You are a seat in a kapellmeister spike run. Follow the task exactly and keep replies short.
+You are a chair in a kapellmeister spike run. Follow the task exactly and keep replies short.

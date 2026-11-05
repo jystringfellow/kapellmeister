@@ -24,7 +24,7 @@ func TestWithoutConfigFilesSettingsAreTheBuiltInDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := DefaultSettings()
-	if len(s.Files) != 0 || s.CAOURL != want.CAOURL || s.Rounds != 3 || s.Timeout != 40*time.Minute || s.Seats["implementer"] != "codex" {
+	if len(s.Files) != 0 || s.CAOURL != want.CAOURL || s.Rounds != 3 || s.Timeout != 40*time.Minute || s.Chairs["implementer"] != "codex" {
 		t.Fatalf("settings = %+v", s)
 	}
 }
@@ -39,7 +39,7 @@ url = "http://127.0.0.1:9999"
 timeout = "1h"
 rounds = 5
 
-[seats]
+[chairs]
 implementer = "claude"
 gate = "codex:km-codex:gpt-6-astra"
 
@@ -77,8 +77,8 @@ mode = "shadow"
 	if s.Rounds != 2 {
 		t.Fatalf("the repo's rounds should win, got %d", s.Rounds)
 	}
-	if s.Seats["implementer"] != "claude" || s.Seats["gate"] != "codex:km-codex:gpt-6-astra" || s.Seats["planner"] != "claude" {
-		t.Fatalf("seats = %v", s.Seats)
+	if s.Chairs["implementer"] != "claude" || s.Chairs["gate"] != "codex:km-codex:gpt-6-astra" || s.Chairs["planner"] != "claude" {
+		t.Fatalf("chairs = %v", s.Chairs)
 	}
 	if gate := s.Policy.Steps["gate"]; gate != (StepPolicy{Tier: "large", Min: "medium", Max: "large"}) {
 		t.Fatalf("gate = %+v, want the user's tier under the repo's floor", gate)
@@ -119,7 +119,7 @@ func TestSectionsInTheWrongLayerAreRejectedWithWhereTheyBelong(t *testing.T) {
 	if _, err := LoadSettings(writeUserConfig(t, "[test]\nverify = \"make\"\n"), ""); err == nil || !strings.Contains(err.Error(), "[test] belongs in the repository's .kapellmeister/config.toml") {
 		t.Fatalf("user [test]: %v", err)
 	}
-	for _, section := range []string{"[seats]\nimplementer = \"claude\"\n", "[cao]\nurl = \"x\"\n"} {
+	for _, section := range []string{"[chairs]\nimplementer = \"claude\"\n", "[cao]\nurl = \"x\"\n"} {
 		repo := t.TempDir()
 		writeConfig(t, repo, section)
 		home := t.TempDir()
@@ -133,7 +133,7 @@ func TestInvalidMachineSettingsNameTheFileAndKey(t *testing.T) {
 	cases := map[string]string{
 		"[run]\ntimeout = \"forty minutes\"\n": "run.timeout",
 		"[run]\nrounds = 0\n":                  "run.rounds",
-		"[seats]\nreviewr = \"claude\"\n":      "seats.reviewr",
+		"[chairs]\nreviewr = \"claude\"\n":     "chairs.reviewr",
 		"[steps.gate]\nmin = \"huge\"\n":       "steps.gate",
 	}
 	for body, key := range cases {
@@ -162,7 +162,7 @@ func TestHomeAndStateFollowTheirEnvironmentOverrides(t *testing.T) {
 }
 
 func TestANamedEnsembleLoadsFromTheUserConfig(t *testing.T) {
-	home := writeUserConfig(t, `[seats]
+	home := writeUserConfig(t, `[chairs]
 implementer = "codex"
 [ensembles.thorough]
 reviewer = "claude@large"
@@ -193,8 +193,8 @@ func TestAnUnknownKeyInAnEnsembleIsRejectedNamingTheFileAndKey(t *testing.T) {
 	}
 }
 
-func TestAnEnsembleOverlaysSeatsAndTakesTheRestFromSeatsThenDefaults(t *testing.T) {
-	home := writeUserConfig(t, `[seats]
+func TestAnEnsembleOverlaysChairsAndTakesTheRestFromChairsThenDefaults(t *testing.T) {
+	home := writeUserConfig(t, `[chairs]
 implementer = "codex@small"
 planner = "agy"
 [ensembles.thorough]
@@ -211,12 +211,12 @@ gate = "claude@large"
 	}
 	want := map[string]string{"planner": "agy", "implementer": "codex@small", "reviewer": "claude@large", "gate": "claude@large", "classifier": "claude"}
 	for role, spec := range want {
-		if selected.Seats[role] != spec {
-			t.Fatalf("%s = %q, want %q", role, selected.Seats[role], spec)
+		if selected.Chairs[role] != spec {
+			t.Fatalf("%s = %q, want %q", role, selected.Chairs[role], spec)
 		}
 	}
-	if s.Seats["reviewer"] != "copilot" || s.Seats["gate"] != "claude" || s.Seats["implementer"] != "codex@small" {
-		t.Fatalf("selection mutated the default seats: %v", s.Seats)
+	if s.Chairs["reviewer"] != "copilot" || s.Chairs["gate"] != "claude" || s.Chairs["implementer"] != "codex@small" {
+		t.Fatalf("selection mutated the default chairs: %v", s.Chairs)
 	}
 }
 
@@ -268,8 +268,8 @@ func TestEnsembleEscalateFalseTurnsEscalationOffAndCannotTurnItOn(t *testing.T) 
 	}
 }
 
-func TestReviewerAcceptsAListOfSeatsInSeatsAndInEnsembles(t *testing.T) {
-	s, err := LoadSettings(writeUserConfig(t, `[seats]
+func TestReviewerAcceptsAListOfChairsInChairsAndInEnsembles(t *testing.T) {
+	s, err := LoadSettings(writeUserConfig(t, `[chairs]
 reviewer = ["copilot", "claude@large"]
 [ensembles.pair]
 reviewer = ["agy", "codex"]
@@ -277,18 +277,18 @@ reviewer = ["agy", "codex"]
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Seats["reviewer"] != "copilot,claude@large" {
-		t.Fatal(s.Seats)
+	if s.Chairs["reviewer"] != "copilot,claude@large" {
+		t.Fatal(s.Chairs)
 	}
 	selected, err := s.WithEnsemble("pair")
-	if err != nil || selected.Seats["reviewer"] != "agy,codex" {
+	if err != nil || selected.Chairs["reviewer"] != "agy,codex" {
 		t.Fatalf("%+v %v", selected, err)
 	}
 }
 
-func TestAListOfSeatsForAnyOtherRoleIsRejectedNamingTheFileAndRole(t *testing.T) {
-	for _, section := range []string{"seats", "ensembles.x"} {
-		for _, role := range SeatRoles {
+func TestAListOfChairsForAnyOtherRoleIsRejectedNamingTheFileAndRole(t *testing.T) {
+	for _, section := range []string{"chairs", "ensembles.x"} {
+		for _, role := range ChairRoles {
 			if role == "reviewer" {
 				continue
 			}
@@ -300,7 +300,7 @@ func TestAListOfSeatsForAnyOtherRoleIsRejectedNamingTheFileAndRole(t *testing.T)
 		}
 	}
 	for _, value := range []string{`[]`, `["a,b"]`, `[""]`, `[1]`, `42`} {
-		if _, err := LoadSettings(writeUserConfig(t, "[seats]\nreviewer = "+value+"\n"), ""); err == nil {
+		if _, err := LoadSettings(writeUserConfig(t, "[chairs]\nreviewer = "+value+"\n"), ""); err == nil {
 			t.Errorf("accepted %s", value)
 		}
 	}

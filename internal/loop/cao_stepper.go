@@ -15,9 +15,9 @@ type CAOStepper struct {
 
 func (c CAOStepper) Run(ctx context.Context, s Step) (StepResult, error) {
 	req := cao.StepRequest{
-		Provider:         s.Seat.Provider,
-		Agent:            s.Seat.Profile,
-		Model:            s.Seat.Model,
+		Provider:         s.Chair.Provider,
+		Agent:            s.Chair.Profile,
+		Model:            s.Chair.Model,
 		Prompt:           s.Prompt,
 		WorkingDirectory: s.Dir,
 		ReuseTerminalID:  s.ReuseTerminal,

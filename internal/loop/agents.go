@@ -6,15 +6,15 @@ import (
 )
 
 type Agent struct {
-	Name string
-	Seat Seat
+	Name  string
+	Chair Chair
 }
 
 var DefaultAgents = []Agent{
-	{"claude", Seat{Provider: "claude_code", Profile: "km-claude"}},
-	{"codex", Seat{Provider: "codex", Profile: "km-codex"}},
-	{"copilot", Seat{Provider: "copilot_cli", Profile: "km-copilot"}},
-	{"agy", Seat{Provider: "antigravity_cli", Profile: "km-agy"}},
+	{"claude", Chair{Provider: "claude_code", Profile: "km-claude"}},
+	{"codex", Chair{Provider: "codex", Profile: "km-codex"}},
+	{"copilot", Chair{Provider: "copilot_cli", Profile: "km-copilot"}},
+	{"agy", Chair{Provider: "antigravity_cli", Profile: "km-agy"}},
 }
 
 func SelectAgents(names string) ([]Agent, error) {
