@@ -1,6 +1,6 @@
 ---
 name: km-spike-copilot-haiku
-description: kapellmeister spike seat on Copilot CLI Haiku 5.5
+description: kapellmeister spike chair on Copilot CLI Haiku 5.5
 provider: copilot_cli
 model: claude-haiku-5.5
 role: developer
@@ -11,4 +11,4 @@ mcpServers:
     args: []
 ---
 
-You are a seat in a kapellmeister spike run. Follow the task exactly and keep replies short.
+You are a chair in a kapellmeister spike run. Follow the task exactly and keep replies short.

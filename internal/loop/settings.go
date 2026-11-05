@@ -20,7 +20,7 @@ const (
 	homeDirName    = ".kapellmeister"
 )
 
-var SeatRoles = []string{"planner", "implementer", "reviewer", "gate", "classifier"}
+var ChairRoles = []string{"planner", "implementer", "reviewer", "gate", "classifier"}
 
 type TestConfig struct {
 	Verify string `toml:"verify"`
@@ -41,56 +41,56 @@ const (
 	GateWhenAlways = "always"
 )
 
-type SeatSpec struct {
+type ChairSpec struct {
 	Spec string
 	List bool
 }
 
-func (s *SeatSpec) UnmarshalTOML(v any) error {
+func (s *ChairSpec) UnmarshalTOML(v any) error {
 	switch v := v.(type) {
 	case string:
 		s.Spec = v
 	case []any:
 		s.List = true
 		if len(v) == 0 {
-			return errors.New("want at least one seat")
+			return errors.New("want at least one chair")
 		}
 		specs := make([]string, len(v))
 		for i, value := range v {
 			spec, ok := value.(string)
 			if !ok || strings.TrimSpace(spec) == "" || strings.Contains(spec, ",") {
-				return errors.New("want non-empty seat specs without commas")
+				return errors.New("want non-empty chair specs without commas")
 			}
 			specs[i] = spec
 		}
 		s.Spec = strings.Join(specs, ",")
 	default:
-		return errors.New("want a seat spec or a list of seat specs")
+		return errors.New("want a chair spec or a list of chair specs")
 	}
 	return nil
 }
 
 type Ensemble struct {
-	GateWhen    string   `toml:"gate_when" json:"gate_when,omitempty"`
-	Planner     SeatSpec `toml:"planner" json:"planner,omitempty"`
-	Implementer SeatSpec `toml:"implementer" json:"implementer,omitempty"`
-	Reviewer    SeatSpec `toml:"reviewer" json:"reviewer,omitempty"`
-	Gate        SeatSpec `toml:"gate" json:"gate,omitempty"`
-	Classifier  SeatSpec `toml:"classifier" json:"classifier,omitempty"`
-	Escalate    *bool    `toml:"escalate" json:"escalate,omitempty"`
+	GateWhen    string    `toml:"gate_when" json:"gate_when,omitempty"`
+	Planner     ChairSpec `toml:"planner" json:"planner,omitempty"`
+	Implementer ChairSpec `toml:"implementer" json:"implementer,omitempty"`
+	Reviewer    ChairSpec `toml:"reviewer" json:"reviewer,omitempty"`
+	Gate        ChairSpec `toml:"gate" json:"gate,omitempty"`
+	Classifier  ChairSpec `toml:"classifier" json:"classifier,omitempty"`
+	Escalate    *bool     `toml:"escalate" json:"escalate,omitempty"`
 }
 
-func (e Ensemble) Seats() map[string]string {
-	seats := map[string]string{}
+func (e Ensemble) Chairs() map[string]string {
+	chairs := map[string]string{}
 	for role, spec := range map[string]string{
 		"planner": e.Planner.Spec, "implementer": e.Implementer.Spec, "reviewer": e.Reviewer.Spec,
 		"gate": e.Gate.Spec, "classifier": e.Classifier.Spec,
 	} {
 		if spec != "" {
-			seats[role] = spec
+			chairs[role] = spec
 		}
 	}
-	return seats
+	return chairs
 }
 
 type FileConfig struct {
@@ -98,15 +98,12 @@ type FileConfig struct {
 	CAO  struct {
 		URL string `toml:"url"`
 	} `toml:"cao"`
-	Run       RunConfig           `toml:"run"`
-	Seats     map[string]SeatSpec `toml:"seats"`
-	Ensembles map[string]Ensemble `toml:"ensembles"`
-	Rig       struct {
-		Agents []string `toml:"agents"`
-	} `toml:"rig"`
-	Tiers  map[string]map[string]TierSpec `toml:"tiers"`
-	Steps  map[string]StepPolicy          `toml:"steps"`
-	Sizing SizingConfig                   `toml:"sizing"`
+	Run       RunConfig                      `toml:"run"`
+	Chairs    map[string]ChairSpec           `toml:"chairs"`
+	Ensembles map[string]Ensemble            `toml:"ensembles"`
+	Tiers     map[string]map[string]TierSpec `toml:"tiers"`
+	Steps     map[string]StepPolicy          `toml:"steps"`
+	Sizing    SizingConfig                   `toml:"sizing"`
 }
 
 type Settings struct {
@@ -118,9 +115,8 @@ type Settings struct {
 	Timeout          time.Duration       `json:"timeout"`
 	ReplyGrace       time.Duration       `json:"reply_grace"`
 	PreflightTimeout time.Duration       `json:"preflight_timeout"`
-	Seats            map[string]string   `json:"seats"`
+	Chairs           map[string]string   `json:"chairs"`
 	Ensembles        map[string]Ensemble `json:"ensembles,omitempty"`
-	RigAgents        []string            `json:"rig_agents"`
 	Policy           Policy              `json:"policy"`
 }
 
@@ -133,14 +129,14 @@ func (s Settings) WithEnsemble(name string) (Settings, error) {
 		}
 		return s, fmt.Errorf("unknown ensemble %q (%s)", name, defined)
 	}
-	seats := make(map[string]string, len(s.Seats))
-	for role, spec := range s.Seats {
-		seats[role] = spec
+	chairs := make(map[string]string, len(s.Chairs))
+	for role, spec := range s.Chairs {
+		chairs[role] = spec
 	}
-	for role, spec := range ensemble.Seats() {
-		seats[role] = spec
+	for role, spec := range ensemble.Chairs() {
+		chairs[role] = spec
 	}
-	s.Seats = seats
+	s.Chairs = chairs
 	s.GateWhen = firstSet(ensemble.GateWhen, GateWhenAny)
 	if ensemble.Escalate != nil && !*ensemble.Escalate {
 		off := 0
@@ -177,16 +173,15 @@ func DefaultSettings() Settings {
 		Timeout:          40 * time.Minute,
 		ReplyGrace:       15 * time.Minute,
 		PreflightTimeout: 4 * time.Minute,
-		Seats: map[string]string{
+		Chairs: map[string]string{
 			"planner": "claude", "implementer": "codex", "reviewer": "copilot", "gate": "claude", "classifier": "claude",
 		},
-		RigAgents: []string{"claude", "codex", "copilot", "agy"},
-		Policy:    DefaultPolicy(),
+		Policy: DefaultPolicy(),
 	}
 }
 
 var (
-	userOnlySections = []string{"cao", "seats", "rig", "ensembles"}
+	userOnlySections = []string{"cao", "chairs", "ensembles"}
 	repoOnlySections = []string{"test"}
 )
 
@@ -218,21 +213,21 @@ func LoadSettings(home, worktree string) (Settings, error) {
 
 	s.Ensembles = user.Ensembles
 	s.CAOURL = firstSet(os.Getenv(CAOURLEnv), user.CAO.URL, s.CAOURL)
-	for _, role := range sortedKeys(user.Seats) {
-		if !slices.Contains(SeatRoles, role) {
-			return s, fmt.Errorf("%s: seats.%s: unknown role (want %s)", userPath, role, strings.Join(SeatRoles, ", "))
+	for _, role := range sortedKeys(user.Chairs) {
+		if !slices.Contains(ChairRoles, role) {
+			return s, fmt.Errorf("%s: chairs.%s: unknown role (want %s)", userPath, role, strings.Join(ChairRoles, ", "))
 		}
-		if user.Seats[role].List && role != "reviewer" {
-			return s, fmt.Errorf("%s: seats.%s: only reviewer takes a list of seats", userPath, role)
+		if user.Chairs[role].List && role != "reviewer" {
+			return s, fmt.Errorf("%s: chairs.%s: only reviewer takes a list of chairs", userPath, role)
 		}
-		s.Seats[role] = user.Seats[role].Spec
+		s.Chairs[role] = user.Chairs[role].Spec
 	}
 	for _, name := range sortedKeys(user.Ensembles) {
 		ensemble := user.Ensembles[name]
-		specs := map[string]SeatSpec{"planner": ensemble.Planner, "implementer": ensemble.Implementer, "reviewer": ensemble.Reviewer, "gate": ensemble.Gate, "classifier": ensemble.Classifier}
-		for _, role := range SeatRoles {
+		specs := map[string]ChairSpec{"planner": ensemble.Planner, "implementer": ensemble.Implementer, "reviewer": ensemble.Reviewer, "gate": ensemble.Gate, "classifier": ensemble.Classifier}
+		for _, role := range ChairRoles {
 			if specs[role].List && role != "reviewer" {
-				return s, fmt.Errorf("%s: ensembles.%s.%s: only reviewer takes a list of seats", userPath, name, role)
+				return s, fmt.Errorf("%s: ensembles.%s.%s: only reviewer takes a list of chairs", userPath, name, role)
 			}
 		}
 		if !user.md.IsDefined("ensembles", name, "gate_when") {
@@ -245,9 +240,6 @@ func LoadSettings(home, worktree string) (Settings, error) {
 		}
 	}
 
-	if len(user.Rig.Agents) > 0 {
-		s.RigAgents = user.Rig.Agents
-	}
 	for _, layer := range []loadedConfig{user, repo} {
 		if err := s.applyRun(layer); err != nil {
 			return s, err

@@ -6,22 +6,21 @@ CLI, Antigravity) through [CLI Agent Orchestrator](https://github.com/awslabs/cl
 works in a throwaway detached worktree and leaves its change uncommitted for you to ship.
 
 ```sh
-km run -repo ~/Code/app -task-file task.md [-ensemble thorough]  # one pod
-km rig -repo ~/Code/app -task-file task.md        # every agent in every seat, one pod each
+km run -repo ~/Code/app -task-file task.md [-ensemble thorough]  # one ensemble
 km preflight -worktree DIR [-tier large]          # check each agent starts and answers
 km config [-worktree DIR]                         # show the effective settings and their files
 ```
 
-Seats default to claude plans, codex implements, copilot reviews, claude gates and classifies.
-Override any seat with `-planner`, `-implementer`, `-reviewer`, `-gate` or `-classifier`, as an
+Chairs default to claude plans, codex implements, copilot reviews, claude gates and classifies.
+Override any chair with `-planner`, `-implementer`, `-reviewer`, `-gate` or `-classifier`, as an
 agent (`claude`, `codex`, `copilot`, `agy`) or `provider:profile[:model]`. Append `@small`,
-`@medium` or `@large` to pin a seat's tier, for example `-reviewer claude@large`. A seat with an
+`@medium` or `@large` to pin a chair's tier, for example `-reviewer claude@large`. A chair with an
 explicit model always runs that model and cannot also use `@tier`.
 
-The reviewer role can have several seats. Use `-reviewer copilot,claude@large` to replace the
+The reviewer role can have several chairs. Use `-reviewer copilot,claude@large` to replace the
 whole configured reviewer list for one run. Each reviewer runs concurrently in its own CAO
 terminal and resolves its tier separately: pinned reviewers keep their tier, while unpinned
-reviewers follow sizing. Other roles have one seat; `km rig` keeps one reviewer per pod.
+reviewers follow sizing. Other roles have one chair.
 
 ## Configuration
 
@@ -29,12 +28,12 @@ kapellmeister layers two files over its built-in defaults; flags override both f
 optional, and unknown keys are an error.
 
 - **`~/.kapellmeister/config.toml`** (`$KAPELLMEISTER_HOME` moves it) holds what depends on your machine and accounts:
-  `[cao]`, `[seats]`, `[ensembles]`, `[rig]`, timeouts, and the model each tier means for you.
+  `[cao]`, `[chairs]`, `[ensembles]`, timeouts, and the model each tier means for you.
 - **`.kapellmeister/config.toml`** in the repository holds the contract everyone working in it shares:
   `[test]`, step tiers and floors, rounds and sizing.
 
 The repository's values win for `[run]` rounds and retries, `[steps]` and `[sizing]`; yours win
-for `[tiers]`, because only you know what your accounts can run. `[cao]`, `[seats]`, `[ensembles]` and `[rig]`
+for `[tiers]`, because only you know what your accounts can run. `[cao]`, `[chairs]` and `[ensembles]`
 are machine-only and `[test]` is repository-only; putting one in the wrong file is an error.
 `$CAO_API_BASE_URL` overrides `[cao] url`. State lives in `~/.kapellmeister/state` (`$KAPELLMEISTER_STATE_DIR`).
 
@@ -48,7 +47,7 @@ timeout = "40m"                     # each agent step
 reply_grace = "15m"
 preflight_timeout = "4m"
 
-[seats]                             # agent or provider:profile; optional @tier, or :model
+[chairs]                            # agent or provider:profile; optional @tier, or :model
 implementer = "claude"
 reviewer = "copilot"
 
@@ -58,19 +57,16 @@ gate_when = "any"
 gate = "claude@large"
 escalate = false
 
-[rig]
-agents = ["claude", "codex", "copilot", "agy"]
-
 [tiers.copilot_cli]
 large = { model = "claude-sonnet-5.5" }
 ```
 
 Select a named ensemble for a run with `km run -ensemble thorough` alongside the usual task and
-repository flags. Its seats overlay `[seats]`, then built-in defaults for omitted roles. Without
-`-ensemble`, the run uses `[seats]` as usual. Role flags override the selected ensemble's seats;
+repository flags. Its chairs overlay `[chairs]`, then built-in defaults for omitted roles. Without
+`-ensemble`, the run uses `[chairs]` as usual. Role flags override the selected ensemble's chairs;
 unknown ensemble names are an error listing the defined names. `km config` lists each ensemble
-and its seats. Ensembles belong only in `~/.kapellmeister/config.toml`, because they name agents
-that depend on your accounts. In `[seats]` and ensembles, `reviewer` accepts either a single
+and its chairs. Ensembles belong only in `~/.kapellmeister/config.toml`, because they name agents
+that depend on your accounts. In `[chairs]` and ensembles, `reviewer` accepts either a single
 string or an array such as `reviewer = ["copilot", "claude@large"]`. Other roles reject arrays.
 `km config` shows the reviewer lists and `gate_when`.
 
@@ -152,15 +148,15 @@ defaults are:
 
 A pin such as `claude@large` or `codex:km-codex@small` replaces the step's default tier and sizing
 does not move it. The repository's `[steps.<step>]` min and max still clamp it: a gate pinned to
-small runs at medium with the default gate floor. Pins work in `[seats]`, ensembles and role flags.
+small runs at medium with the default gate floor. Pins work in `[chairs]`, ensembles and role flags.
 A pin needs a `[tiers.<provider>]` table (built in or configured) with the tier it resolves to;
-`km run` and `km rig` refuse to start otherwise.
+`km run` refuses to start otherwise.
 An explicit model (`provider:profile:model`) cannot also carry `@tier`.
 
 Models must be IDs (CAO rejects display names). Effort applies to Claude Code and Codex only,
 because CAO cannot pass it to the others; `effort = "inherit"` uses the CLI's own setting. kapellmeister
 installs the `km-claude-<effort>` and `km-codex-<effort>` CAO profiles it needs on first use;
-seats on other profiles need a `<profile>-<effort>` copy installed by hand.
+chairs on other profiles need a `<profile>-<effort>` copy installed by hand.
 
 ### Sizing
 
@@ -184,8 +180,8 @@ in the selected ensemble to turn escalation off for that run. `true` or an omitt
 
 ## Telemetry
 
-Each run writes `telemetry.jsonl` under `~/.kapellmeister/state/runs/<run>/`: one record per step with its seat, tier, effort, tier source (`default`,
+Each run writes `telemetry.jsonl` under `~/.kapellmeister/state/runs/<run>/`: one record per step with its chair, tier, effort, tier source (`default`,
 `pinned`, `sized`, `escalated` or `explicit`), the model CAO reported, durations and verdicts, plus `size`
 and `escalate` records for each decision. With several reviewers, their review, nudge,
-classification and verdict records include `seat_name` (`reviewer-1`, `reviewer-2`, etc.).
-A failed review has verdict `FAILED` and its error; single-reviewer records omit `seat_name`.
+classification and verdict records include `chair_name` (`reviewer-1`, `reviewer-2`, etc.).
+A failed review has verdict `FAILED` and its error; single-reviewer records omit `chair_name`.

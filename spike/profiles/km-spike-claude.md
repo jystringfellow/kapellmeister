@@ -1,6 +1,6 @@
 ---
 name: km-spike-claude
-description: kapellmeister spike seat on Claude Code Haiku 5.5, low effort
+description: kapellmeister spike chair on Claude Code Haiku 5.5, low effort
 provider: claude_code
 model: claude-haiku-5-5
 role: developer
@@ -13,4 +13,4 @@ mcpServers:
     args: []
 ---
 
-You are a seat in a kapellmeister spike run. Follow the task exactly and keep replies short.
+You are a chair in a kapellmeister spike run. Follow the task exactly and keep replies short.

@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-type Seat struct {
+type Chair struct {
 	Provider string `json:"provider"`
 	Profile  string `json:"profile"`
 	Model    string `json:"model,omitempty"`
@@ -31,50 +31,50 @@ func SplitTier(spec string) (string, string, error) {
 	}
 	base, tier := spec[:i], spec[i+1:]
 	if tierIndex(tier) < 0 {
-		return "", "", fmt.Errorf("seat %q: unknown tier %q (want %s)", spec, tier, strings.Join(TierNames, ", "))
+		return "", "", fmt.Errorf("chair %q: unknown tier %q (want %s)", spec, tier, strings.Join(TierNames, ", "))
 	}
 	if parts := strings.SplitN(base, ":", 3); len(parts) == 3 && parts[2] != "" {
-		return "", "", fmt.Errorf("seat %q: an explicit model is never re-tiered; drop @%s or the model", spec, tier)
+		return "", "", fmt.Errorf("chair %q: an explicit model is never re-tiered; drop @%s or the model", spec, tier)
 	}
 	return base, tier, nil
 }
 
-func ParseSeat(spec string) (Seat, error) {
+func ParseChair(spec string) (Chair, error) {
 	base, tier, err := SplitTier(spec)
 	if err != nil {
-		return Seat{}, err
+		return Chair{}, err
 	}
 	parts := strings.SplitN(base, ":", 3)
 	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
-		return Seat{}, fmt.Errorf("seat %q: want provider:profile[:model]", spec)
+		return Chair{}, fmt.Errorf("chair %q: want provider:profile[:model]", spec)
 	}
-	s := Seat{Provider: parts[0], Profile: parts[1], Tier: tier}
+	s := Chair{Provider: parts[0], Profile: parts[1], Tier: tier}
 	if len(parts) == 3 {
 		s.Model = parts[2]
 	}
 	return s, nil
 }
 
-func (s Seat) String() string {
+func (s Chair) String() string {
 	if s.Model == "" {
 		return s.Provider + ":" + s.Profile
 	}
 	return s.Provider + ":" + s.Profile + ":" + s.Model
 }
 
-type Seats struct {
-	Planner     Seat   `json:"planner"`
-	Implementer Seat   `json:"implementer"`
-	Reviewers   []Seat `json:"reviewers"`
-	Gate        Seat   `json:"gate"`
-	Classifier  Seat   `json:"classifier"`
+type Chairs struct {
+	Planner     Chair   `json:"planner"`
+	Implementer Chair   `json:"implementer"`
+	Reviewers   []Chair `json:"reviewers"`
+	Gate        Chair   `json:"gate"`
+	Classifier  Chair   `json:"classifier"`
 }
 
 type Step struct {
-	SeatName      string
+	ChairName     string
 	Name          string
 	Round         int
-	Seat          Seat
+	Chair         Chair
 	Prompt        string
 	Dir           string
 	ReplyPath     string
@@ -115,7 +115,7 @@ type Config struct {
 	RunID         string
 	Task          string
 	Worktree      string
-	Seats         Seats
+	Chairs        Chairs
 	MaxRounds     int
 	StepTimeout   time.Duration
 	VerifyCommand string
@@ -126,12 +126,12 @@ type Config struct {
 }
 
 type Record struct {
-	SeatName     string        `json:"seat_name,omitempty"`
+	ChairName    string        `json:"chair_name,omitempty"`
 	At           time.Time     `json:"at"`
 	RunID        string        `json:"run_id"`
 	Round        int           `json:"round,omitempty"`
 	Step         string        `json:"step"`
-	Seat         *Seat         `json:"seat,omitempty"`
+	Chair        *Chair        `json:"chair,omitempty"`
 	Tier         string        `json:"tier,omitempty"`
 	Effort       string        `json:"effort,omitempty"`
 	TierSource   string        `json:"tier_source,omitempty"`
@@ -208,13 +208,13 @@ func (e *Engine) Run(ctx context.Context) (Result, error) {
 
 	plan := e.rel("plan.md")
 	askSize := e.sizing().Mode != SizingOff && e.sizing().Decider == DeciderPlanner
-	if _, err := e.step(ctx, Step{Name: "plan", Seat: cfg.Seats.Planner, Prompt: planPrompt(cfg.Task, plan, askSize), ReplyPath: plan}); err != nil {
+	if _, err := e.step(ctx, Step{Name: "plan", Chair: cfg.Chairs.Planner, Prompt: planPrompt(cfg.Task, plan, askSize), ReplyPath: plan}); err != nil {
 		return e.fail(res, err), nil
 	}
 	e.decideSize(ctx, plan)
 
 	implementer := ""
-	var implementerSeat Seat
+	var implementerChair Chair
 	misses := 0
 	defer func() {
 		if implementer != "" {
@@ -227,13 +227,13 @@ func (e *Engine) Run(ctx context.Context) (Result, error) {
 	for round := 1; round <= cfg.MaxRounds; round++ {
 		res.Rounds = round
 		summary := e.relf("implement-%d.md", round)
-		if seat, _ := e.resolve("implement", cfg.Seats.Implementer); implementer != "" && seat != implementerSeat {
+		if chair, _ := e.resolve("implement", cfg.Chairs.Implementer); implementer != "" && chair != implementerChair {
 			_ = e.Stepper.Release(context.WithoutCancel(ctx), implementer)
 			implementer = ""
 		}
-		implementerSeat, _ = e.resolve("implement", cfg.Seats.Implementer)
+		implementerChair, _ = e.resolve("implement", cfg.Chairs.Implementer)
 		out, err := e.step(ctx, Step{
-			Name: "implement", Round: round, Seat: cfg.Seats.Implementer,
+			Name: "implement", Round: round, Chair: cfg.Chairs.Implementer,
 			Prompt:    implementPrompt(cfg.Task, plan, summary, cfg.CheckCommand, feedback, feedbackGate),
 			ReplyPath: summary, KeepTerminal: true, ReuseTerminal: implementer,
 		})
@@ -263,7 +263,7 @@ func (e *Engine) Run(ctx context.Context) (Result, error) {
 				files = append(files, review.Path)
 			}
 			if review.Err != nil {
-				failed = append(failed, fmt.Sprintf("%s (%s)", review.Name, review.Seat))
+				failed = append(failed, fmt.Sprintf("%s (%s)", review.Name, review.Chair))
 			}
 			verdicts = append(verdicts, review.Verdict)
 		}
@@ -277,7 +277,7 @@ func (e *Engine) Run(ctx context.Context) (Result, error) {
 
 		gate := e.relf("gate-%d.md", round)
 		if errs, err := e.readOnlySteps(ctx, []Step{{
-			Name: "gate", Round: round, Seat: cfg.Seats.Gate,
+			Name: "gate", Round: round, Chair: cfg.Chairs.Gate,
 			Prompt:    gatePrompt(cfg.Task, plan, summary, files, failed, cfg.VerifyCommand, verify, verifyPath, gate),
 			ReplyPath: gate,
 		}}); err != nil {
@@ -330,7 +330,7 @@ func stepKey(name string) string {
 	return name
 }
 
-func (e *Engine) resolve(key string, seat Seat) (Seat, Assignment) {
+func (e *Engine) resolve(key string, chair Chair) (Chair, Assignment) {
 	want, bump := "", 0
 	switch key {
 	case "implement":
@@ -338,7 +338,7 @@ func (e *Engine) resolve(key string, seat Seat) (Seat, Assignment) {
 	case "review", "gate":
 		want = e.size
 	}
-	return e.Config.Policy.Seat(key, seat, want, bump)
+	return e.Config.Policy.Chair(key, chair, want, bump)
 }
 
 func (e *Engine) decideSize(ctx context.Context, planPath string) {
@@ -390,23 +390,23 @@ func (e *Engine) escalate(round, misses int) {
 	if after == 0 || misses/after <= e.bump {
 		return
 	}
-	_, before := e.resolve("implement", e.Config.Seats.Implementer)
+	_, before := e.resolve("implement", e.Config.Chairs.Implementer)
 	e.bump = misses / after
-	seat, now := e.resolve("implement", e.Config.Seats.Implementer)
+	chair, now := e.resolve("implement", e.Config.Chairs.Implementer)
 	if now.Tier == before.Tier {
 		return
 	}
 	detail := fmt.Sprintf("%d rounds without approval: implementer %s → %s", misses, before.Tier, now.Tier)
-	e.record(Record{RunID: e.Config.RunID, Round: round, Step: "escalate", Seat: &seat, Tier: now.Tier, Effort: now.Effort, TierSource: now.Source, Detail: detail})
+	e.record(Record{RunID: e.Config.RunID, Round: round, Step: "escalate", Chair: &chair, Tier: now.Tier, Effort: now.Effort, TierSource: now.Source, Detail: detail})
 	e.progress("  escalate: %s", detail)
 }
 
 func (e *Engine) step(ctx context.Context, s Step) (StepResult, error) {
 	if s.Assignment == (Assignment{}) {
-		s.Seat, s.Assignment = e.resolve(stepKey(s.Name), s.Seat)
+		s.Chair, s.Assignment = e.resolve(stepKey(s.Name), s.Chair)
 	}
 	s.Dir = e.Config.Worktree
-	labelName := firstSet(s.SeatName, s.Name)
+	labelName := firstSet(s.ChairName, s.Name)
 	if strings.HasPrefix(s.Name, "classify-") {
 		labelName = s.Name
 	}
@@ -452,10 +452,10 @@ func TerminalLabel(runID, stepName string) string {
 var errNoReply = errors.New("no reply file")
 
 func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
-	seat := s.Seat
-	rec := Record{RunID: e.Config.RunID, Round: s.Round, Step: s.Name, SeatName: s.SeatName, Seat: &seat, Reply: s.ReplyPath,
+	chair := s.Chair
+	rec := Record{RunID: e.Config.RunID, Round: s.Round, Step: s.Name, ChairName: s.ChairName, Chair: &chair, Reply: s.ReplyPath,
 		Tier: s.Assignment.Tier, Effort: s.Assignment.Effort, TierSource: s.Assignment.Source}
-	e.progress("→ %s %s%s", strings.TrimSpace(label(s.Name, s.Round)+" "+s.SeatName), seat, tierNote(s.Assignment))
+	e.progress("→ %s %s%s", strings.TrimSpace(label(s.Name, s.Round)+" "+s.ChairName), chair, tierNote(s.Assignment))
 	start := time.Now()
 	out, err := e.Stepper.Run(ctx, s)
 	rec.DurationMS = time.Since(start).Milliseconds()
@@ -476,11 +476,11 @@ func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 		}
 	}
 	e.record(rec)
-	e.progress("  %s in %s%s%s", strings.TrimSpace(s.SeatName+" "+statusOf(out, err)), secs(rec.DurationMS), waitNote(rec.ReplyWaitMS), errSuffix(err))
+	e.progress("  %s in %s%s%s", strings.TrimSpace(s.ChairName+" "+statusOf(out, err)), secs(rec.DurationMS), waitNote(rec.ReplyWaitMS), errSuffix(err))
 	return out, err
 }
 
-func SeatList(spec string) []string {
+func ChairList(spec string) []string {
 	specs := strings.Split(spec, ",")
 	for i := range specs {
 		specs[i] = strings.TrimSpace(specs[i])
@@ -514,41 +514,41 @@ func (e *Engine) readOnlySteps(ctx context.Context, steps []Step) ([]error, erro
 		s := steps[0]
 		e.record(Record{RunID: e.Config.RunID, Round: s.Round, Step: s.Name, TreeChanged: true, Error: "worktree modified"})
 		if len(steps) == 1 {
-			return nil, fmt.Errorf("%s seat %s modified the worktree", s.Name, s.Seat)
+			return nil, fmt.Errorf("%s chair %s modified the worktree", s.Name, s.Chair)
 		}
 		names := make([]string, len(steps))
 		for i, s := range steps {
-			names[i] = fmt.Sprintf("%s %s", s.SeatName, s.Seat)
+			names[i] = fmt.Sprintf("%s %s", s.ChairName, s.Chair)
 		}
-		return nil, fmt.Errorf("%s seats %s modified the worktree", s.Name, strings.Join(names, ", "))
+		return nil, fmt.Errorf("%s chairs %s modified the worktree", s.Name, strings.Join(names, ", "))
 	}
 	return errs, nil
 }
 
 type review struct {
 	Name    string
-	Seat    Seat
+	Chair   Chair
 	Path    string
 	Verdict string
 	Err     error
 }
 
 func (e *Engine) reviewRound(ctx context.Context, round int, plan, summary string, verify VerifyResult, verifyPath string) ([]review, error) {
-	seats := e.Config.Seats.Reviewers
-	if len(seats) == 0 {
+	chairs := e.Config.Chairs.Reviewers
+	if len(chairs) == 0 {
 		return nil, errors.New("no reviewers configured")
 	}
-	reviews := make([]review, len(seats))
-	steps := make([]Step, len(seats))
-	for i, seat := range seats {
-		name, seatName := ReviewerName(i, len(seats)), ""
+	reviews := make([]review, len(chairs))
+	steps := make([]Step, len(chairs))
+	for i, chair := range chairs {
+		name, chairName := ReviewerName(i, len(chairs)), ""
 		path := e.relf("review-%d.md", round)
-		if len(seats) > 1 {
-			seatName = name
+		if len(chairs) > 1 {
+			chairName = name
 			path = e.rel(fmt.Sprintf("review-%d-%d.md", round, i+1))
 		}
-		reviews[i] = review{Name: name, Seat: seat, Path: path}
-		steps[i] = Step{Name: "review", Round: round, Seat: seat, SeatName: seatName,
+		reviews[i] = review{Name: name, Chair: chair, Path: path}
+		steps[i] = Step{Name: "review", Round: round, Chair: chair, ChairName: chairName,
 			Prompt: reviewPrompt(e.Config.Task, plan, summary, e.Config.VerifyCommand, verify, verifyPath, path), ReplyPath: path}
 	}
 	errs, err := e.readOnlySteps(ctx, steps)
@@ -562,11 +562,11 @@ func (e *Engine) reviewRound(ctx context.Context, round int, plan, summary strin
 		}
 		reviews[i].Err, reviews[i].Verdict = err, VerdictFailed
 		failures = append(failures, fmt.Sprintf("%s: %s", reviews[i].Name, err))
-		e.record(Record{RunID: e.Config.RunID, Round: round, Step: "verdict-review", SeatName: steps[i].SeatName,
+		e.record(Record{RunID: e.Config.RunID, Round: round, Step: "verdict-review", ChairName: steps[i].ChairName,
 			Verdict: VerdictFailed, Reply: reviews[i].Path, Error: err.Error()})
 	}
-	if len(failures) == len(seats) {
-		if len(seats) == 1 {
+	if len(failures) == len(chairs) {
+		if len(chairs) == 1 {
 			return nil, errs[0]
 		}
 		return nil, fmt.Errorf("every reviewer failed: %s", strings.Join(failures, "; "))
@@ -577,7 +577,7 @@ func (e *Engine) reviewRound(ctx context.Context, round int, plan, summary strin
 			continue
 		}
 		wg.Go(func() {
-			reviews[i].Verdict, errs[i] = e.classify(ctx, round, "review", reviews[i].Path, steps[i].SeatName)
+			reviews[i].Verdict, errs[i] = e.classify(ctx, round, "review", reviews[i].Path, steps[i].ChairName)
 		})
 	}
 	wg.Wait()
@@ -612,10 +612,10 @@ func gateRuns(when string, verifyPassed bool, verdicts []string) bool {
 	return false
 }
 
-func (e *Engine) classify(ctx context.Context, round int, subject, path, seatName string) (string, error) {
+func (e *Engine) classify(ctx context.Context, round int, subject, path, chairName string) (string, error) {
 	verdictPath := strings.TrimSuffix(path, filepath.Ext(path)) + ".verdict"
 	out, err := e.step(ctx, Step{
-		Name: "classify-" + subject, Round: round, Seat: e.Config.Seats.Classifier, SeatName: seatName,
+		Name: "classify-" + subject, Round: round, Chair: e.Config.Chairs.Classifier, ChairName: chairName,
 		Prompt: classifyPrompt(subject, path, verdictPath), ReplyPath: verdictPath,
 	})
 	if err != nil {
@@ -623,8 +623,8 @@ func (e *Engine) classify(ctx context.Context, round int, subject, path, seatNam
 	}
 	text, _ := e.readReply(verdictPath)
 	verdict := firstVerdict(text, out.LastMessage)
-	e.record(Record{RunID: e.Config.RunID, Round: round, Step: "verdict-" + subject, SeatName: seatName, Verdict: verdict, Reply: path})
-	e.progress("  %s verdict: %s", firstSet(seatName, subject), verdict)
+	e.record(Record{RunID: e.Config.RunID, Round: round, Step: "verdict-" + subject, ChairName: chairName, Verdict: verdict, Reply: path})
+	e.progress("  %s verdict: %s", firstSet(chairName, subject), verdict)
 	return verdict, nil
 }
 

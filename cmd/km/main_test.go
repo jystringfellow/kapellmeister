@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"flag"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -18,12 +17,12 @@ func TestFlagsOverrideConfigOnlyWhenGiven(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv(loop.HomeEnv, home)
 	t.Setenv(loop.CAOURLEnv, "")
-	if err := os.WriteFile(loop.UserConfigPath(home), []byte("[run]\ntimeout = \"1h\"\nrounds = 5\n\n[seats]\nreviewer = \"agy\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(loop.UserConfigPath(home), []byte("[run]\ntimeout = \"1h\"\nrounds = 5\n\n[chairs]\nreviewer = \"agy\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	c := commonFlags(fs)
-	roles := seatFlags(fs, loop.SeatRoles...)
+	roles := chairFlags(fs, loop.ChairRoles...)
 	if err := fs.Parse([]string{"-rounds", "2", "-sizing", "on", "-implementer", "claude_code:km-claude:claude-fable-5-1"}); err != nil {
 		t.Fatal(err)
 	}
@@ -34,24 +33,24 @@ func TestFlagsOverrideConfigOnlyWhenGiven(t *testing.T) {
 	if s.Rounds != 2 || s.Timeout != time.Hour || s.Policy.Sizing.Mode != loop.SizingOn {
 		t.Fatalf("settings = rounds %d timeout %s sizing %s", s.Rounds, s.Timeout, s.Policy.Sizing.Mode)
 	}
-	seats, err := resolveSeats(seatSpecs(s, roles))
+	chairs, err := resolveChairs(chairSpecs(s, roles))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(seats.Reviewers, []loop.Seat{{Provider: "antigravity_cli", Profile: "km-agy"}}) {
-		t.Fatalf("reviewer = %+v, want the configured agent", seats.Reviewers)
+	if !slices.Equal(chairs.Reviewers, []loop.Chair{{Provider: "antigravity_cli", Profile: "km-agy"}}) {
+		t.Fatalf("reviewer = %+v, want the configured agent", chairs.Reviewers)
 	}
-	if seats.Implementer != (loop.Seat{Provider: "claude_code", Profile: "km-claude", Model: "claude-fable-5-1"}) {
-		t.Fatalf("implementer = %+v, want the flag", seats.Implementer)
+	if chairs.Implementer != (loop.Chair{Provider: "claude_code", Profile: "km-claude", Model: "claude-fable-5-1"}) {
+		t.Fatalf("implementer = %+v, want the flag", chairs.Implementer)
 	}
-	if seats.Planner != (loop.Seat{Provider: "claude_code", Profile: "km-claude"}) {
-		t.Fatalf("planner = %+v, want the default agent", seats.Planner)
+	if chairs.Planner != (loop.Chair{Provider: "claude_code", Profile: "km-claude"}) {
+		t.Fatalf("planner = %+v, want the default agent", chairs.Planner)
 	}
 }
 
-func TestUnknownSeatsAndBadSizingFlagsAreRejected(t *testing.T) {
+func TestUnknownChairsAndBadSizingFlagsAreRejected(t *testing.T) {
 	t.Setenv(loop.HomeEnv, t.TempDir())
-	if _, err := resolveSeat("gemini"); err == nil {
+	if _, err := resolveChair("gemini"); err == nil {
 		t.Fatal("accepted an unknown agent")
 	}
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
@@ -72,9 +71,9 @@ func TestAgentNamesAcceptAPinnedTier(t *testing.T) {
 		{"claude_code:custom@large", "claude_code", "custom", "large"},
 	} {
 		t.Run(tc.spec, func(t *testing.T) {
-			seat, err := resolveSeat(tc.spec)
-			if err != nil || seat != (loop.Seat{Provider: tc.provider, Profile: tc.profile, Tier: tc.tier}) {
-				t.Fatalf("%s: %+v %v", tc.spec, seat, err)
+			chair, err := resolveChair(tc.spec)
+			if err != nil || chair != (loop.Chair{Provider: tc.provider, Profile: tc.profile, Tier: tc.tier}) {
+				t.Fatalf("%s: %+v %v", tc.spec, chair, err)
 			}
 		})
 	}
@@ -84,7 +83,7 @@ func TestAgentNamesAcceptAPinnedTier(t *testing.T) {
 		{"claude_code:km-claude:claude-fable-5-1@large", "explicit model"},
 	} {
 		t.Run(tc.spec, func(t *testing.T) {
-			if _, err := resolveSeat(tc.spec); err == nil || !strings.Contains(err.Error(), tc.want) {
+			if _, err := resolveChair(tc.spec); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("%s: %v", tc.spec, err)
 			}
 		})
@@ -95,7 +94,7 @@ func ensembleSettings(t *testing.T) loop.Settings {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv(loop.HomeEnv, home)
-	if err := os.WriteFile(loop.UserConfigPath(home), []byte(`[seats]
+	if err := os.WriteFile(loop.UserConfigPath(home), []byte(`[chairs]
 reviewer = "agy"
 [ensembles.thorough]
 reviewer = "claude@large"
@@ -116,29 +115,29 @@ implementer = "codex@small"
 func TestARoleFlagOverridesTheSelectedEnsemble(t *testing.T) {
 	s := ensembleSettings(t)
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
-	roles := seatFlags(fs, loop.SeatRoles...)
+	roles := chairFlags(fs, loop.ChairRoles...)
 	if err := fs.Parse([]string{"-reviewer", "codex"}); err != nil {
 		t.Fatal(err)
 	}
-	selected, seats, err := runSeats(s, "thorough", roles)
+	selected, chairs, err := runChairs(s, "thorough", roles)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(seats.Reviewers, []loop.Seat{{Provider: "codex", Profile: "km-codex"}}) || seats.Gate != (loop.Seat{Provider: "claude_code", Profile: "km-claude", Tier: "large"}) || seats.Implementer != (loop.Seat{Provider: "codex", Profile: "km-codex"}) {
-		t.Fatalf("seats = %+v", seats)
+	if !slices.Equal(chairs.Reviewers, []loop.Chair{{Provider: "codex", Profile: "km-codex"}}) || chairs.Gate != (loop.Chair{Provider: "claude_code", Profile: "km-claude", Tier: "large"}) || chairs.Implementer != (loop.Chair{Provider: "codex", Profile: "km-codex"}) {
+		t.Fatalf("chairs = %+v", chairs)
 	}
 	if selected.Policy.EscalateAfter() != 0 || s.Policy.EscalateAfter() != 2 {
 		t.Fatalf("selected escalation = %d, original = %d", selected.Policy.EscalateAfter(), s.Policy.EscalateAfter())
 	}
-	_, plain, err := runSeats(s, "", nil)
-	if err != nil || !slices.Equal(plain.Reviewers, []loop.Seat{{Provider: "antigravity_cli", Profile: "km-agy"}}) {
-		t.Fatalf("default seats = %+v, %v", plain, err)
+	_, plain, err := runChairs(s, "", nil)
+	if err != nil || !slices.Equal(plain.Reviewers, []loop.Chair{{Provider: "antigravity_cli", Profile: "km-agy"}}) {
+		t.Fatalf("default chairs = %+v, %v", plain, err)
 	}
-	_, overlaid, err := runSeats(s, "", roles)
-	if err != nil || !slices.Equal(overlaid.Reviewers, seats.Reviewers) {
+	_, overlaid, err := runChairs(s, "", roles)
+	if err != nil || !slices.Equal(overlaid.Reviewers, chairs.Reviewers) {
 		t.Fatalf("flag without ensemble = %+v, %v", overlaid, err)
 	}
-	if _, _, err := runSeats(s, "nope", roles); err == nil || !strings.Contains(err.Error(), "careful, thorough") {
+	if _, _, err := runChairs(s, "nope", roles); err == nil || !strings.Contains(err.Error(), "careful, thorough") {
 		t.Fatalf("unknown ensemble: %v", err)
 	}
 }
@@ -151,7 +150,7 @@ func TestAnUnknownEnsembleFlagIsRejectedBeforeWorktreeCreation(t *testing.T) {
 	}
 }
 
-func TestConfigListsEachEnsembleAndItsSeats(t *testing.T) {
+func TestConfigListsEachEnsembleAndItsChairs(t *testing.T) {
 	s := ensembleSettings(t)
 	var out bytes.Buffer
 	printEnsembles(&out, s)
@@ -167,18 +166,18 @@ func TestConfigListsEachEnsembleAndItsSeats(t *testing.T) {
 }
 
 func TestAPinnedTierOnAProviderWithoutATierTableIsRejected(t *testing.T) {
-	for _, source := range []string{"seats", "ensemble", "flag"} {
-		for _, role := range loop.SeatRoles {
+	for _, source := range []string{"chairs", "ensemble", "flag"} {
+		for _, role := range loop.ChairRoles {
 			for _, tier := range loop.TierNames {
 				t.Run(source+"/"+role+"/"+tier, func(t *testing.T) {
 					home := t.TempDir()
 					spec := "myprov:myprof@" + tier
 					config, ensemble := "", ""
 					fs := flag.NewFlagSet("run", flag.ContinueOnError)
-					roles := seatFlags(fs, loop.SeatRoles...)
+					roles := chairFlags(fs, loop.ChairRoles...)
 					switch source {
-					case "seats":
-						config = "[seats]\n" + role + " = \"" + spec + "\"\n"
+					case "chairs":
+						config = "[chairs]\n" + role + " = \"" + spec + "\"\n"
 					case "ensemble":
 						config = "[ensembles.x]\n" + role + " = \"" + spec + "\"\n"
 						ensemble = "x"
@@ -194,12 +193,12 @@ func TestAPinnedTierOnAProviderWithoutATierTableIsRejected(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					s, seats, err := runSeats(s, ensemble, roles)
+					s, chairs, err := runChairs(s, ensemble, roles)
 					if err != nil {
 						t.Fatal(err)
 					}
-					want := role + ": seat \"" + spec + "\": no [tiers.myprov] to pin a tier against"
-					if err := checkPins(s.Policy, seatSpecs(s, roles), seats); err == nil || err.Error() != want {
+					want := role + ": chair \"" + spec + "\": no [tiers.myprov] to pin a tier against"
+					if err := checkPins(s.Policy, chairSpecs(s, roles), chairs); err == nil || err.Error() != want {
 						t.Fatalf("pin validation = %v, want %s", err, want)
 					}
 				})
@@ -209,13 +208,13 @@ func TestAPinnedTierOnAProviderWithoutATierTableIsRejected(t *testing.T) {
 	t.Run("original agent spec", func(t *testing.T) {
 		s := loop.DefaultSettings()
 		delete(s.Policy.Tiers, "codex")
-		s.Seats["reviewer"] = "codex@small"
-		_, seats, err := runSeats(s, "", nil)
+		s.Chairs["reviewer"] = "codex@small"
+		_, chairs, err := runChairs(s, "", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := `reviewer: seat "codex@small": no [tiers.codex] to pin a tier against`
-		if err := checkPins(s.Policy, s.Seats, seats); err == nil || err.Error() != want {
+		want := `reviewer: chair "codex@small": no [tiers.codex] to pin a tier against`
+		if err := checkPins(s.Policy, s.Chairs, chairs); err == nil || err.Error() != want {
 			t.Fatalf("pin validation = %v, want %s", err, want)
 		}
 	})
@@ -243,28 +242,28 @@ func TestAPinnedTierOnAProviderWithATierTableIsAccepted(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			s.Seats["reviewer"] = spec
-			_, seats, err := runSeats(s, "", nil)
+			s.Chairs["reviewer"] = spec
+			_, chairs, err := runChairs(s, "", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := checkPins(s.Policy, s.Seats, seats); err != nil {
+			if err := checkPins(s.Policy, s.Chairs, chairs); err != nil {
 				t.Fatal(err)
 			}
 		})
 	}
 }
 
-func TestAnUnpinnedSeatOnAProviderWithoutATierTableIsAccepted(t *testing.T) {
+func TestAnUnpinnedChairOnAProviderWithoutATierTableIsAccepted(t *testing.T) {
 	for _, spec := range []string{"myprov:myprof", "myprov:myprof:some-model"} {
 		t.Run(spec, func(t *testing.T) {
 			s := loop.DefaultSettings()
-			s.Seats["reviewer"] = spec
-			_, seats, err := runSeats(s, "", nil)
+			s.Chairs["reviewer"] = spec
+			_, chairs, err := runChairs(s, "", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := checkPins(s.Policy, s.Seats, seats); err != nil {
+			if err := checkPins(s.Policy, s.Chairs, chairs); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -274,20 +273,9 @@ func TestAnUnpinnedSeatOnAProviderWithoutATierTableIsAccepted(t *testing.T) {
 func TestRunRejectsAPinOnAProviderWithoutATierTableBeforeAnyCAOCall(t *testing.T) {
 	t.Setenv(loop.HomeEnv, t.TempDir())
 	err := runCommand([]string{"-task", "x", "-worktree", t.TempDir(), "-cao", unreachableCAO, "-reviewer", "myprov:myprof@large"})
-	want := `reviewer: seat "myprov:myprof@large": no [tiers.myprov] to pin a tier against`
+	want := `reviewer: chair "myprov:myprof@large": no [tiers.myprov] to pin a tier against`
 	if err == nil || err.Error() != want {
 		t.Errorf("run error = %v, want %s", err, want)
-	}
-}
-
-func TestRigRejectsAPinOnAProviderWithoutATierTableBeforeAnyCAOCall(t *testing.T) {
-	t.Setenv(loop.HomeEnv, t.TempDir())
-	t.Setenv(loop.StateEnv, t.TempDir())
-	t.Setenv("TMPDIR", t.TempDir())
-	err := rigCommand([]string{"-task", "x", "-repo", clonedRepo(t), "-base", "origin/main", "-cao", unreachableCAO, "-classifier", "myprov:myprof@large"})
-	want := `classifier: seat "myprov:myprof@large": no [tiers.myprov] to pin a tier against`
-	if err == nil || err.Error() != want {
-		t.Errorf("rig error = %v, want %s", err, want)
 	}
 }
 
@@ -297,22 +285,22 @@ func TestAPinOnATierItsProvidersTableLacksIsRejected(t *testing.T) {
 	for _, tc := range []struct {
 		role, spec, want string
 	}{
-		{"reviewer", "myprov:myprof@small", `reviewer: seat "myprov:myprof@small": [tiers.myprov] has no small tier to pin against`},
-		{"reviewer", "myprov:myprof@large", `reviewer: seat "myprov:myprof@large": [tiers.myprov] has no large tier to pin against`},
+		{"reviewer", "myprov:myprof@small", `reviewer: chair "myprov:myprof@small": [tiers.myprov] has no small tier to pin against`},
+		{"reviewer", "myprov:myprof@large", `reviewer: chair "myprov:myprof@large": [tiers.myprov] has no large tier to pin against`},
 		{"reviewer", "myprov:myprof@medium", ""},
 		{"gate", "myprov:myprof@small", ""},
 	} {
 		t.Run(tc.role+"/"+tc.spec, func(t *testing.T) {
 			specs := map[string]string{}
-			for role, spec := range s.Seats {
+			for role, spec := range s.Chairs {
 				specs[role] = spec
 			}
 			specs[tc.role] = tc.spec
-			seats, err := resolveSeats(specs)
+			chairs, err := resolveChairs(specs)
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = checkPins(s.Policy, specs, seats)
+			err = checkPins(s.Policy, specs, chairs)
 			if tc.want == "" && err != nil {
 				t.Fatalf("rejected a pin that resolves to a configured tier: %v", err)
 			}
@@ -325,41 +313,26 @@ func TestAPinOnATierItsProvidersTableLacksIsRejected(t *testing.T) {
 
 const unreachableCAO = "http://127.0.0.1:1"
 
-func clonedRepo(t *testing.T) string {
-	t.Helper()
-	origin, clone := t.TempDir(), filepath.Join(t.TempDir(), "clone")
-	for _, args := range [][]string{
-		{"-C", origin, "init", "-q", "-b", "main"},
-		{"-C", origin, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", "base"},
-		{"clone", "-q", origin, clone},
-	} {
-		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, out)
-		}
-	}
-	return clone
-}
-
 func TestTheReviewerFlagReplacesTheWholeConfiguredList(t *testing.T) {
 	s := ensembleSettings(t)
-	s.Seats["reviewer"] = "agy,copilot"
+	s.Chairs["reviewer"] = "agy,copilot"
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
-	roles := seatFlags(fs, loop.SeatRoles...)
+	roles := chairFlags(fs, loop.ChairRoles...)
 	if err := fs.Parse([]string{"-reviewer", "copilot,claude@large"}); err != nil {
 		t.Fatal(err)
 	}
-	_, seats, err := runSeats(s, "thorough", roles)
-	want := []loop.Seat{{Provider: "copilot_cli", Profile: "km-copilot"}, {Provider: "claude_code", Profile: "km-claude", Tier: "large"}}
-	if err != nil || !slices.Equal(seats.Reviewers, want) {
-		t.Fatalf("%+v %v", seats, err)
+	_, chairs, err := runChairs(s, "thorough", roles)
+	want := []loop.Chair{{Provider: "copilot_cli", Profile: "km-copilot"}, {Provider: "claude_code", Profile: "km-claude", Tier: "large"}}
+	if err != nil || !slices.Equal(chairs.Reviewers, want) {
+		t.Fatalf("%+v %v", chairs, err)
 	}
 }
 
-func TestOnlyReviewerFlagsAcceptSeveralSeatsAndErrorsNameTheSeat(t *testing.T) {
-	for _, role := range loop.SeatRoles {
+func TestOnlyReviewerFlagsAcceptSeveralChairsAndErrorsNameTheChair(t *testing.T) {
+	for _, role := range loop.ChairRoles {
 		s := loop.DefaultSettings()
-		s.Seats[role] = "claude,codex"
-		_, err := resolveSeats(s.Seats)
+		s.Chairs[role] = "claude,codex"
+		_, err := resolveChairs(s.Chairs)
 		if role == "reviewer" {
 			if err != nil {
 				t.Error(err)
@@ -371,8 +344,8 @@ func TestOnlyReviewerFlagsAcceptSeveralSeatsAndErrorsNameTheSeat(t *testing.T) {
 		}
 	}
 	s := loop.DefaultSettings()
-	s.Seats["reviewer"] = "copilot,unknown"
-	if _, err := resolveSeats(s.Seats); err == nil || !strings.Contains(err.Error(), "reviewer-2:") {
+	s.Chairs["reviewer"] = "copilot,unknown"
+	if _, err := resolveChairs(s.Chairs); err == nil || !strings.Contains(err.Error(), "reviewer-2:") {
 		t.Fatalf("%v", err)
 	}
 }
@@ -380,13 +353,13 @@ func TestOnlyReviewerFlagsAcceptSeveralSeatsAndErrorsNameTheSeat(t *testing.T) {
 func TestPinsAreCheckedForEveryReviewerWithItsNumberedName(t *testing.T) {
 	s := loop.DefaultSettings()
 	for _, spec := range []string{"myprov:custom@large", "myprov:custom@small"} {
-		s.Seats["reviewer"] = "copilot," + spec
-		seats, err := resolveSeats(s.Seats)
+		s.Chairs["reviewer"] = "copilot," + spec
+		chairs, err := resolveChairs(s.Chairs)
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := "reviewer-2: seat \"" + spec + "\": no [tiers.myprov] to pin a tier against"
-		if err := checkPins(s.Policy, s.Seats, seats); err == nil || err.Error() != want {
+		want := "reviewer-2: chair \"" + spec + "\": no [tiers.myprov] to pin a tier against"
+		if err := checkPins(s.Policy, s.Chairs, chairs); err == nil || err.Error() != want {
 			t.Fatalf("%v want %s", err, want)
 		}
 	}
@@ -394,22 +367,22 @@ func TestPinsAreCheckedForEveryReviewerWithItsNumberedName(t *testing.T) {
 
 func TestPreflightAndEffortProfilesCoverEveryReviewer(t *testing.T) {
 	s := loop.DefaultSettings()
-	s.Seats["reviewer"] = "copilot,claude@large,codex@small"
-	seats, err := resolveSeats(s.Seats)
+	s.Chairs["reviewer"] = "copilot,claude@large,codex@small"
+	chairs, err := resolveChairs(s.Chairs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(stepSeats(seats)["review"]) != 3 {
-		t.Fatal(stepSeats(seats))
+	if len(stepChairs(chairs)["review"]) != 3 {
+		t.Fatal(stepChairs(chairs))
 	}
-	preflight := defaultSeats(&s.Policy, seats)
-	for _, reviewer := range seats.Reviewers {
-		want, _ := s.Policy.Seat("review", reviewer, "", 0)
+	preflight := defaultChairs(&s.Policy, chairs)
+	for _, reviewer := range chairs.Reviewers {
+		want, _ := s.Policy.Chair("review", reviewer, "", 0)
 		if !slices.Contains(preflight, want) {
 			t.Fatalf("missing %+v in %v", want, preflight)
 		}
 	}
-	variants := s.Policy.EffortVariants(stepSeats(seats))
+	variants := s.Policy.EffortVariants(stepChairs(chairs))
 	var names []string
 	for _, v := range variants {
 		names = append(names, v.Name())
@@ -423,9 +396,9 @@ func TestPreflightAndEffortProfilesCoverEveryReviewer(t *testing.T) {
 
 func TestConfigShowsReviewerListsAndGateWhen(t *testing.T) {
 	s := loop.DefaultSettings()
-	s.Seats["reviewer"] = "copilot,claude@large"
+	s.Chairs["reviewer"] = "copilot,claude@large"
 	var out bytes.Buffer
-	printSeats(&out, s)
+	printChairs(&out, s)
 	if !strings.Contains(out.String(), "reviewer=copilot,claude@large") || !strings.Contains(out.String(), "gate_when=any") {
 		t.Fatal(out.String())
 	}

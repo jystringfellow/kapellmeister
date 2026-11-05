@@ -227,22 +227,22 @@ func (p Policy) EscalateAfter() int {
 	return *p.Sizing.EscalateAfter
 }
 
-func (p *Policy) Seat(stepKey string, seat Seat, want string, bump int) (Seat, Assignment) {
+func (p *Policy) Chair(stepKey string, chair Chair, want string, bump int) (Chair, Assignment) {
 	if p == nil {
-		return seat, Assignment{}
+		return chair, Assignment{}
 	}
-	if seat.Model != "" {
-		return seat, Assignment{Source: SourceExplicit}
+	if chair.Model != "" {
+		return chair, Assignment{Source: SourceExplicit}
 	}
-	_, tiered := p.Tiers[seat.Provider]
+	_, tiered := p.Tiers[chair.Provider]
 	step, known := p.Steps[stepKey]
 	if !tiered || !known {
-		return seat, Assignment{}
+		return chair, Assignment{}
 	}
 	source := SourceDefault
 	tier := step.Tier
-	if seat.Tier != "" {
-		tier, source = seat.Tier, SourcePinned
+	if chair.Tier != "" {
+		tier, source = chair.Tier, SourcePinned
 	} else if want != "" {
 		tier, source = want, SourceSized
 	}
@@ -254,22 +254,22 @@ func (p *Policy) Seat(stepKey string, seat Seat, want string, bump int) (Seat, A
 		tier = shifted
 	}
 	tier = clampTier(tier, step.Min, step.Max)
-	seat.Tier = ""
-	resolved, effort := p.At(seat, tier)
+	chair.Tier = ""
+	resolved, effort := p.At(chair, tier)
 	return resolved, Assignment{Tier: tier, Effort: effort, Source: source}
 }
 
-func (p *Policy) At(seat Seat, tier string) (Seat, string) {
-	spec, ok := p.Tiers[seat.Provider][tier]
+func (p *Policy) At(chair Chair, tier string) (Chair, string) {
+	spec, ok := p.Tiers[chair.Provider][tier]
 	if !ok {
-		return seat, ""
+		return chair, ""
 	}
-	seat.Model = spec.Model
+	chair.Model = spec.Model
 	if spec.Effort != "" && spec.Effort != InheritEffort {
-		seat.Profile = EffortProfile(seat.Profile, spec.Effort)
-		return seat, spec.Effort
+		chair.Profile = EffortProfile(chair.Profile, spec.Effort)
+		return chair, spec.Effort
 	}
-	return seat, ""
+	return chair, ""
 }
 
 func EffortProfile(base, effort string) string {

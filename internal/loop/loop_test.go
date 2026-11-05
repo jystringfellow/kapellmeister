@@ -111,11 +111,11 @@ func newEngine(t *testing.T, verify Verifier) (*Engine, *fakeStepper, *bytes.Buf
 	dir := newRepo(t)
 	fake := &fakeStepper{t: t, dir: dir, verdicts: map[string][]string{}, actions: map[string]func(Step){}}
 	var records bytes.Buffer
-	seat := Seat{Provider: "p", Profile: "x"}
+	chair := Chair{Provider: "p", Profile: "x"}
 	eng := &Engine{
 		Config: Config{
 			RunID: "r1", Task: "do the thing", Worktree: dir, MaxRounds: 3,
-			Seats:         Seats{Planner: seat, Implementer: seat, Reviewers: []Seat{seat}, Gate: seat, Classifier: seat},
+			Chairs:        Chairs{Planner: chair, Implementer: chair, Reviewers: []Chair{chair}, Gate: chair, Classifier: chair},
 			VerifyCommand: "check",
 		},
 		Stepper: fake,
@@ -290,23 +290,23 @@ func TestLateReplyFromBackgroundWorkIsAwaitedBeforeNudging(t *testing.T) {
 	}
 }
 
-func TestPreflightPassesReadySeatsAndReportsBlockedOnes(t *testing.T) {
+func TestPreflightPassesReadyChairsAndReportsBlockedOnes(t *testing.T) {
 	dir := newRepo(t)
 	fake := &fakeStepper{t: t, dir: dir, verdicts: map[string][]string{}, actions: map[string]func(Step){}}
 	fake.actions["preflight"] = func(s Step) {
-		if s.Seat.Provider == "ready" {
+		if s.Chair.Provider == "ready" {
 			fake.write(s.ReplyPath, "ready\n")
 		}
 	}
 	fake.errFor = func(s Step) error {
-		if s.Seat.Provider == "blocked" {
+		if s.Chair.Provider == "blocked" {
 			return errors.New("HTTP 504: did not complete")
 		}
 		return nil
 	}
 	fake.screens = map[string]string{}
-	seats := UniqueSeats(Seat{Provider: "ready", Profile: "a"}, Seat{Provider: "blocked", Profile: "b"}, Seat{Provider: "ready", Profile: "a"})
-	results, err := Preflight(context.Background(), &screenByProvider{fake, "  SessionStart hooks\n  1 hook needs review before it can run.\n"}, dir, seats, time.Minute)
+	chairs := UniqueChairs(Chair{Provider: "ready", Profile: "a"}, Chair{Provider: "blocked", Profile: "b"}, Chair{Provider: "ready", Profile: "a"})
+	results, err := Preflight(context.Background(), &screenByProvider{fake, "  SessionStart hooks\n  1 hook needs review before it can run.\n"}, dir, chairs, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,13 +356,13 @@ func TestEveryStepIsRecorded(t *testing.T) {
 	})
 }
 
-func TestParseSeat(t *testing.T) {
-	s, err := ParseSeat("codex:km-codex:gpt-6-luna")
-	if err != nil || s != (Seat{Provider: "codex", Profile: "km-codex", Model: "gpt-6-luna"}) {
+func TestParseChair(t *testing.T) {
+	s, err := ParseChair("codex:km-codex:gpt-6-luna")
+	if err != nil || s != (Chair{Provider: "codex", Profile: "km-codex", Model: "gpt-6-luna"}) {
 		t.Fatalf("got %+v, %v", s, err)
 	}
-	if _, err := ParseSeat("codex"); err == nil {
-		t.Fatal("want error for a seat without a profile")
+	if _, err := ParseChair("codex"); err == nil {
+		t.Fatal("want error for a chair without a profile")
 	}
 }
 
@@ -498,7 +498,7 @@ func shortPreflightGrace(t *testing.T) {
 	t.Cleanup(func() { preflightReplyGrace = saved })
 }
 
-func TestPreflightRetriesASeatOnceWhenNothingNeedsTheUser(t *testing.T) {
+func TestPreflightRetriesAChairOnceWhenNothingNeedsTheUser(t *testing.T) {
 	shortPreflightGrace(t)
 	dir := newRepo(t)
 	fake := &fakeStepper{t: t, dir: dir, verdicts: map[string][]string{}, actions: map[string]func(Step){}}
@@ -510,7 +510,7 @@ func TestPreflightRetriesASeatOnceWhenNothingNeedsTheUser(t *testing.T) {
 		}
 	}
 	fake.screens = map[string]string{"t1": "policy is still loading"}
-	results, err := Preflight(context.Background(), fake, dir, []Seat{{Provider: "slow", Profile: "x"}}, time.Minute)
+	results, err := Preflight(context.Background(), fake, dir, []Chair{{Provider: "slow", Profile: "x"}}, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -529,7 +529,7 @@ func TestPreflightWaitsBrieflyForAReplyWrittenAfterCAOReportsCompleted(t *testin
 			_ = os.WriteFile(filepath.Join(dir, s.ReplyPath), []byte("ready\n"), 0o644)
 		}()
 	}
-	results, err := Preflight(context.Background(), fake, dir, []Seat{{Provider: "late", Profile: "x"}}, time.Minute)
+	results, err := Preflight(context.Background(), fake, dir, []Chair{{Provider: "late", Profile: "x"}}, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}

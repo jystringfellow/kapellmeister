@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -16,18 +15,15 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"text/tabwriter"
 	"time"
 
 	"github.com/jystringfellow/kapellmeister/internal/cao"
 	"github.com/jystringfellow/kapellmeister/internal/loop"
-	"github.com/jystringfellow/kapellmeister/internal/rig"
 )
 
 const usage = `usage:
-  km run -repo DIR (-task TEXT | -task-file FILE) [-ensemble NAME] [flags]   one pod
-  km rig -repo DIR (-task TEXT | -task-file FILE) [flags]   every agent in every seat, one pod per rotation
+  km run -repo DIR (-task TEXT | -task-file FILE) [-ensemble NAME] [flags]   one ensemble
   km preflight -worktree DIR [-agents LIST] [-tier T]       check each agent starts and answers
   km config [-worktree DIR]                                  show the effective settings and the files they come from`
 
@@ -40,8 +36,6 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		err = runCommand(os.Args[2:])
-	case "rig":
-		err = rigCommand(os.Args[2:])
 	case "preflight":
 		err = preflightCommand(os.Args[2:])
 	case "config":
@@ -73,9 +67,9 @@ func commonFlags(fs *flag.FlagSet) common {
 		verify:     fs.String("verify", "", "command kapellmeister runs in the worktree before planning and after each implementation round; defaults to [test] verify in .kapellmeister/config.toml, then an executable .kapellmeister/verify"),
 		rounds:     fs.Int("rounds", 0, "maximum implement/review/gate rounds (default [run] rounds, else 3)"),
 		retries:    fs.Int("verify-retries", 0, "times to rerun a failing verify before counting it as failed (default [run] verify_retries, else 1)"),
-		preflight:  fs.Duration("preflight-timeout", 0, "how long each seat gets to answer the readiness check; 0 skips it (default [run] preflight_timeout, else 4m)"),
+		preflight:  fs.Duration("preflight-timeout", 0, "how long each chair gets to answer the readiness check; 0 skips it (default [run] preflight_timeout, else 4m)"),
 		timeout:    fs.Duration("timeout", 0, "timeout for each agent step (default [run] timeout, else 40m)"),
-		replyGrace: fs.Duration("reply-grace", 0, "how long to wait for a reply file after a seat goes idle, before nudging it (default [run] reply_grace, else 15m)"),
+		replyGrace: fs.Duration("reply-grace", 0, "how long to wait for a reply file after a chair goes idle, before nudging it (default [run] reply_grace, else 15m)"),
 		caoURL:     fs.String("cao", "", "cao-server URL (default $CAO_API_BASE_URL, then [cao] url, else http://127.0.0.1:9889)"),
 		sizing:     fs.String("sizing", "", "off, shadow or on: whether the size decider's answer picks the implement, review and gate tiers (default [sizing] mode, else shadow)"),
 	}
@@ -123,46 +117,46 @@ func (c common) settings(worktree string) (loop.Settings, error) {
 	return s, nil
 }
 
-func seatFlags(fs *flag.FlagSet, roles ...string) map[string]*string {
+func chairFlags(fs *flag.FlagSet, roles ...string) map[string]*string {
 	out := map[string]*string{}
 	for _, role := range roles {
 		listHelp := ""
 		if role == "reviewer" {
 			listHelp = "; accepts a comma-separated list replacing all configured reviewers"
 		}
-		out[role] = fs.String(role, "", role+" seat: an agent ("+strings.Join(agentNames(), ", ")+") or provider:profile[:model], with optional @small|@medium|@large (default [seats] "+role+" in "+loop.UserConfigPath(loop.Home())+")"+listHelp)
+		out[role] = fs.String(role, "", role+" chair: an agent ("+strings.Join(agentNames(), ", ")+") or provider:profile[:model], with optional @small|@medium|@large (default [chairs] "+role+" in "+loop.UserConfigPath(loop.Home())+")"+listHelp)
 	}
 	return out
 }
 
 func agentNames() []string {
 	var names []string
-	for _, a := range rig.DefaultAgents {
+	for _, a := range loop.DefaultAgents {
 		names = append(names, a.Name)
 	}
 	return names
 }
 
-func resolveSeat(spec string) (loop.Seat, error) {
+func resolveChair(spec string) (loop.Chair, error) {
 	base, tier, err := loop.SplitTier(spec)
 	if err != nil {
-		return loop.Seat{}, err
+		return loop.Chair{}, err
 	}
 	if !strings.Contains(base, ":") {
-		agents, err := rig.SelectAgents(base)
+		agents, err := loop.SelectAgents(base)
 		if err != nil {
-			return loop.Seat{}, fmt.Errorf("seat %q: want an agent (%s) or provider:profile[:model], with optional @small|@medium|@large", spec, strings.Join(agentNames(), ", "))
+			return loop.Chair{}, fmt.Errorf("chair %q: want an agent (%s) or provider:profile[:model], with optional @small|@medium|@large", spec, strings.Join(agentNames(), ", "))
 		}
-		seat := agents[0].Seat
-		seat.Tier = tier
-		return seat, nil
+		chair := agents[0].Chair
+		chair.Tier = tier
+		return chair, nil
 	}
-	return loop.ParseSeat(spec)
+	return loop.ParseChair(spec)
 }
 
-func seatSpecs(s loop.Settings, flags map[string]*string) map[string]string {
+func chairSpecs(s loop.Settings, flags map[string]*string) map[string]string {
 	specs := map[string]string{}
-	for role, spec := range s.Seats {
+	for role, spec := range s.Chairs {
 		specs[role] = spec
 	}
 	for role, value := range flags {
@@ -173,69 +167,69 @@ func seatSpecs(s loop.Settings, flags map[string]*string) map[string]string {
 	return specs
 }
 
-func resolveSeats(specs map[string]string) (loop.Seats, error) {
-	resolved := map[string]loop.Seat{}
-	var reviewers []loop.Seat
-	for _, role := range loop.SeatRoles {
+func resolveChairs(specs map[string]string) (loop.Chairs, error) {
+	resolved := map[string]loop.Chair{}
+	var reviewers []loop.Chair
+	for _, role := range loop.ChairRoles {
 		if role == "reviewer" {
-			list := loop.SeatList(specs[role])
+			list := loop.ChairList(specs[role])
 			for i, spec := range list {
-				seat, err := resolveSeat(spec)
+				chair, err := resolveChair(spec)
 				if err != nil {
-					return loop.Seats{}, fmt.Errorf("%s: %w", loop.ReviewerName(i, len(list)), err)
+					return loop.Chairs{}, fmt.Errorf("%s: %w", loop.ReviewerName(i, len(list)), err)
 				}
-				reviewers = append(reviewers, seat)
+				reviewers = append(reviewers, chair)
 			}
 			continue
 		}
 		if strings.Contains(specs[role], ",") {
-			return loop.Seats{}, fmt.Errorf("%s: seat %q: only reviewer takes a list of seats", role, specs[role])
+			return loop.Chairs{}, fmt.Errorf("%s: chair %q: only reviewer takes a list of chairs", role, specs[role])
 		}
-		seat, err := resolveSeat(specs[role])
+		chair, err := resolveChair(specs[role])
 		if err != nil {
-			return loop.Seats{}, fmt.Errorf("%s: %w", role, err)
+			return loop.Chairs{}, fmt.Errorf("%s: %w", role, err)
 		}
-		resolved[role] = seat
+		resolved[role] = chair
 	}
-	return loop.Seats{Planner: resolved["planner"], Implementer: resolved["implementer"], Reviewers: reviewers, Gate: resolved["gate"], Classifier: resolved["classifier"]}, nil
+	return loop.Chairs{Planner: resolved["planner"], Implementer: resolved["implementer"], Reviewers: reviewers, Gate: resolved["gate"], Classifier: resolved["classifier"]}, nil
 }
 
-func runSeats(s loop.Settings, ensemble string, roles map[string]*string) (loop.Settings, loop.Seats, error) {
+func runChairs(s loop.Settings, ensemble string, roles map[string]*string) (loop.Settings, loop.Chairs, error) {
 	if ensemble != "" {
 		var err error
 		s, err = s.WithEnsemble(ensemble)
 		if err != nil {
-			return s, loop.Seats{}, err
+			return s, loop.Chairs{}, err
 		}
 	}
-	seats, err := resolveSeats(seatSpecs(s, roles))
-	return s, seats, err
+	chairs, err := resolveChairs(chairSpecs(s, roles))
+	return s, chairs, err
 }
 
 var roleSteps = map[string]string{"planner": "plan", "implementer": "implement", "reviewer": "review", "gate": "gate", "classifier": "classify"}
 
-func checkPins(policy loop.Policy, specs map[string]string, seats loop.Seats) error {
-	for _, role := range loop.SeatRoles {
-		group := stepSeats(seats)[roleSteps[role]]
+func checkPins(policy loop.Policy, specs map[string]string, chairs loop.Chairs) error {
+	for _, role := range loop.ChairRoles {
+		group := stepChairs(chairs)[roleSteps[role]]
 		list := []string{specs[role]}
 		if role == "reviewer" {
-			list = loop.SeatList(specs[role])
+			list = loop.ChairList(specs[role])
 		}
-		for i, seat := range group {
+		for i, chair := range group {
 			name := role
 			if role == "reviewer" {
 				name = loop.ReviewerName(i, len(group))
 			}
-			if seat.Tier == "" {
+			if chair.Tier == "" {
 				continue
 			}
-			tiers := policy.Tiers[seat.Provider]
+			tiers := policy.Tiers[chair.Provider]
 			if len(tiers) == 0 {
-				return fmt.Errorf("%s: seat %q: no [tiers.%s] to pin a tier against", name, list[i], seat.Provider)
+				return fmt.Errorf("%s: chair %q: no [tiers.%s] to pin a tier against", name, list[i], chair.Provider)
 			}
-			_, assigned := policy.Seat(roleSteps[role], seat, "", 0)
+			_, assigned := policy.Chair(roleSteps[role], chair, "", 0)
 			if _, ok := tiers[assigned.Tier]; !ok {
-				return fmt.Errorf("%s: seat %q: [tiers.%s] has no %s tier to pin against", name, list[i], seat.Provider, assigned.Tier)
+				return fmt.Errorf("%s: chair %q: [tiers.%s] has no %s tier to pin against", name, list[i], chair.Provider, assigned.Tier)
 			}
 		}
 	}
@@ -246,8 +240,8 @@ func runCommand(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	c := commonFlags(fs)
 	worktree := fs.String("worktree", "", "use this existing worktree instead of creating one")
-	roles := seatFlags(fs, loop.SeatRoles...)
-	ensemble := fs.String("ensemble", "", "named seat set from [ensembles.NAME] in "+loop.UserConfigPath(loop.Home())+"; role flags override it")
+	roles := chairFlags(fs, loop.ChairRoles...)
+	ensemble := fs.String("ensemble", "", "named chair set from [ensembles.NAME] in "+loop.UserConfigPath(loop.Home())+"; role flags override it")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -259,7 +253,7 @@ func runCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	if _, _, err := runSeats(userSettings, *ensemble, roles); err != nil {
+	if _, _, err := runChairs(userSettings, *ensemble, roles); err != nil {
 		return err
 	}
 	wt := *worktree
@@ -281,11 +275,11 @@ func runCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	s, seats, err := runSeats(s, *ensemble, roles)
+	s, chairs, err := runChairs(s, *ensemble, roles)
 	if err != nil {
 		return err
 	}
-	if err := checkPins(s.Policy, seatSpecs(s, roles), seats); err != nil {
+	if err := checkPins(s.Policy, chairSpecs(s, roles), chairs); err != nil {
 		return err
 	}
 	verifyCmd, checkCmd, err := loop.ResolveHooks(wt, *c.verify)
@@ -302,16 +296,16 @@ func runCommand(args []string) error {
 		fmt.Printf("ensemble %s\n", *ensemble)
 	}
 	printPolicy(os.Stdout, &policy)
-	if err := ensureProfiles(ctx, client, &policy, stepSeats(seats)); err != nil {
+	if err := ensureProfiles(ctx, client, &policy, stepChairs(chairs)); err != nil {
 		return err
 	}
-	if err := preflight(ctx, client, wt, s.PreflightTimeout, defaultSeats(&policy, seats)...); err != nil {
+	if err := preflight(ctx, client, wt, s.PreflightTimeout, defaultChairs(&policy, chairs)...); err != nil {
 		return err
 	}
-	sum, err := runPod(ctx, podRun{
+	sum, err := runEnsemble(ctx, ensembleRun{
 		RunID: runID, StateDir: filepath.Join(loop.StateDir(), "runs", runID),
 		Config: loop.Config{
-			RunID: runID, Task: text, Worktree: wt, Seats: seats, GateWhen: s.GateWhen,
+			RunID: runID, Task: text, Worktree: wt, Chairs: chairs, GateWhen: s.GateWhen,
 			MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, CheckCommand: checkCmd, Policy: &policy,
 		},
 		Client: client, Verify: loop.Retrying(loop.CommandVerifier(verifyCmd), s.VerifyRetries), Progress: os.Stdout,
@@ -324,163 +318,11 @@ func runCommand(args []string) error {
 	return nil
 }
 
-func rigCommand(args []string) error {
-	fs := flag.NewFlagSet("rig", flag.ContinueOnError)
-	c := commonFlags(fs)
-	agents := fs.String("agents", "", "agents to rotate through the planner, implementer, reviewer and gate seats (default [rig] agents, else "+strings.Join(agentNames(), ",")+")")
-	classifier := seatFlags(fs, "classifier")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if *c.repo == "" {
-		return errors.New("-repo is required")
-	}
-	text, err := taskText(*c.task, *c.taskFile)
-	if err != nil {
-		return err
-	}
-	userSettings, err := c.settings("")
-	if err != nil {
-		return err
-	}
-	selected, err := rig.SelectAgents(firstNonEmpty(*agents, strings.Join(userSettings.RigAgents, ",")))
-	if err != nil {
-		return err
-	}
-	classifierSpec := seatSpecs(userSettings, classifier)["classifier"]
-	cls, err := resolveSeat(classifierSpec)
-	if err != nil {
-		return err
-	}
-	pods, err := rig.Rotation(selected, cls)
-	if err != nil {
-		return err
-	}
-
-	rigID := newRunID()
-	rigDir := filepath.Join(loop.StateDir(), "rigs", rigID)
-	if err := os.MkdirAll(rigDir, 0o755); err != nil {
-		return err
-	}
-	if err := fetchRepo(*c.repo); err != nil {
-		return err
-	}
-	worktrees := make([]string, len(pods))
-	for i := range pods {
-		wt, err := addWorktree(*c.repo, *c.base)
-		if err != nil {
-			return err
-		}
-		if worktrees[i], err = filepath.EvalSymlinks(wt); err != nil {
-			return err
-		}
-	}
-	s, err := c.settings(worktrees[0])
-	if err != nil {
-		return err
-	}
-	if err := checkPins(s.Policy, map[string]string{"classifier": classifierSpec}, loop.Seats{Classifier: cls}); err != nil {
-		return err
-	}
-
-	fmt.Printf("km rig %s\n  state  %s\n", rigID, rigDir)
-	for i, p := range pods {
-		fmt.Printf("  %s  %s\n        %s\n", p.Name, p.CastLine(), worktrees[i])
-	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-	client := cao.NewClient(s.CAOURL)
-	verifyCmd, checkCmd, err := loop.ResolveHooks(worktrees[0], *c.verify)
-	if err != nil {
-		return err
-	}
-	policy := s.Policy
-	printSources(os.Stdout, s)
-	printPolicy(os.Stdout, &policy)
-	var all []loop.Seat
-	needed := map[string][]loop.Seat{}
-	for _, p := range pods {
-		all = append(all, defaultSeats(&policy, p.Seats)...)
-		for k, v := range stepSeats(p.Seats) {
-			needed[k] = append(needed[k], v...)
-		}
-	}
-	if err := ensureProfiles(ctx, client, &policy, needed); err != nil {
-		return err
-	}
-	if err := preflight(ctx, client, worktrees[0], s.PreflightTimeout, all...); err != nil {
-		return err
-	}
-	verify := loop.Retrying(loop.CommandVerifier(verifyCmd), s.VerifyRetries)
-	if verifyCmd != "" {
-		fmt.Printf("→ verify[baseline] %s\n", verifyCmd)
-		start := time.Now()
-		v, err := verify(ctx, worktrees[0])
-		if err != nil {
-			return err
-		}
-		_ = os.WriteFile(filepath.Join(rigDir, "verify-baseline.txt"), []byte(v.Output), 0o644)
-		fmt.Printf("  exit %d in %s (%d attempt(s))\n", v.ExitCode, time.Since(start).Round(time.Second), v.Attempts)
-		if v.ExitCode != 0 {
-			return fmt.Errorf("verify already fails on %s before any change; see %s", *c.base, filepath.Join(rigDir, "verify-baseline.txt"))
-		}
-	}
-
-	var verifyMu, outMu sync.Mutex
-	sums := make([]podSummary, len(pods))
-	errs := make([]error, len(pods))
-	start := time.Now()
-	var wg sync.WaitGroup
-	for i, p := range pods {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			runID := rigID + "-" + p.Name
-			sums[i], errs[i] = runPod(ctx, podRun{
-				Pod: p.Name, Cast: p.Cast, RunID: runID, StateDir: filepath.Join(rigDir, p.Name),
-				Config: loop.Config{
-					RunID: runID, Task: text, Worktree: worktrees[i], Seats: p.Seats,
-					MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, CheckCommand: checkCmd, SkipBaseline: true, Policy: &policy,
-				},
-				Client: client, Verify: loop.Serialized(verify, &verifyMu),
-				Progress: &prefixWriter{mu: &outMu, w: os.Stdout, prefix: "[" + p.Name + "] "},
-			})
-		}()
-	}
-	wg.Wait()
-
-	for i, err := range errs {
-		if err != nil {
-			sums[i] = podSummary{Pod: pods[i].Name, Cast: pods[i].Cast, Result: loop.Result{Outcome: loop.Failed, Reason: err.Error(), Worktree: worktrees[i]}}
-		}
-	}
-	if err := writeJSON(filepath.Join(rigDir, "rig.json"), map[string]any{
-		"rig_id": rigID, "task": text, "verify": verifyCmd, "check": checkCmd, "duration_ms": time.Since(start).Milliseconds(), "pods": sums,
-	}); err != nil {
-		return err
-	}
-	fmt.Printf("\nrig %s finished in %s\n\n", rigID, time.Since(start).Round(time.Second))
-	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "POD\tPLANNER\tIMPLEMENTER\tREVIEWER\tGATE\tOUTCOME\tROUNDS\tTIME\tDIFF")
-	for _, s := range sums {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n", s.Pod, s.Cast["planner"], s.Cast["implementer"], s.Cast["reviewer"], s.Cast["gate"],
-			s.Outcome, s.Rounds, (time.Duration(s.DurationMS) * time.Millisecond).Round(time.Second), shortStat(s.DiffStat))
-	}
-	tw.Flush()
-	for _, s := range sums {
-		if s.Reason != "" {
-			fmt.Printf("%s: %s\n", s.Pod, s.Reason)
-		}
-	}
-	return nil
-}
-
 func preflightCommand(args []string) error {
 	fs := flag.NewFlagSet("preflight", flag.ContinueOnError)
-	worktree := fs.String("worktree", "", "git worktree to start the seats in")
-	agents := fs.String("agents", "", "agents to check (default [rig] agents, else "+strings.Join(agentNames(), ",")+")")
-	timeout := fs.Duration("timeout", 0, "how long each seat gets to answer (default [run] preflight_timeout, else 4m)")
+	worktree := fs.String("worktree", "", "git worktree to start the chairs in")
+	agents := fs.String("agents", "", "agents to check (default "+strings.Join(agentNames(), ",")+")")
+	timeout := fs.Duration("timeout", 0, "how long each chair gets to answer (default [run] preflight_timeout, else 4m)")
 	tier := fs.String("tier", "", "check each agent on this tier's model and effort (small, medium or large) instead of its profile's own")
 	caoURL := fs.String("cao", "", "cao-server URL (default $CAO_API_BASE_URL, then [cao] url, else http://127.0.0.1:9889)")
 	if err := fs.Parse(args); err != nil {
@@ -497,28 +339,28 @@ func preflightCommand(args []string) error {
 	if set["timeout"] {
 		s.PreflightTimeout = *timeout
 	}
-	selected, err := rig.SelectAgents(firstNonEmpty(*agents, strings.Join(s.RigAgents, ",")))
+	selected, err := loop.SelectAgents(firstNonEmpty(*agents, strings.Join(agentNames(), ",")))
 	if err != nil {
 		return err
 	}
 	client := cao.NewClient(firstNonEmpty(*caoURL, s.CAOURL))
-	var seats []loop.Seat
+	var chairs []loop.Chair
 	for _, a := range selected {
-		seats = append(seats, a.Seat)
+		chairs = append(chairs, a.Chair)
 	}
 	if *tier != "" {
 		pinned := loop.Policy{Tiers: s.Policy.Tiers, Steps: map[string]loop.StepPolicy{"plan": {Tier: *tier, Min: *tier, Max: *tier}}, Sizing: s.Policy.Sizing}
 		if err := pinned.Validate(); err != nil {
 			return err
 		}
-		if err := ensureProfiles(context.Background(), client, &pinned, map[string][]loop.Seat{"plan": seats}); err != nil {
+		if err := ensureProfiles(context.Background(), client, &pinned, map[string][]loop.Chair{"plan": chairs}); err != nil {
 			return err
 		}
-		for i, seat := range seats {
-			seats[i], _ = pinned.At(seat, *tier)
+		for i, chair := range chairs {
+			chairs[i], _ = pinned.At(chair, *tier)
 		}
 	}
-	return preflight(context.Background(), client, *worktree, s.PreflightTimeout, seats...)
+	return preflight(context.Background(), client, *worktree, s.PreflightTimeout, chairs...)
 }
 
 func configCommand(args []string) error {
@@ -534,8 +376,7 @@ func configCommand(args []string) error {
 	printSources(os.Stdout, s)
 	fmt.Printf("cao    %s\nstate  %s\nrun    rounds %d, verify retries %d, step timeout %s, reply grace %s, preflight %s\n",
 		s.CAOURL, loop.StateDir(), s.Rounds, s.VerifyRetries, s.Timeout, s.ReplyGrace, s.PreflightTimeout)
-	printSeats(os.Stdout, s)
-	fmt.Printf("rig    %s\n", strings.Join(s.RigAgents, ","))
+	printChairs(os.Stdout, s)
 	printEnsembles(os.Stdout, s)
 	printPolicy(os.Stdout, &s.Policy)
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
@@ -552,31 +393,31 @@ func configCommand(args []string) error {
 	return tw.Flush()
 }
 
-func printSeats(w io.Writer, s loop.Settings) {
-	var seats []string
-	for _, role := range loop.SeatRoles {
-		seats = append(seats, role+"="+s.Seats[role])
+func printChairs(w io.Writer, s loop.Settings) {
+	var chairs []string
+	for _, role := range loop.ChairRoles {
+		chairs = append(chairs, role+"="+s.Chairs[role])
 	}
-	fmt.Fprintf(w, "seats  %s gate_when=%s\n", strings.Join(seats, " "), s.GateWhen)
+	fmt.Fprintf(w, "chairs  %s gate_when=%s\n", strings.Join(chairs, " "), s.GateWhen)
 }
 
 func printEnsembles(w io.Writer, s loop.Settings) {
 	for _, name := range sortedKeys(s.Ensembles) {
 		ensemble := s.Ensembles[name]
-		specs := ensemble.Seats()
-		var seats []string
-		for _, role := range loop.SeatRoles {
+		specs := ensemble.Chairs()
+		var chairs []string
+		for _, role := range loop.ChairRoles {
 			if spec, ok := specs[role]; ok {
-				seats = append(seats, role+"="+spec)
+				chairs = append(chairs, role+"="+spec)
 			}
 		}
 		if ensemble.Escalate != nil {
-			seats = append(seats, fmt.Sprintf("escalate=%t", *ensemble.Escalate))
+			chairs = append(chairs, fmt.Sprintf("escalate=%t", *ensemble.Escalate))
 		}
 		if ensemble.GateWhen != "" {
-			seats = append(seats, "gate_when="+ensemble.GateWhen)
+			chairs = append(chairs, "gate_when="+ensemble.GateWhen)
 		}
-		fmt.Fprintf(w, "ensemble %s  %s\n", name, strings.Join(seats, " "))
+		fmt.Fprintf(w, "ensemble %s  %s\n", name, strings.Join(chairs, " "))
 	}
 }
 
@@ -605,24 +446,24 @@ func printPolicy(w io.Writer, p *loop.Policy) {
 	fmt.Fprintf(w, "tiers  %s\n       %s\n", strings.Join(steps, ", "), sizing)
 }
 
-func stepSeats(s loop.Seats) map[string][]loop.Seat {
-	return map[string][]loop.Seat{
+func stepChairs(s loop.Chairs) map[string][]loop.Chair {
+	return map[string][]loop.Chair{
 		"plan": {s.Planner}, "implement": {s.Implementer}, "review": s.Reviewers, "gate": {s.Gate}, "classify": {s.Classifier},
 	}
 }
 
-func defaultSeats(p *loop.Policy, s loop.Seats) []loop.Seat {
-	var out []loop.Seat
+func defaultChairs(p *loop.Policy, s loop.Chairs) []loop.Chair {
+	var out []loop.Chair
 	for _, key := range loop.StepKeys {
-		for _, seat := range stepSeats(s)[key] {
-			resolved, _ := p.Seat(key, seat, "", 0)
+		for _, chair := range stepChairs(s)[key] {
+			resolved, _ := p.Chair(key, chair, "", 0)
 			out = append(out, resolved)
 		}
 	}
 	return out
 }
 
-func ensureProfiles(ctx context.Context, client *cao.Client, p *loop.Policy, steps map[string][]loop.Seat) error {
+func ensureProfiles(ctx context.Context, client *cao.Client, p *loop.Policy, steps map[string][]loop.Chair) error {
 	variants := p.EffortVariants(steps)
 	if len(variants) == 0 {
 		return nil
@@ -668,12 +509,12 @@ func sortedKeys[V any](m map[string]V) []string {
 	return keys
 }
 
-func preflight(ctx context.Context, client *cao.Client, worktree string, timeout time.Duration, seats ...loop.Seat) error {
+func preflight(ctx context.Context, client *cao.Client, worktree string, timeout time.Duration, chairs ...loop.Chair) error {
 	if timeout == 0 {
 		return nil
 	}
-	unique := loop.UniqueSeats(seats...)
-	fmt.Printf("→ preflight %d seat(s)\n", len(unique))
+	unique := loop.UniqueChairs(chairs...)
+	fmt.Printf("→ preflight %d chair(s)\n", len(unique))
 	results, err := loop.Preflight(ctx, loop.CAOStepper{Client: client}, worktree, unique, timeout)
 	if err != nil {
 		return err
@@ -682,30 +523,30 @@ func preflight(ctx context.Context, client *cao.Client, worktree string, timeout
 	for _, r := range results {
 		d := (time.Duration(r.DurationMS) * time.Millisecond).Round(time.Second)
 		if r.OK {
-			fmt.Printf("  ok      %s (%s)%s\n", r.Seat, d, modelNote(r))
+			fmt.Printf("  ok      %s (%s)%s\n", r.Chair, d, modelNote(r))
 			continue
 		}
-		fmt.Printf("  BLOCKED %s (%s): %s\n", r.Seat, d, firstNonEmpty(r.Blocker, r.Error))
-		hint := r.Seat.String()
+		fmt.Printf("  BLOCKED %s (%s): %s\n", r.Chair, d, firstNonEmpty(r.Blocker, r.Error))
+		hint := r.Chair.String()
 		if r.Session != "" {
 			hint += fmt.Sprintf(": resolve it with `tmux attach -t %s`, then detach with Ctrl-b d", r.Session)
 		}
 		blocked = append(blocked, hint)
 	}
 	if len(blocked) > 0 {
-		return fmt.Errorf("preflight failed for %d seat(s):\n  %s", len(blocked), strings.Join(blocked, "\n  "))
+		return fmt.Errorf("preflight failed for %d chair(s):\n  %s", len(blocked), strings.Join(blocked, "\n  "))
 	}
 	return nil
 }
 
 func modelNote(r loop.PreflightResult) string {
-	if r.Seat.Model == "" {
+	if r.Chair.Model == "" {
 		return ""
 	}
 	if r.Honored != nil && !*r.Honored {
 		return fmt.Sprintf("; CAO did not apply the requested model (reported %q)", r.Model)
 	}
-	if r.Model != "" && r.Model != r.Seat.Model {
+	if r.Model != "" && r.Model != r.Chair.Model {
 		return fmt.Sprintf("; CAO reported model %q", r.Model)
 	}
 	return ""
@@ -720,9 +561,7 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-type podRun struct {
-	Pod      string
-	Cast     map[string]string
+type ensembleRun struct {
 	RunID    string
 	StateDir string
 	Config   loop.Config
@@ -731,88 +570,48 @@ type podRun struct {
 	Progress io.Writer
 }
 
-type podSummary struct {
-	Pod  string            `json:"pod,omitempty"`
-	Cast map[string]string `json:"cast,omitempty"`
+type ensembleSummary struct {
 	loop.Result
 	DurationMS int64  `json:"duration_ms"`
 	DiffStat   string `json:"diff_stat"`
 }
 
-func runPod(ctx context.Context, p podRun) (podSummary, error) {
+func runEnsemble(ctx context.Context, p ensembleRun) (ensembleSummary, error) {
 	if err := os.MkdirAll(p.StateDir, 0o755); err != nil {
-		return podSummary{}, err
+		return ensembleSummary{}, err
 	}
 	telemetry, err := os.Create(filepath.Join(p.StateDir, "telemetry.jsonl"))
 	if err != nil {
-		return podSummary{}, err
+		return ensembleSummary{}, err
 	}
 	defer telemetry.Close()
 	if err := writeJSON(filepath.Join(p.StateDir, "config.json"), p.Config); err != nil {
-		return podSummary{}, err
+		return ensembleSummary{}, err
 	}
-	if p.Pod == "" {
-		fmt.Fprintf(p.Progress, "km run %s\n  worktree  %s\n  state     %s\n", p.RunID, p.Config.Worktree, p.StateDir)
-	}
+	fmt.Fprintf(p.Progress, "km run %s\n  worktree  %s\n  state     %s\n", p.RunID, p.Config.Worktree, p.StateDir)
 	eng := &loop.Engine{Config: p.Config, Stepper: loop.CAOStepper{Client: p.Client}, Verify: p.Verify, Records: telemetry, Progress: p.Progress}
 	start := time.Now()
 	res, err := eng.Run(ctx)
 	if err != nil {
-		return podSummary{}, err
+		return ensembleSummary{}, err
 	}
 	if err := copyDir(res.RunDir, filepath.Join(p.StateDir, "replies")); err != nil {
 		fmt.Fprintln(os.Stderr, "km: copying replies:", err)
 	}
 	stat, _ := exec.Command("git", "-C", p.Config.Worktree, "diff", "HEAD", "--stat").CombinedOutput()
-	sum := podSummary{Pod: p.Pod, Cast: p.Cast, Result: res, DurationMS: time.Since(start).Milliseconds(), DiffStat: string(stat)}
+	sum := ensembleSummary{Result: res, DurationMS: time.Since(start).Milliseconds(), DiffStat: string(stat)}
 	if err := writeJSON(filepath.Join(p.StateDir, "result.json"), sum); err != nil {
 		return sum, err
-	}
-	if p.Pod != "" {
-		printOutcome(p.Progress, sum)
 	}
 	return sum, nil
 }
 
-func printOutcome(w io.Writer, s podSummary) {
+func printOutcome(w io.Writer, s ensembleSummary) {
 	line := fmt.Sprintf("%s after %d round(s) in %s", s.Outcome, s.Rounds, (time.Duration(s.DurationMS) * time.Millisecond).Round(time.Second))
 	if s.Reason != "" {
 		line += ": " + s.Reason
 	}
 	fmt.Fprintln(w, "\n"+line)
-}
-
-func shortStat(stat string) string {
-	lines := strings.Split(strings.TrimSpace(stat), "\n")
-	if len(lines) == 0 || lines[len(lines)-1] == "" {
-		return "-"
-	}
-	return strings.TrimSpace(lines[len(lines)-1])
-}
-
-type prefixWriter struct {
-	mu     *sync.Mutex
-	w      io.Writer
-	prefix string
-}
-
-func (p *prefixWriter) Write(b []byte) (int, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	var out bytes.Buffer
-	for _, line := range strings.SplitAfter(string(b), "\n") {
-		if line == "" {
-			continue
-		}
-		if line != "\n" {
-			out.WriteString(p.prefix)
-		}
-		out.WriteString(line)
-	}
-	if _, err := p.w.Write(out.Bytes()); err != nil {
-		return 0, err
-	}
-	return len(b), nil
 }
 
 func taskText(task, file string) (string, error) {

@@ -1,6 +1,6 @@
 ---
 name: km-spike-codex
-description: kapellmeister spike seat on Codex GPT-6-Luna, low effort
+description: kapellmeister spike chair on Codex GPT-6-Luna, low effort
 provider: codex
 model: gpt-6-luna
 role: developer
@@ -16,4 +16,4 @@ mcpServers:
     args: []
 ---
 
-You are a seat in a kapellmeister spike run. Follow the task exactly and keep replies short.
+You are a chair in a kapellmeister spike run. Follow the task exactly and keep replies short.

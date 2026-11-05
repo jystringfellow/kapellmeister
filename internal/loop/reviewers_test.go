@@ -14,7 +14,7 @@ import (
 )
 
 func twoReviewers(e *Engine) {
-	e.Config.Seats.Reviewers = []Seat{{Provider: "p", Profile: "x"}, {Provider: "q", Profile: "y"}}
+	e.Config.Chairs.Reviewers = []Chair{{Provider: "p", Profile: "x"}, {Provider: "q", Profile: "y"}}
 }
 
 func reviewVerdicts(f *fakeStepper, verdicts ...string) {
@@ -54,7 +54,7 @@ func TestReviewersRunInParallelAndTheGateReadsEveryReview(t *testing.T) {
 	}
 }
 
-func TestEachReviewerHasItsOwnReplyFileTerminalLabelAndSeatName(t *testing.T) {
+func TestEachReviewerHasItsOwnReplyFileTerminalLabelAndChairName(t *testing.T) {
 	eng, fake, records := newEngine(t, passing)
 	twoReviewers(eng)
 	var progress bytes.Buffer
@@ -68,21 +68,21 @@ func TestEachReviewerHasItsOwnReplyFileTerminalLabelAndSeatName(t *testing.T) {
 		if s.Name != "review" {
 			continue
 		}
-		n := strings.TrimPrefix(s.SeatName, "reviewer-")
-		if s.ReplyPath != eng.rel("review-1-"+n+".md") || s.Label != "km r1 · "+s.SeatName {
+		n := strings.TrimPrefix(s.ChairName, "reviewer-")
+		if s.ReplyPath != eng.rel("review-1-"+n+".md") || s.Label != "km r1 · "+s.ChairName {
 			t.Errorf("review step: %+v", s)
 		}
 		if _, err := os.Stat(filepath.Join(fake.dir, eng.rel("review-1-"+n+".verdict"))); err != nil {
 			t.Error(err)
 		}
-		seen[s.SeatName] = true
+		seen[s.ChairName] = true
 	}
 	if !seen["reviewer-1"] || !seen["reviewer-2"] {
 		t.Fatal(seen)
 	}
 	for _, step := range []string{"review", "classify-review", "verdict-review"} {
 		recs := recordsOf(t, records, step)
-		if len(recs) != 2 || recs[0].SeatName == "" || recs[1].SeatName == "" || recs[0].SeatName == recs[1].SeatName {
+		if len(recs) != 2 || recs[0].ChairName == "" || recs[1].ChairName == "" || recs[0].ChairName == recs[1].ChairName {
 			t.Errorf("%s: %+v", step, recs)
 		}
 	}
@@ -97,13 +97,13 @@ func TestASingleReviewerKeepsTodaysNamesFilesAndLabels(t *testing.T) {
 	eng, fake, records := newEngine(t, passing)
 	run(t, eng)
 	s := stepNamed(t, fake, "review", 1)
-	if s.SeatName != "" || s.Label != "km r1 · reviewer" || s.ReplyPath != eng.rel("review-1.md") {
+	if s.ChairName != "" || s.Label != "km r1 · reviewer" || s.ReplyPath != eng.rel("review-1.md") {
 		t.Fatal(s)
 	}
 	if _, err := os.Stat(filepath.Join(fake.dir, eng.rel("review-1.verdict"))); err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(records.Bytes(), []byte(`"seat_name"`)) {
+	if bytes.Contains(records.Bytes(), []byte(`"chair_name"`)) {
 		t.Fatal(records.String())
 	}
 }
@@ -112,7 +112,7 @@ func TestAReviewerWithoutAReplyIsNudgedInItsOwnTerminal(t *testing.T) {
 	eng, fake, records := newEngine(t, passing)
 	twoReviewers(eng)
 	fake.actions["review"] = func(s Step) {
-		if s.SeatName == "reviewer-1" {
+		if s.ChairName == "reviewer-1" {
 			fake.write(s.ReplyPath, "approved")
 		}
 	}
@@ -128,11 +128,11 @@ func TestAReviewerWithoutAReplyIsNudgedInItsOwnTerminal(t *testing.T) {
 	}
 	s := nudges[0]
 	for _, r := range recordsOf(t, records, "review") {
-		if r.SeatName == "reviewer-2" && nudges[0].ReuseTerminal != r.TerminalID {
+		if r.ChairName == "reviewer-2" && nudges[0].ReuseTerminal != r.TerminalID {
 			t.Fatalf("nudge reused %s instead of %s", nudges[0].ReuseTerminal, r.TerminalID)
 		}
 	}
-	if s.SeatName != "reviewer-2" || s.ReuseTerminal == "" || s.Label != "km r1 · reviewer-2" || !strings.Contains(s.Prompt, "review-1-2.md") {
+	if s.ChairName != "reviewer-2" || s.ReuseTerminal == "" || s.Label != "km r1 · reviewer-2" || !strings.Contains(s.Prompt, "review-1-2.md") {
 		t.Fatal(s)
 	}
 }
@@ -173,7 +173,7 @@ func TestGateWhenDecidesWhetherTheGateRuns(t *testing.T) {
 			}
 			reviewVerdicts(fake, tc.verdicts...)
 			fake.errFor = func(s Step) error {
-				if s.Name == "review" && s.SeatName == "reviewer-2" && tc.verdicts[1] == "FAILED" {
+				if s.Name == "review" && s.ChairName == "reviewer-2" && tc.verdicts[1] == "FAILED" {
 					return errors.New("review unavailable")
 				}
 				return nil
@@ -216,14 +216,14 @@ func TestAFailedReviewerIsRecordedAsFailedNamedToTheGateAndTheRoundContinues(t *
 			eng, fake, records := newEngine(t, passing)
 			twoReviewers(eng)
 			fake.actions["review"] = func(s Step) {
-				if s.SeatName == "reviewer-1" {
+				if s.ChairName == "reviewer-1" {
 					fake.write(s.ReplyPath, "approve")
 				}
 			}
 			fake.actions["review-nudge"] = func(Step) {}
 			if !missing {
 				fake.errFor = func(s Step) error {
-					if s.Name == "review" && s.SeatName == "reviewer-2" {
+					if s.Name == "review" && s.ChairName == "reviewer-2" {
 						return errors.New("unavailable")
 					}
 					return nil
@@ -234,7 +234,7 @@ func TestAFailedReviewerIsRecordedAsFailedNamedToTheGateAndTheRoundContinues(t *
 			}
 			got := false
 			for _, r := range recordsOf(t, records, "verdict-review") {
-				if r.SeatName == "reviewer-2" && r.Verdict == "FAILED" && r.Error != "" {
+				if r.ChairName == "reviewer-2" && r.Verdict == "FAILED" && r.Error != "" {
 					got = true
 				}
 			}
@@ -292,12 +292,12 @@ func TestAReviewerThatModifiesTheWorktreeFailsTheRunAndTheErrorNamesTheGroup(t *
 	twoReviewers(eng)
 	fake.actions["review"] = func(s Step) {
 		fake.write(s.ReplyPath, "approved")
-		if s.SeatName == "reviewer-2" {
+		if s.ChairName == "reviewer-2" {
 			fake.write("main.go", "package main\n")
 		}
 	}
 	fake.errFor = func(s Step) error {
-		if s.Name == "review" && s.SeatName == "reviewer-2" {
+		if s.Name == "review" && s.ChairName == "reviewer-2" {
 			return errors.New("step also failed")
 		}
 		return nil
@@ -347,17 +347,17 @@ func TestFeedbackAfterAnUnapprovedRoundNamesEveryReviewAndTheGate(t *testing.T) 
 
 func TestEachReviewerIsResolvedAgainstTheReviewStepSeparately(t *testing.T) {
 	eng, fake, records := tieredEngine(t, SizingOn)
-	pinned := claudeSeat
+	pinned := claudeChair
 	pinned.Tier = "large"
-	eng.Config.Seats.Reviewers = []Seat{pinned, claudeSeat}
+	eng.Config.Chairs.Reviewers = []Chair{pinned, claudeChair}
 	planSays(fake, "Size: small — one fix")
 	run(t, eng)
 	for _, r := range recordsOf(t, records, "review") {
 		model, source := "claude-opus-5-5", "pinned"
-		if r.SeatName == "reviewer-2" {
+		if r.ChairName == "reviewer-2" {
 			model, source = "claude-haiku-5-5", "sized"
 		}
-		if r.Seat.Model != model || r.TierSource != source {
+		if r.Chair.Model != model || r.TierSource != source {
 			t.Fatal(r)
 		}
 	}

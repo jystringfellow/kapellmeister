@@ -5,7 +5,7 @@ from pathlib import Path
 
 from cao_workflow import emit_output, get_inputs, step
 
-SEATS = [
+CHAIRS = [
     ("claude_code", "km-spike-claude"),
     ("codex", "km-spike-codex"),
     ("copilot_cli", "km-spike-copilot-haiku"),
@@ -20,7 +20,7 @@ inputs = get_inputs()
 worktree = Path(inputs["worktree"])
 seed = int(inputs.get("seed", "1"))
 rng = random.Random(seed)
-provider, profile = rng.choice(SEATS)
+provider, profile = rng.choice(CHAIRS)
 
 verify = subprocess.run(["go", "test", "./..."], cwd=worktree, capture_output=True, text=True)
 
@@ -43,7 +43,7 @@ handle = step(
 report = report_path.read_text() if report_path.exists() else None
 emit_output(
     {
-        "seat": [provider, profile],
+        "chair": [provider, profile],
         "verify_exit": verify.returncode,
         "status": handle.status,
         "replayed": handle.replayed,
