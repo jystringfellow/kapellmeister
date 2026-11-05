@@ -138,3 +138,79 @@ Seats: Claude Code `claude-haiku-5-5` (effort low), Codex `gpt-6-luna` (effort l
 ## Open
 
 - OTel spans with `OTEL_SDK_DISABLED=false` (not tried).
+
+# Ensemble spike: chairs, cues and restarts
+
+Run 2026-11-05 against CAO 2.5.4, tmux backend, driven by hand over the HTTP API from a throwaway
+repo. Chairs: `km-claude` (Haiku 5.5), `km-codex` (GPT-6 Luna), `km-copilot` (Haiku 5.5), `km-agy`
+(`gemini-3.8-flash-low`), all `role: developer`, in one CAO session.
+
+## Matrix
+
+| Question | Claude Code | Codex | Copilot | agy |
+|---|---|---|---|---|
+| Boots as an extra terminal in one session | 13 s | 68 s | 7 s, once 47 s | 15 s |
+| Idle cue from `sender_id=km` to reply file | 8 s | lost behind a modal; 5 s after Esc | 8 s | 12 s |
+| Stays `processing` through a 45 s foreground `sleep` | no, `completed` at 14 s | no | yes | no |
+| Queued cues delivered in order, none dropped by the inbox | yes | yes | yes | yes |
+| Finished the task it was busy with | **no** | yes | yes | yes |
+| `cao agent send-message` to a discovered sibling, `developer` role | refused | refused | refused | accepted |
+| Same, with the `discovery` grant | accepted | not run | not run | not run |
+| `km-send` stub (append to a file queue) from the shell | yes | yes | not run (wedged) | yes |
+| Inbox works for the terminal after a `cao-server` restart | no | no | no | no |
+
+## Findings
+
+1. **An ensemble fits in one CAO session.** `POST /sessions` boots the first chair and
+   `POST /sessions/{name}/terminals` adds the rest, each with its own provider, model and working
+   directory; all four honoured their model.
+2. **Group labels give sections and ensembles for free.** `PATCH /terminals/{id}/group` with
+   `["ens","strings"]`; `GET /terminals/{id}/siblings` returns the section by default and the whole
+   ensemble with `depth=1`, scoped to the tmux session unless `cross_session=true`.
+3. **`delivered` means pasted, not read.** The inbox marks a message delivered before it types it into
+   the pane, and delivers one message per idle or completed status event. A message carries no
+   envelope: the receiver sees only the text, and `sender_id` is used only for hook attribution, so
+   every cue must say who sent it and where to reply.
+4. **The inbox is not where obligations get lost; chairs are.** Claude, Codex and agy each reported
+   `completed` while their `sleep 45` still ran (spike finding 17), so queued cues A and B arrived
+   and ran first, in order. Codex and agy came back to the busy task; Claude never wrote its file,
+   and did the same again in the restart run. Copilot stayed `processing` and took A and B after it
+   finished.
+5. **Codex's hook review screen swallows cues.** The marketplace hook prompt (finding 16) was up at
+   boot while CAO reported Codex `idle`; the first cue was marked delivered and typed into the modal.
+   `POST /terminals/{id}/key?key=Escape` closed it, leaving the hook untrusted, and the resent cue ran
+   in 5 s. Codex also showed "less than 10% of your weekly limit left", which CAO does not surface.
+6. **Chair-to-chair messages need the `discovery` grant.** Without it, `cao agent send-message` from
+   Claude, Codex and Copilot was refused even for a sibling each had just found. The check lives in the
+   MCP/CLI process next to the agent; the HTTP API authorises by scope only and takes any
+   `sender_id`. agy's message got through, apparently by posting to the endpoint directly. Booting a
+   chair with `allowed_tools=…,discovery` let Claude message Copilot.
+7. **Claude Code's own sandbox blocks the CAO server.** Both Claude chairs hit "Operation not
+   permitted" on `127.0.0.1:9889` and reran the curl and `cao agent` calls with the sandbox disabled on
+   their own initiative.
+8. **One misread status wedges a chair's inbox.** Copilot finished its turn after printing CAO's
+   refusal text, and CAO has read it as `error` ever since. The inbox delivers only to idle or completed
+   terminals, so agy's message and a later cue stayed pending; an Enter key did not clear it and the
+   reconcile sweep uses the same gate.
+9. **A Copilot chair hung with "0 AIC used".** It sat at "Working" for more than nine minutes with a
+   second copy of the cue in Copilot's own queue, though CAO delivered it once; Escape did not stop it.
+10. **A file queue works as the reply path.** A `km-send` stub that appends a JSON line to a file,
+    stamped with `CAO_TERMINAL_ID`, worked from Claude, Codex and agy within about 20 s. It needs no
+    network, so Claude's sandbox does not get in the way, and km needs no terminal id.
+11. **A `cao-server` restart leaves every existing terminal deaf.** The tmux panes survive and running
+    turns finish (agy and Codex wrote their files after the kill), but CAO creates a terminal's FIFO
+    reader only in `create_terminal`. After the restart every terminal read `unknown`, and pending
+    and new inbox messages stayed pending for the 3.5 minutes watched. `POST /terminals/{id}/input`
+    still reached the pane, and Claude acted on it.
+
+## Implications for the team layer
+
+- km owns the queue of obligations, as decided: a cue is done only when its reply lands in the km
+  queue or reply file. km re-cues on a timeout and never trusts `delivered`, `completed` or `error`.
+- Chairs reply through a `km send` command that appends to km's queue, not through CAO's inbox; this
+  needs no km terminal and works inside each CLI's sandbox.
+- km routes chair-to-chair cues itself rather than granting `discovery`, so one path carries every
+  cue, every cue gets an envelope (from, cue id, reply command), and km can fall back to direct input
+  when a chair's status is `unknown` or stuck.
+- Preflight looks for Codex's hook review screen on boot, and km detects a restarted `cao-server`
+  (all chairs `unknown`) and either drives chairs by direct input or reboots them.
