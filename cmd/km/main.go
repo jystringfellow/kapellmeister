@@ -24,6 +24,8 @@ import (
 
 const usage = `usage:
   km run -repo DIR (-task TEXT | -task-file FILE) [-ensemble NAME] [flags]   one ensemble
+  km audition -worktree DIR [-ensemble NAME] [-keep]       boot the ensemble, cue every chair once, tear down
+  km cue done -queue FILE CUE [NOTE]                         close a cue (chairs run this)
   km preflight -worktree DIR [-agents LIST] [-tier T]       check each agent starts and answers
   km config [-worktree DIR]                                  show the effective settings and the files they come from`
 
@@ -36,6 +38,10 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		err = runCommand(os.Args[2:])
+	case "audition":
+		err = auditionCommand(os.Args[2:])
+	case "cue":
+		err = cueCommand(os.Args[2:])
 	case "preflight":
 		err = preflightCommand(os.Args[2:])
 	case "config":
