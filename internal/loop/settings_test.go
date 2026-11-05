@@ -273,3 +273,84 @@ func TestEnsembleEscalateFalseTurnsEscalationOffAndCannotTurnItOn(t *testing.T) 
 		})
 	}
 }
+
+func TestReviewerAcceptsAListOfSeatsInSeatsAndInEnsembles(t *testing.T) {
+	s, err := LoadSettings(writeUserConfig(t, `[seats]
+reviewer = ["copilot", "claude@large"]
+[ensembles.pair]
+reviewer = ["agy", "codex"]
+`), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Seats["reviewer"] != "copilot,claude@large" {
+		t.Fatal(s.Seats)
+	}
+	selected, err := s.WithEnsemble("pair")
+	if err != nil || selected.Seats["reviewer"] != "agy,codex" {
+		t.Fatalf("%+v %v", selected, err)
+	}
+}
+
+func TestAListOfSeatsForAnyOtherRoleIsRejectedNamingTheFileAndRole(t *testing.T) {
+	for _, section := range []string{"seats", "ensembles.x"} {
+		for _, role := range SeatRoles {
+			if role == "reviewer" {
+				continue
+			}
+			home := writeUserConfig(t, "["+section+"]\n"+role+" = [\"claude\"]\n")
+			_, err := LoadSettings(home, "")
+			if err == nil || !strings.Contains(err.Error(), UserConfigPath(home)) || !strings.Contains(err.Error(), section+"."+role) {
+				t.Errorf("%s.%s: %v", section, role, err)
+			}
+		}
+	}
+	for _, value := range []string{`[]`, `["a,b"]`, `[""]`, `[1]`, `42`} {
+		if _, err := LoadSettings(writeUserConfig(t, "[seats]\nreviewer = "+value+"\n"), ""); err == nil {
+			t.Errorf("accepted %s", value)
+		}
+	}
+}
+
+func TestGateWhenDefaultsToAnyAndAnEnsembleCanSetIt(t *testing.T) {
+	for _, when := range []string{"", "any", "all", "always"} {
+		body := "[ensembles.x]\n"
+		if when != "" {
+			body += "gate_when = \"" + when + "\"\n"
+		}
+		s, err := LoadSettings(writeUserConfig(t, body), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.GateWhen != "any" {
+			t.Errorf("default: %s", s.GateWhen)
+		}
+		s, err = s.WithEnsemble("x")
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := when
+		if want == "" {
+			want = "any"
+		}
+		if s.GateWhen != want {
+			t.Errorf("selected: %s want %s", s.GateWhen, want)
+		}
+	}
+}
+
+func TestAnUnknownGateWhenIsRejectedNamingTheFileAndKey(t *testing.T) {
+	home := writeUserConfig(t, "[ensembles.x]\ngate_when = \"sometimes\"\n")
+	_, err := LoadSettings(home, "")
+	if err == nil || !strings.Contains(err.Error(), UserConfigPath(home)) || !strings.Contains(err.Error(), "ensembles.x.gate_when") {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestAnExplicitlyEmptyGateWhenIsRejectedNamingTheFileAndKey(t *testing.T) {
+	home := writeUserConfig(t, "[ensembles.x]\ngate_when = \"\"\n")
+	_, err := LoadSettings(home, "")
+	if err == nil || !strings.Contains(err.Error(), UserConfigPath(home)) || !strings.Contains(err.Error(), "ensembles.x.gate_when") || !strings.Contains(err.Error(), "any, all or always") {
+		t.Fatalf("explicitly empty gate_when: %v", err)
+	}
+}

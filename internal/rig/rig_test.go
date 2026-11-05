@@ -55,3 +55,16 @@ func TestRotationNeedsOneAgentPerRole(t *testing.T) {
 		t.Fatal("want error for three agents")
 	}
 }
+
+func TestEveryRigPodHasOneReviewer(t *testing.T) {
+	pods, err := Rotation(DefaultAgents, loop.Seat{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pod := range pods {
+		agents, err := SelectAgents(pod.Cast["reviewer"])
+		if err != nil || len(pod.Seats.Reviewers) != 1 || pod.Seats.Reviewers[0] != agents[0].Seat {
+			t.Fatalf("%+v %v", pod, err)
+		}
+	}
+}

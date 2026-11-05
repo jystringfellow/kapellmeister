@@ -42,7 +42,7 @@ func Rotation(agents []Agent, classifier loop.Seat) ([]Pod, error) {
 		pods[i] = Pod{
 			Name: fmt.Sprintf("pod%d", i+1),
 			Seats: loop.Seats{
-				Planner: pick(0), Implementer: pick(1), Reviewer: pick(2), Gate: pick(3),
+				Planner: pick(0), Implementer: pick(1), Reviewers: []loop.Seat{pick(2)}, Gate: pick(3),
 				Classifier: classifier,
 			},
 			Cast: cast,

@@ -63,14 +63,15 @@ func (s Seat) String() string {
 }
 
 type Seats struct {
-	Planner     Seat `json:"planner"`
-	Implementer Seat `json:"implementer"`
-	Reviewer    Seat `json:"reviewer"`
-	Gate        Seat `json:"gate"`
-	Classifier  Seat `json:"classifier"`
+	Planner     Seat   `json:"planner"`
+	Implementer Seat   `json:"implementer"`
+	Reviewers   []Seat `json:"reviewers"`
+	Gate        Seat   `json:"gate"`
+	Classifier  Seat   `json:"classifier"`
 }
 
 type Step struct {
+	SeatName      string
 	Name          string
 	Round         int
 	Seat          Seat
@@ -110,6 +111,7 @@ type VerifyResult struct {
 type Verifier func(ctx context.Context, dir string) (VerifyResult, error)
 
 type Config struct {
+	GateWhen      string
 	RunID         string
 	Task          string
 	Worktree      string
@@ -124,6 +126,7 @@ type Config struct {
 }
 
 type Record struct {
+	SeatName     string        `json:"seat_name,omitempty"`
 	At           time.Time     `json:"at"`
 	RunID        string        `json:"run_id"`
 	Round        int           `json:"round,omitempty"`
@@ -155,6 +158,7 @@ const (
 	Approved        = "approved"
 	RoundsExhausted = "rounds_exhausted"
 	Failed          = "failed"
+	VerdictFailed   = "FAILED"
 )
 
 type Result struct {
@@ -173,6 +177,7 @@ type Engine struct {
 	Records  io.Writer
 	Progress io.Writer
 
+	mu   sync.Mutex
 	size string
 	bump int
 }
@@ -218,6 +223,7 @@ func (e *Engine) Run(ctx context.Context) (Result, error) {
 	}()
 
 	var feedback []string
+	var feedbackGate string
 	for round := 1; round <= cfg.MaxRounds; round++ {
 		res.Rounds = round
 		summary := e.relf("implement-%d.md", round)
@@ -228,7 +234,7 @@ func (e *Engine) Run(ctx context.Context) (Result, error) {
 		implementerSeat, _ = e.resolve("implement", cfg.Seats.Implementer)
 		out, err := e.step(ctx, Step{
 			Name: "implement", Round: round, Seat: cfg.Seats.Implementer,
-			Prompt:    implementPrompt(cfg.Task, plan, summary, cfg.CheckCommand, feedback),
+			Prompt:    implementPrompt(cfg.Task, plan, summary, cfg.CheckCommand, feedback, feedbackGate),
 			ReplyPath: summary, KeepTerminal: true, ReuseTerminal: implementer,
 		})
 		if out.TerminalID != "" {
@@ -247,34 +253,39 @@ func (e *Engine) Run(ctx context.Context) (Result, error) {
 			return e.fail(res, err), nil
 		}
 
-		review := e.relf("review-%d.md", round)
-		if _, err := e.readOnlyStep(ctx, Step{
-			Name: "review", Round: round, Seat: cfg.Seats.Reviewer,
-			Prompt:    reviewPrompt(cfg.Task, plan, summary, cfg.VerifyCommand, verify, verifyPath, review),
-			ReplyPath: review,
-		}); err != nil {
-			return e.fail(res, err), nil
-		}
-		reviewVerdict, err := e.classify(ctx, round, "review", review)
+		reviews, err := e.reviewRound(ctx, round, plan, summary, verify, verifyPath)
 		if err != nil {
 			return e.fail(res, err), nil
 		}
-		feedback = []string{review, verifyPath}
-		if verify.ExitCode != 0 || reviewVerdict != "APPROVE" {
+		var files, failed, verdicts []string
+		for _, review := range reviews {
+			if _, err := os.Stat(filepath.Join(cfg.Worktree, review.Path)); err == nil {
+				files = append(files, review.Path)
+			}
+			if review.Err != nil {
+				failed = append(failed, fmt.Sprintf("%s (%s)", review.Name, review.Seat))
+			}
+			verdicts = append(verdicts, review.Verdict)
+		}
+		feedback = append(append([]string{}, files...), verifyPath)
+		feedbackGate = ""
+		if !gateRuns(cfg.GateWhen, verify.ExitCode == 0, verdicts) {
 			misses++
 			e.escalate(round, misses)
 			continue
 		}
 
 		gate := e.relf("gate-%d.md", round)
-		if _, err := e.readOnlyStep(ctx, Step{
+		if errs, err := e.readOnlySteps(ctx, []Step{{
 			Name: "gate", Round: round, Seat: cfg.Seats.Gate,
-			Prompt:    gatePrompt(cfg.Task, plan, summary, review, cfg.VerifyCommand, verify, verifyPath, gate),
+			Prompt:    gatePrompt(cfg.Task, plan, summary, files, failed, cfg.VerifyCommand, verify, verifyPath, gate),
 			ReplyPath: gate,
-		}); err != nil {
+		}}); err != nil {
 			return e.fail(res, err), nil
+		} else if errs[0] != nil {
+			return e.fail(res, errs[0]), nil
 		}
-		gateVerdict, err := e.classify(ctx, round, "gate", gate)
+		gateVerdict, err := e.classify(ctx, round, "gate", gate, "")
 		if err != nil {
 			return e.fail(res, err), nil
 		}
@@ -282,7 +293,8 @@ func (e *Engine) Run(ctx context.Context) (Result, error) {
 			res.Outcome = Approved
 			return res, nil
 		}
-		feedback = []string{gate, review, verifyPath}
+		feedback = append([]string{gate}, feedback...)
+		feedbackGate = gate
 		misses++
 		e.escalate(round, misses)
 	}
@@ -394,7 +406,11 @@ func (e *Engine) step(ctx context.Context, s Step) (StepResult, error) {
 		s.Seat, s.Assignment = e.resolve(stepKey(s.Name), s.Seat)
 	}
 	s.Dir = e.Config.Worktree
-	s.Label = TerminalLabel(e.Config.RunID, s.Name)
+	labelName := firstSet(s.SeatName, s.Name)
+	if strings.HasPrefix(s.Name, "classify-") {
+		labelName = s.Name
+	}
+	s.Label = TerminalLabel(e.Config.RunID, labelName)
 	if s.Timeout == 0 {
 		s.Timeout = e.Config.StepTimeout
 	}
@@ -437,9 +453,9 @@ var errNoReply = errors.New("no reply file")
 
 func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 	seat := s.Seat
-	rec := Record{RunID: e.Config.RunID, Round: s.Round, Step: s.Name, Seat: &seat, Reply: s.ReplyPath,
+	rec := Record{RunID: e.Config.RunID, Round: s.Round, Step: s.Name, SeatName: s.SeatName, Seat: &seat, Reply: s.ReplyPath,
 		Tier: s.Assignment.Tier, Effort: s.Assignment.Effort, TierSource: s.Assignment.Source}
-	e.progress("→ %s %s%s", label(s.Name, s.Round), seat, tierNote(s.Assignment))
+	e.progress("→ %s %s%s", strings.TrimSpace(label(s.Name, s.Round)+" "+s.SeatName), seat, tierNote(s.Assignment))
 	start := time.Now()
 	out, err := e.Stepper.Run(ctx, s)
 	rec.DurationMS = time.Since(start).Milliseconds()
@@ -460,34 +476,146 @@ func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 		}
 	}
 	e.record(rec)
-	e.progress("  %s in %s%s%s", statusOf(out, err), secs(rec.DurationMS), waitNote(rec.ReplyWaitMS), errSuffix(err))
+	e.progress("  %s in %s%s%s", strings.TrimSpace(s.SeatName+" "+statusOf(out, err)), secs(rec.DurationMS), waitNote(rec.ReplyWaitMS), errSuffix(err))
 	return out, err
 }
 
-func (e *Engine) readOnlyStep(ctx context.Context, s Step) (StepResult, error) {
-	before, err := e.treeState()
-	if err != nil {
-		return StepResult{}, err
+func SeatList(spec string) []string {
+	specs := strings.Split(spec, ",")
+	for i := range specs {
+		specs[i] = strings.TrimSpace(specs[i])
 	}
-	out, err := e.step(ctx, s)
-	if err != nil {
-		return out, err
-	}
-	after, err := e.treeState()
-	if err != nil {
-		return out, err
-	}
-	if before != after {
-		e.record(Record{RunID: e.Config.RunID, Round: s.Round, Step: s.Name, TreeChanged: true, Error: "worktree modified"})
-		return out, fmt.Errorf("%s seat %s modified the worktree", s.Name, s.Seat)
-	}
-	return out, nil
+	return specs
 }
 
-func (e *Engine) classify(ctx context.Context, round int, subject, path string) (string, error) {
+func ReviewerName(i, n int) string {
+	if n == 1 {
+		return "reviewer"
+	}
+	return fmt.Sprintf("reviewer-%d", i+1)
+}
+
+func (e *Engine) readOnlySteps(ctx context.Context, steps []Step) ([]error, error) {
+	before, err := e.treeState()
+	if err != nil {
+		return nil, err
+	}
+	errs := make([]error, len(steps))
+	var wg sync.WaitGroup
+	for i, s := range steps {
+		wg.Go(func() { _, errs[i] = e.step(ctx, s) })
+	}
+	wg.Wait()
+	after, err := e.treeState()
+	if err != nil {
+		return nil, err
+	}
+	if before != after {
+		s := steps[0]
+		e.record(Record{RunID: e.Config.RunID, Round: s.Round, Step: s.Name, TreeChanged: true, Error: "worktree modified"})
+		if len(steps) == 1 {
+			return nil, fmt.Errorf("%s seat %s modified the worktree", s.Name, s.Seat)
+		}
+		names := make([]string, len(steps))
+		for i, s := range steps {
+			names[i] = fmt.Sprintf("%s %s", s.SeatName, s.Seat)
+		}
+		return nil, fmt.Errorf("%s seats %s modified the worktree", s.Name, strings.Join(names, ", "))
+	}
+	return errs, nil
+}
+
+type review struct {
+	Name    string
+	Seat    Seat
+	Path    string
+	Verdict string
+	Err     error
+}
+
+func (e *Engine) reviewRound(ctx context.Context, round int, plan, summary string, verify VerifyResult, verifyPath string) ([]review, error) {
+	seats := e.Config.Seats.Reviewers
+	if len(seats) == 0 {
+		return nil, errors.New("no reviewers configured")
+	}
+	reviews := make([]review, len(seats))
+	steps := make([]Step, len(seats))
+	for i, seat := range seats {
+		name, seatName := ReviewerName(i, len(seats)), ""
+		path := e.relf("review-%d.md", round)
+		if len(seats) > 1 {
+			seatName = name
+			path = e.rel(fmt.Sprintf("review-%d-%d.md", round, i+1))
+		}
+		reviews[i] = review{Name: name, Seat: seat, Path: path}
+		steps[i] = Step{Name: "review", Round: round, Seat: seat, SeatName: seatName,
+			Prompt: reviewPrompt(e.Config.Task, plan, summary, e.Config.VerifyCommand, verify, verifyPath, path), ReplyPath: path}
+	}
+	errs, err := e.readOnlySteps(ctx, steps)
+	if err != nil {
+		return nil, err
+	}
+	var failures []string
+	for i, err := range errs {
+		if err == nil {
+			continue
+		}
+		reviews[i].Err, reviews[i].Verdict = err, VerdictFailed
+		failures = append(failures, fmt.Sprintf("%s: %s", reviews[i].Name, err))
+		e.record(Record{RunID: e.Config.RunID, Round: round, Step: "verdict-review", SeatName: steps[i].SeatName,
+			Verdict: VerdictFailed, Reply: reviews[i].Path, Error: err.Error()})
+	}
+	if len(failures) == len(seats) {
+		if len(seats) == 1 {
+			return nil, errs[0]
+		}
+		return nil, fmt.Errorf("every reviewer failed: %s", strings.Join(failures, "; "))
+	}
+	var wg sync.WaitGroup
+	for i := range reviews {
+		if reviews[i].Err != nil {
+			continue
+		}
+		wg.Go(func() {
+			reviews[i].Verdict, errs[i] = e.classify(ctx, round, "review", reviews[i].Path, steps[i].SeatName)
+		})
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if reviews[i].Err == nil && err != nil {
+			return nil, err
+		}
+	}
+	return reviews, nil
+}
+
+func gateRuns(when string, verifyPassed bool, verdicts []string) bool {
+	if !verifyPassed {
+		return false
+	}
+	if when == GateWhenAlways {
+		return true
+	}
+	if when == GateWhenAll {
+		for _, verdict := range verdicts {
+			if verdict != "APPROVE" {
+				return false
+			}
+		}
+		return len(verdicts) > 0
+	}
+	for _, verdict := range verdicts {
+		if verdict == "APPROVE" {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *Engine) classify(ctx context.Context, round int, subject, path, seatName string) (string, error) {
 	verdictPath := strings.TrimSuffix(path, filepath.Ext(path)) + ".verdict"
 	out, err := e.step(ctx, Step{
-		Name: "classify-" + subject, Round: round, Seat: e.Config.Seats.Classifier,
+		Name: "classify-" + subject, Round: round, Seat: e.Config.Seats.Classifier, SeatName: seatName,
 		Prompt: classifyPrompt(subject, path, verdictPath), ReplyPath: verdictPath,
 	})
 	if err != nil {
@@ -495,8 +623,8 @@ func (e *Engine) classify(ctx context.Context, round int, subject, path string) 
 	}
 	text, _ := e.readReply(verdictPath)
 	verdict := firstVerdict(text, out.LastMessage)
-	e.record(Record{RunID: e.Config.RunID, Round: round, Step: "verdict-" + subject, Verdict: verdict, Reply: path})
-	e.progress("  %s verdict: %s", subject, verdict)
+	e.record(Record{RunID: e.Config.RunID, Round: round, Step: "verdict-" + subject, SeatName: seatName, Verdict: verdict, Reply: path})
+	e.progress("  %s verdict: %s", firstSet(seatName, subject), verdict)
 	return verdict, nil
 }
 
@@ -595,6 +723,8 @@ func (e *Engine) gitOutput(args ...string) (string, error) {
 }
 
 func (e *Engine) record(rec Record) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	if e.Records == nil {
 		return
 	}
@@ -604,6 +734,8 @@ func (e *Engine) record(rec Record) {
 }
 
 func (e *Engine) progress(format string, args ...any) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	if e.Progress != nil {
 		fmt.Fprintf(e.Progress, format+"\n", args...)
 	}

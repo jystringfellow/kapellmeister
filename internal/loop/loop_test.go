@@ -11,11 +11,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
 type fakeStepper struct {
+	mu       sync.Mutex
 	t        *testing.T
 	dir      string
 	verdicts map[string][]string
@@ -28,7 +30,9 @@ type fakeStepper struct {
 }
 
 func (f *fakeStepper) Run(_ context.Context, s Step) (StepResult, error) {
+	f.mu.Lock()
 	f.steps = append(f.steps, s)
+	f.mu.Unlock()
 	if act, ok := f.actions[s.Name]; ok {
 		act(s)
 	} else if strings.HasPrefix(s.Name, "classify-") {
@@ -36,11 +40,13 @@ func (f *fakeStepper) Run(_ context.Context, s Step) (StepResult, error) {
 	} else {
 		f.write(s.ReplyPath, s.Name+" reply\n")
 	}
+	f.mu.Lock()
 	id := s.ReuseTerminal
 	if id == "" {
 		f.next++
 		id = fmt.Sprintf("t%d", f.next)
 	}
+	f.mu.Unlock()
 	if f.errFor != nil {
 		if err := f.errFor(s); err != nil {
 			return StepResult{TerminalID: id}, err
@@ -54,11 +60,15 @@ func (f *fakeStepper) Screen(_ context.Context, id string) (string, string, erro
 }
 
 func (f *fakeStepper) Release(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.released = append(f.released, id)
 	return nil
 }
 
 func (f *fakeStepper) pop(subject string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	q := f.verdicts[subject]
 	if len(q) == 0 {
 		return "APPROVE"
@@ -70,7 +80,7 @@ func (f *fakeStepper) pop(subject string) string {
 func (f *fakeStepper) write(rel, content string) {
 	f.t.Helper()
 	if err := os.WriteFile(filepath.Join(f.dir, rel), []byte(content), 0o644); err != nil {
-		f.t.Fatal(err)
+		f.t.Error(err)
 	}
 }
 
@@ -105,7 +115,7 @@ func newEngine(t *testing.T, verify Verifier) (*Engine, *fakeStepper, *bytes.Buf
 	eng := &Engine{
 		Config: Config{
 			RunID: "r1", Task: "do the thing", Worktree: dir, MaxRounds: 3,
-			Seats:         Seats{Planner: seat, Implementer: seat, Reviewer: seat, Gate: seat, Classifier: seat},
+			Seats:         Seats{Planner: seat, Implementer: seat, Reviewers: []Seat{seat}, Gate: seat, Classifier: seat},
 			VerifyCommand: "check",
 		},
 		Stepper: fake,

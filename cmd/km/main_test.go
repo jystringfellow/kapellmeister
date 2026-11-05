@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -37,8 +38,8 @@ func TestFlagsOverrideConfigOnlyWhenGiven(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if seats.Reviewer != (loop.Seat{Provider: "antigravity_cli", Profile: "km-agy"}) {
-		t.Fatalf("reviewer = %+v, want the configured agent", seats.Reviewer)
+	if !slices.Equal(seats.Reviewers, []loop.Seat{{Provider: "antigravity_cli", Profile: "km-agy"}}) {
+		t.Fatalf("reviewer = %+v, want the configured agent", seats.Reviewers)
 	}
 	if seats.Implementer != (loop.Seat{Provider: "claude_code", Profile: "km-claude", Model: "claude-fable-5-1"}) {
 		t.Fatalf("implementer = %+v, want the flag", seats.Implementer)
@@ -123,18 +124,18 @@ func TestARoleFlagOverridesTheSelectedEnsemble(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if seats.Reviewer != (loop.Seat{Provider: "codex", Profile: "km-codex"}) || seats.Gate != (loop.Seat{Provider: "claude_code", Profile: "km-claude", Tier: "large"}) || seats.Implementer != (loop.Seat{Provider: "codex", Profile: "km-codex"}) {
+	if !slices.Equal(seats.Reviewers, []loop.Seat{{Provider: "codex", Profile: "km-codex"}}) || seats.Gate != (loop.Seat{Provider: "claude_code", Profile: "km-claude", Tier: "large"}) || seats.Implementer != (loop.Seat{Provider: "codex", Profile: "km-codex"}) {
 		t.Fatalf("seats = %+v", seats)
 	}
 	if selected.Policy.EscalateAfter() != 0 || s.Policy.EscalateAfter() != 2 {
 		t.Fatalf("selected escalation = %d, original = %d", selected.Policy.EscalateAfter(), s.Policy.EscalateAfter())
 	}
 	_, plain, err := runSeats(s, "", nil)
-	if err != nil || plain.Reviewer != (loop.Seat{Provider: "antigravity_cli", Profile: "km-agy"}) {
+	if err != nil || !slices.Equal(plain.Reviewers, []loop.Seat{{Provider: "antigravity_cli", Profile: "km-agy"}}) {
 		t.Fatalf("default seats = %+v, %v", plain, err)
 	}
 	_, overlaid, err := runSeats(s, "", roles)
-	if err != nil || overlaid.Reviewer != seats.Reviewer {
+	if err != nil || !slices.Equal(overlaid.Reviewers, seats.Reviewers) {
 		t.Fatalf("flag without ensemble = %+v, %v", overlaid, err)
 	}
 	if _, _, err := runSeats(s, "nope", roles); err == nil || !strings.Contains(err.Error(), "careful, thorough") {
@@ -337,4 +338,108 @@ func clonedRepo(t *testing.T) string {
 		}
 	}
 	return clone
+}
+
+func TestTheReviewerFlagReplacesTheWholeConfiguredList(t *testing.T) {
+	s := ensembleSettings(t)
+	s.Seats["reviewer"] = "agy,copilot"
+	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	roles := seatFlags(fs, loop.SeatRoles...)
+	if err := fs.Parse([]string{"-reviewer", "copilot,claude@large"}); err != nil {
+		t.Fatal(err)
+	}
+	_, seats, err := runSeats(s, "thorough", roles)
+	want := []loop.Seat{{Provider: "copilot_cli", Profile: "km-copilot"}, {Provider: "claude_code", Profile: "km-claude", Tier: "large"}}
+	if err != nil || !slices.Equal(seats.Reviewers, want) {
+		t.Fatalf("%+v %v", seats, err)
+	}
+}
+
+func TestOnlyReviewerFlagsAcceptSeveralSeatsAndErrorsNameTheSeat(t *testing.T) {
+	for _, role := range loop.SeatRoles {
+		s := loop.DefaultSettings()
+		s.Seats[role] = "claude,codex"
+		_, err := resolveSeats(s.Seats)
+		if role == "reviewer" {
+			if err != nil {
+				t.Error(err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), role+":") || !strings.Contains(err.Error(), "only reviewer") {
+			t.Errorf("%s: %v", role, err)
+		}
+	}
+	s := loop.DefaultSettings()
+	s.Seats["reviewer"] = "copilot,unknown"
+	if _, err := resolveSeats(s.Seats); err == nil || !strings.Contains(err.Error(), "reviewer-2:") {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestPinsAreCheckedForEveryReviewerWithItsNumberedName(t *testing.T) {
+	s := loop.DefaultSettings()
+	for _, spec := range []string{"myprov:custom@large", "myprov:custom@small"} {
+		s.Seats["reviewer"] = "copilot," + spec
+		seats, err := resolveSeats(s.Seats)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "reviewer-2: seat \"" + spec + "\": no [tiers.myprov] to pin a tier against"
+		if err := checkPins(s.Policy, s.Seats, seats); err == nil || err.Error() != want {
+			t.Fatalf("%v want %s", err, want)
+		}
+	}
+}
+
+func TestPreflightAndEffortProfilesCoverEveryReviewer(t *testing.T) {
+	s := loop.DefaultSettings()
+	s.Seats["reviewer"] = "copilot,claude@large,codex@small"
+	seats, err := resolveSeats(s.Seats)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stepSeats(seats)["review"]) != 3 {
+		t.Fatal(stepSeats(seats))
+	}
+	preflight := defaultSeats(&s.Policy, seats)
+	for _, reviewer := range seats.Reviewers {
+		want, _ := s.Policy.Seat("review", reviewer, "", 0)
+		if !slices.Contains(preflight, want) {
+			t.Fatalf("missing %+v in %v", want, preflight)
+		}
+	}
+	variants := s.Policy.EffortVariants(stepSeats(seats))
+	var names []string
+	for _, v := range variants {
+		names = append(names, v.Name())
+	}
+	for _, name := range []string{"km-claude-xhigh", "km-codex-medium"} {
+		if !slices.Contains(names, name) {
+			t.Fatalf("missing %s: %v", name, names)
+		}
+	}
+}
+
+func TestConfigShowsReviewerListsAndGateWhen(t *testing.T) {
+	s := loop.DefaultSettings()
+	s.Seats["reviewer"] = "copilot,claude@large"
+	var out bytes.Buffer
+	printSeats(&out, s)
+	if !strings.Contains(out.String(), "reviewer=copilot,claude@large") || !strings.Contains(out.String(), "gate_when=any") {
+		t.Fatal(out.String())
+	}
+	home := t.TempDir()
+	if err := os.WriteFile(loop.UserConfigPath(home), []byte("[ensembles.x]\nreviewer = [\"copilot\", \"claude@large\"]\ngate_when = \"always\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := loop.LoadSettings(home, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	printEnsembles(&out, s)
+	if !strings.Contains(out.String(), "reviewer=copilot,claude@large gate_when=always") {
+		t.Fatal(out.String())
+	}
 }

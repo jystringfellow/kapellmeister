@@ -35,13 +35,15 @@ Study the code this task touches, then write an implementation plan to %s coveri
 
 const sizeRequest = "End the plan with one line of the form `Size: small|medium|large — <one-line reason>`, rating how capable a model the implementation and review need: small for a mechanical change in one place, medium for a contained change with tests, large for cross-cutting, subtle, concurrent or security-sensitive work.\n"
 
-func implementPrompt(task, plan, out, check string, feedback []string) string {
+func implementPrompt(task, plan, out, check string, feedback []string, gate string) string {
 	var b strings.Builder
 	b.WriteString(preamble("implementer"))
 	b.WriteString(taskBlock(task))
 	fmt.Fprintf(&b, "\nThe plan is in %s.\n", plan)
 	if len(feedback) == 0 {
 		b.WriteString("Implement the task following the plan and the repository's development rules.\n")
+	} else if gate != "" {
+		fmt.Fprintf(&b, "The previous attempt, still uncommitted in this worktree, was not approved. Read %s. The gate's blocking findings in %s are authoritative and supersede reviewer requests. Address those blocking findings; findings classified by the gate as nits need no change, even if a review calls them required.\n", strings.Join(feedback, ", "), gate)
 	} else {
 		fmt.Fprintf(&b, "The previous attempt, still uncommitted in this worktree, was not approved. Read %s and address every required change.\n", strings.Join(feedback, ", "))
 	}
@@ -84,25 +86,37 @@ Do not modify any file other than %s. When done, reply with one short sentence.
 `, plan, summary, verifyLine(command, v, verifyPath), out, out)
 }
 
-func gatePrompt(task, plan, summary, review, command string, v VerifyResult, verifyPath, out string) string {
+func gatePrompt(task, plan, summary string, reviews, failed []string, command string, v VerifyResult, verifyPath, out string) string {
+	reviewNote := "the review in " + strings.Join(reviews, ", ")
+	if len(reviews) != 1 {
+		reviewNote = "every review: " + strings.Join(reviews, ", ")
+	}
+	failedNote := ""
+	if len(failed) > 0 {
+		failedNote = "These reviewers failed to complete their review: " + strings.Join(failed, ", ") + ". Weigh what their review might have caught, and check those parts of the diff yourself.\n"
+	}
 	return preamble("gate") + taskBlock(task) + fmt.Sprintf(`
 You decide whether the uncommitted changes in this worktree are ready to merge.
-Read the plan in %s, the implementer's summary in %s, and the review in %s.
-%s
-`+verifiedNote+`Check the diff yourself with `+"`git diff HEAD`"+`. Approve only if the task is fully done, the verification passed, and nothing the review raised remains unresolved.
-Write your decision and reasons to %s.
+Read the plan in %s, the implementer's summary in %s, and %s.
+%s%s
+`+verifiedNote+`Check the diff yourself with `+"`git diff HEAD`"+`. Sort every point the reviews raised into **blocking** (the change must not merge until it is fixed) or **nit** (it can merge as is), each with a reason, and add any blocking point you find yourself. Approve when the task is done, the verification passed, and nothing is blocking. List the nits in your decision; they do not stop approval.
+Write to %s: your decision first, then the blocking points and the nits, each with its reason.
 Do not modify any file other than %s. When done, reply with one short sentence.
-`, plan, summary, review, verifyLine(command, v, verifyPath), out, out)
+`, plan, summary, reviewNote, failedNote, verifyLine(command, v, verifyPath), out, out)
 }
 
 func classifyPrompt(subject, path, out string) string {
+	nitNote := ""
+	if subject == "gate" {
+		nitNote = "Points it lists as nits or non-blocking are not required changes.\n"
+	}
 	return fmt.Sprintf(`Read %s. It is a %s of a code change.
 Write exactly one word to %s:
 APPROVE if it approves the change as it stands with no required changes,
 CHANGES if it asks for any change,
 UNCLEAR if you cannot tell.
-Do not modify any other file. Then reply with that same word.
-`, path, subject, out)
+%sDo not modify any other file. Then reply with that same word.
+`, path, subject, out, nitNote)
 }
 
 func nudgePrompt(path string) string {

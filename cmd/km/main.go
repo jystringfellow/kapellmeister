@@ -126,7 +126,11 @@ func (c common) settings(worktree string) (loop.Settings, error) {
 func seatFlags(fs *flag.FlagSet, roles ...string) map[string]*string {
 	out := map[string]*string{}
 	for _, role := range roles {
-		out[role] = fs.String(role, "", role+" seat: an agent ("+strings.Join(agentNames(), ", ")+") or provider:profile[:model], with optional @small|@medium|@large (default [seats] "+role+" in "+loop.UserConfigPath(loop.Home())+")")
+		listHelp := ""
+		if role == "reviewer" {
+			listHelp = "; accepts a comma-separated list replacing all configured reviewers"
+		}
+		out[role] = fs.String(role, "", role+" seat: an agent ("+strings.Join(agentNames(), ", ")+") or provider:profile[:model], with optional @small|@medium|@large (default [seats] "+role+" in "+loop.UserConfigPath(loop.Home())+")"+listHelp)
 	}
 	return out
 }
@@ -171,14 +175,29 @@ func seatSpecs(s loop.Settings, flags map[string]*string) map[string]string {
 
 func resolveSeats(specs map[string]string) (loop.Seats, error) {
 	resolved := map[string]loop.Seat{}
+	var reviewers []loop.Seat
 	for _, role := range loop.SeatRoles {
+		if role == "reviewer" {
+			list := loop.SeatList(specs[role])
+			for i, spec := range list {
+				seat, err := resolveSeat(spec)
+				if err != nil {
+					return loop.Seats{}, fmt.Errorf("%s: %w", loop.ReviewerName(i, len(list)), err)
+				}
+				reviewers = append(reviewers, seat)
+			}
+			continue
+		}
+		if strings.Contains(specs[role], ",") {
+			return loop.Seats{}, fmt.Errorf("%s: seat %q: only reviewer takes a list of seats", role, specs[role])
+		}
 		seat, err := resolveSeat(specs[role])
 		if err != nil {
 			return loop.Seats{}, fmt.Errorf("%s: %w", role, err)
 		}
 		resolved[role] = seat
 	}
-	return loop.Seats{Planner: resolved["planner"], Implementer: resolved["implementer"], Reviewer: resolved["reviewer"], Gate: resolved["gate"], Classifier: resolved["classifier"]}, nil
+	return loop.Seats{Planner: resolved["planner"], Implementer: resolved["implementer"], Reviewers: reviewers, Gate: resolved["gate"], Classifier: resolved["classifier"]}, nil
 }
 
 func runSeats(s loop.Settings, ensemble string, roles map[string]*string) (loop.Settings, loop.Seats, error) {
@@ -196,22 +215,28 @@ func runSeats(s loop.Settings, ensemble string, roles map[string]*string) (loop.
 var roleSteps = map[string]string{"planner": "plan", "implementer": "implement", "reviewer": "review", "gate": "gate", "classifier": "classify"}
 
 func checkPins(policy loop.Policy, specs map[string]string, seats loop.Seats) error {
-	resolved := map[string]loop.Seat{
-		"planner": seats.Planner, "implementer": seats.Implementer, "reviewer": seats.Reviewer,
-		"gate": seats.Gate, "classifier": seats.Classifier,
-	}
 	for _, role := range loop.SeatRoles {
-		seat := resolved[role]
-		if seat.Tier == "" {
-			continue
+		group := stepSeats(seats)[roleSteps[role]]
+		list := []string{specs[role]}
+		if role == "reviewer" {
+			list = loop.SeatList(specs[role])
 		}
-		tiers := policy.Tiers[seat.Provider]
-		if len(tiers) == 0 {
-			return fmt.Errorf("%s: seat %q: no [tiers.%s] to pin a tier against", role, specs[role], seat.Provider)
-		}
-		_, assigned := policy.Seat(roleSteps[role], seat, "", 0)
-		if _, ok := tiers[assigned.Tier]; !ok {
-			return fmt.Errorf("%s: seat %q: [tiers.%s] has no %s tier to pin against", role, specs[role], seat.Provider, assigned.Tier)
+		for i, seat := range group {
+			name := role
+			if role == "reviewer" {
+				name = loop.ReviewerName(i, len(group))
+			}
+			if seat.Tier == "" {
+				continue
+			}
+			tiers := policy.Tiers[seat.Provider]
+			if len(tiers) == 0 {
+				return fmt.Errorf("%s: seat %q: no [tiers.%s] to pin a tier against", name, list[i], seat.Provider)
+			}
+			_, assigned := policy.Seat(roleSteps[role], seat, "", 0)
+			if _, ok := tiers[assigned.Tier]; !ok {
+				return fmt.Errorf("%s: seat %q: [tiers.%s] has no %s tier to pin against", name, list[i], seat.Provider, assigned.Tier)
+			}
 		}
 	}
 	return nil
@@ -286,7 +311,7 @@ func runCommand(args []string) error {
 	sum, err := runPod(ctx, podRun{
 		RunID: runID, StateDir: filepath.Join(loop.StateDir(), "runs", runID),
 		Config: loop.Config{
-			RunID: runID, Task: text, Worktree: wt, Seats: seats,
+			RunID: runID, Task: text, Worktree: wt, Seats: seats, GateWhen: s.GateWhen,
 			MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, CheckCommand: checkCmd, Policy: &policy,
 		},
 		Client: client, Verify: loop.Retrying(loop.CommandVerifier(verifyCmd), s.VerifyRetries), Progress: os.Stdout,
@@ -509,11 +534,8 @@ func configCommand(args []string) error {
 	printSources(os.Stdout, s)
 	fmt.Printf("cao    %s\nstate  %s\nrun    rounds %d, verify retries %d, step timeout %s, reply grace %s, preflight %s\n",
 		s.CAOURL, loop.StateDir(), s.Rounds, s.VerifyRetries, s.Timeout, s.ReplyGrace, s.PreflightTimeout)
-	var seats []string
-	for _, role := range loop.SeatRoles {
-		seats = append(seats, role+"="+s.Seats[role])
-	}
-	fmt.Printf("seats  %s\nrig    %s\n", strings.Join(seats, " "), strings.Join(s.RigAgents, ","))
+	printSeats(os.Stdout, s)
+	fmt.Printf("rig    %s\n", strings.Join(s.RigAgents, ","))
 	printEnsembles(os.Stdout, s)
 	printPolicy(os.Stdout, &s.Policy)
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
@@ -530,6 +552,14 @@ func configCommand(args []string) error {
 	return tw.Flush()
 }
 
+func printSeats(w io.Writer, s loop.Settings) {
+	var seats []string
+	for _, role := range loop.SeatRoles {
+		seats = append(seats, role+"="+s.Seats[role])
+	}
+	fmt.Fprintf(w, "seats  %s gate_when=%s\n", strings.Join(seats, " "), s.GateWhen)
+}
+
 func printEnsembles(w io.Writer, s loop.Settings) {
 	for _, name := range sortedKeys(s.Ensembles) {
 		ensemble := s.Ensembles[name]
@@ -542,6 +572,9 @@ func printEnsembles(w io.Writer, s loop.Settings) {
 		}
 		if ensemble.Escalate != nil {
 			seats = append(seats, fmt.Sprintf("escalate=%t", *ensemble.Escalate))
+		}
+		if ensemble.GateWhen != "" {
+			seats = append(seats, "gate_when="+ensemble.GateWhen)
 		}
 		fmt.Fprintf(w, "ensemble %s  %s\n", name, strings.Join(seats, " "))
 	}
@@ -574,7 +607,7 @@ func printPolicy(w io.Writer, p *loop.Policy) {
 
 func stepSeats(s loop.Seats) map[string][]loop.Seat {
 	return map[string][]loop.Seat{
-		"plan": {s.Planner}, "implement": {s.Implementer}, "review": {s.Reviewer}, "gate": {s.Gate}, "classify": {s.Classifier},
+		"plan": {s.Planner}, "implement": {s.Implementer}, "review": s.Reviewers, "gate": {s.Gate}, "classify": {s.Classifier},
 	}
 }
 
