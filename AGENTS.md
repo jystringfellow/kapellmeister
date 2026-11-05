@@ -38,6 +38,9 @@ go test ./...
 ## Constraints
 
 - kapellmeister drives its own loop over CAO `run-step`; see `DECISIONS.md`.
+- Own as little as possible. Use a CAO primitive wherever one exists; put anything km must own
+  behind a narrow seam shaped like the CAO primitive it stands in for, and propose the gap upstream
+  to CAO. See `DECISIONS.md`.
 - Windows runs under WSL2, because CAO refuses native Windows.
 - Each run works in a throwaway detached worktree and leaves its change uncommitted.
 - Prefer small, explicit functions and simple implementations; add an interface only when a
