@@ -27,6 +27,29 @@ Behavior is defined by tests, and only by tests. There are no spec documents.
   tests, fix the README.
 - **CAO behaviour findings:** `spike/SPIKE.md`.
 
+## Vocabulary
+
+kapellmeister names things from orchestral practice. Use these words in code, tests, commands and
+docs, and do not coin a synonym for one of them.
+
+- **conductor:** km itself. It seats an ensemble's chairs, cues them and waits for them to close
+  their cues.
+- **ensemble:** the chairs seated together in one CAO session.
+- **section:** a group of chairs within an ensemble, recorded as a CAO group label.
+- **chair:** a stable seat, addressed `section.chair@ensemble`, that plays one part.
+- **occupant:** the CAO terminal sitting in a chair. It can be replaced while the chair keeps its
+  address.
+- **part:** what a chair plays in the score: `planner`, `implementer`, `reviewer`, `gate` or
+  `classifier`.
+- **score:** what an ensemble plays. The plan → implement → review → gate loop is one score.
+- **cue:** an obligation km tracks until a chair closes it with `km cue done`.
+- **send:** untracked chatter between chairs through CAO's `send_message`.
+- **audition, rehearse, play:** check that an ensemble can play without doing work; brief it and
+  leave it standing; run the score.
+
+Name a new concept from orchestral practice, and pick a word with one meaning. `hall` is reserved
+for something that holds many ensembles.
+
 ## Checks
 
 ```sh
