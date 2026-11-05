@@ -62,12 +62,12 @@ type Report struct {
 }
 
 func (a Audition) Run(ctx context.Context) (Report, error) {
-	crew := crew{Client: a.Client, Ensemble: a.Ensemble, Worktree: a.Worktree, Members: a.Members, Timeout: a.Timeout}
-	report, err := crew.open(ctx, "audition")
+	conductor := conductor{Client: a.Client, Ensemble: a.Ensemble, Worktree: a.Worktree, Members: a.Members, Timeout: a.Timeout}
+	report, err := conductor.seat(ctx, "audition")
 	if err != nil {
 		return report, err
 	}
-	crew.cueAll(ctx, &report, func(m Member) (string, string) {
+	conductor.cueAll(ctx, &report, func(m Member) (string, string) {
 		id := "audition-" + m.Section + "-" + m.Name
 		return id, a.cueText(id, m, report.Queue)
 	})

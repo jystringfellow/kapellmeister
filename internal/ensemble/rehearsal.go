@@ -22,8 +22,8 @@ type Rehearsal struct {
 }
 
 func (a Rehearsal) Run(ctx context.Context) (Report, error) {
-	crew := crew{Client: a.Client, Ensemble: a.Ensemble, Worktree: a.Worktree, Members: a.Members, Timeout: a.Timeout}
-	report, err := crew.open(ctx, "rehearse")
+	conductor := conductor{Client: a.Client, Ensemble: a.Ensemble, Worktree: a.Worktree, Members: a.Members, Timeout: a.Timeout}
+	report, err := conductor.seat(ctx, "rehearse")
 	if err != nil {
 		return report, err
 	}
@@ -43,7 +43,7 @@ func (a Rehearsal) Run(ctx context.Context) (Report, error) {
 			return report, fmt.Errorf("recording standing ensemble: session %s is still running: %w", report.Session, err)
 		}
 	}
-	crew.cueAll(ctx, &report, func(m Member) (string, string) {
+	conductor.cueAll(ctx, &report, func(m Member) (string, string) {
 		id := "rehearse-" + m.Section + "-" + m.Name
 		return id, a.briefing(id, m, report.Queue)
 	})
