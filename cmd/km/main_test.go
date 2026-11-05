@@ -50,7 +50,7 @@ func TestFlagsOverrideConfigOnlyWhenGiven(t *testing.T) {
 
 func TestUnknownChairsAndBadSizingFlagsAreRejected(t *testing.T) {
 	t.Setenv(loop.HomeEnv, t.TempDir())
-	if _, err := resolveChair("gemini"); err == nil {
+	if _, err := loop.ResolveChair("gemini"); err == nil {
 		t.Fatal("accepted an unknown agent")
 	}
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
@@ -71,7 +71,7 @@ func TestAgentNamesAcceptAPinnedTier(t *testing.T) {
 		{"claude_code:custom@large", "claude_code", "custom", "large"},
 	} {
 		t.Run(tc.spec, func(t *testing.T) {
-			chair, err := resolveChair(tc.spec)
+			chair, err := loop.ResolveChair(tc.spec)
 			if err != nil || chair != (loop.Chair{Provider: tc.provider, Profile: tc.profile, Tier: tc.tier}) {
 				t.Fatalf("%s: %+v %v", tc.spec, chair, err)
 			}
@@ -83,7 +83,7 @@ func TestAgentNamesAcceptAPinnedTier(t *testing.T) {
 		{"claude_code:km-claude:claude-fable-5-1@large", "explicit model"},
 	} {
 		t.Run(tc.spec, func(t *testing.T) {
-			if _, err := resolveChair(tc.spec); err == nil || !strings.Contains(err.Error(), tc.want) {
+			if _, err := loop.ResolveChair(tc.spec); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("%s: %v", tc.spec, err)
 			}
 		})

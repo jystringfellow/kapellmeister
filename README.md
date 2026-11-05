@@ -27,15 +27,71 @@ reviewers follow sizing. Other roles have one chair.
 
 `km audition -worktree DIR [-ensemble NAME]` checks that an ensemble can play without doing any
 work. It boots every chair into one CAO session, in the worktree, at the tier its part uses by
-default. Each chair is labelled with the CAO group `[ensemble, part]` and the metadata address
-`part.chair@ensemble`, for example `reviewer.reviewer-2@thorough`. Then km cues each chair once
+default. Each chair is labelled with the CAO group `[ensemble, section]` and the metadata address
+`section.chair@ensemble`, for example `review.security@thorough`. Then km cues each chair once
 through CAO's inbox, and the chair closes the cue by running `km cue done`, which appends to
 the audition's queue under `.kapellmeister/runs/audition-*/`.
 
 A chair passes when its cue is closed within `-timeout` (default `[run] preflight_timeout`).
 A chair fails if it does not boot, if its screen shows a trust or hook-review prompt before the
 cue, or if it never closes the cue. The report names the problem, and `report.json` sits next to
-the queue. The session is torn down afterwards unless you pass `-keep`.
+the queue. The session is torn down afterwards unless you pass `-keep`. A chair's own `timeout`
+does not apply to its audition, which does no work.
+
+## Ensemble files
+
+An ensemble file seats chairs in sections. A repository can check one in at
+`.kapellmeister/ensembles/NAME.toml` for everyone who works in it, and you can keep your own at
+`~/.kapellmeister/ensembles/NAME.toml`. Yours wins when both have the same name. Select one with
+`-ensemble NAME` on `km run` or `km audition`.
+
+```toml
+# .kapellmeister/ensembles/thorough.toml
+gate_when = "all"
+timeout = "30m"                     # every chair's step, unless its section or chair says otherwise
+
+[sections.leads.chairs.planner]
+part = "planner"
+agents = ["claude@large"]
+
+[sections.leads.chairs.implementer]
+part = "implementer"
+agents = ["codex", "claude"]        # the first agent you have plays the chair
+timeout = "90m"
+
+[sections.review]
+timeout = "15m"
+
+[sections.review.chairs.security]
+part = "reviewer"
+agents = ["claude"]
+
+[sections.review.chairs.style]
+part = "reviewer"
+agents = ["copilot", "claude"]
+
+[sections.leads.chairs.gate]
+part = "gate"
+agents = ["claude"]
+
+[sections.leads.chairs.classifier]
+part = "classifier"
+agents = ["claude@small"]
+```
+
+Each chair has the address `section.chair@ensemble`, such as `review.security@thorough`, and
+plays one part: `planner`, `implementer`, `reviewer`, `gate` or `classifier`. The loop needs
+exactly one of each part except `reviewer`, which needs at least one. Section and chair names are
+lowercase letters, digits and dashes. Sections keep the order they first appear in the file,
+and chairs keep their order within a section.
+
+A chair plays the first of its `agents` that is in your `[agents] available`, which defaults to
+every agent km knows. A repository's file names only agents, each with an optional `@tier`,
+because profiles and models depend on your machine. Your own files may also name
+`provider:profile[:model]`. A chair's `timeout` wins over its section's, which wins over the
+file's, which wins over `[run] timeout`. Role flags cannot override an ensemble file; copy it to
+`~/.kapellmeister/ensembles/` and edit that instead. A name defined both as a file and in
+`[ensembles]` is an error. `km config` lists the ensemble files it finds and where each is from.
 
 ## Configuration
 
@@ -43,13 +99,13 @@ kapellmeister layers two files over its built-in defaults; flags override both f
 optional, and unknown keys are an error.
 
 - **`~/.kapellmeister/config.toml`** (`$KAPELLMEISTER_HOME` moves it) holds what depends on your machine and accounts:
-  `[cao]`, `[chairs]`, `[ensembles]`, timeouts, and the model each tier means for you.
+  `[cao]`, `[chairs]`, `[agents]`, `[ensembles]`, timeouts, and the model each tier means for you.
 - **`.kapellmeister/config.toml`** in the repository holds the contract everyone working in it shares:
   `[test]`, step tiers and floors, rounds and sizing.
 
 The repository's values win for `[run]` rounds and retries, `[steps]` and `[sizing]`; yours win
-for `[tiers]`, because only you know what your accounts can run. `[cao]`, `[chairs]` and `[ensembles]`
-are machine-only and `[test]` is repository-only; putting one in the wrong file is an error.
+for `[tiers]`, because only you know what your accounts can run. `[cao]`, `[chairs]`, `[agents]` and
+`[ensembles]` are machine-only and `[test]` is repository-only; putting one in the wrong file is an error.
 `$CAO_API_BASE_URL` overrides `[cao] url`. State lives in `~/.kapellmeister/state` (`$KAPELLMEISTER_STATE_DIR`).
 
 ```toml
@@ -66,6 +122,9 @@ preflight_timeout = "4m"
 implementer = "claude"
 reviewer = "copilot"
 
+[agents]
+available = ["claude", "copilot"]   # agents you can run; ensemble files pick from these
+
 [ensembles.thorough]
 reviewer = ["copilot", "claude@large"]
 gate_when = "any"
@@ -80,8 +139,9 @@ Select a named ensemble for a run with `km run -ensemble thorough` alongside the
 repository flags. Its chairs overlay `[chairs]`, then built-in defaults for omitted roles. Without
 `-ensemble`, the run uses `[chairs]` as usual. Role flags override the selected ensemble's chairs;
 unknown ensemble names are an error listing the defined names. `km config` lists each ensemble
-and its chairs. Ensembles belong only in `~/.kapellmeister/config.toml`, because they name agents
-that depend on your accounts. In `[chairs]` and ensembles, `reviewer` accepts either a single
+and its chairs. `[ensembles]` belongs only in `~/.kapellmeister/config.toml`, because it names
+agents that depend on your accounts; a repository shares an ensemble as an
+[ensemble file](#ensemble-files) instead. In `[chairs]` and `[ensembles]`, `reviewer` accepts either a single
 string or an array such as `reviewer = ["copilot", "claude@large"]`. Other roles reject arrays.
 `km config` shows the reviewer lists and `gate_when`.
 

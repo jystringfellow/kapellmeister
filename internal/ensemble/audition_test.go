@@ -125,10 +125,10 @@ func (f *fakeCAO) byProfile(profile string) *fakeTerminal {
 
 func members() []Member {
 	return []Member{
-		{Part: "planner", Name: "planner", Chair: loop.Chair{Provider: "claude_code", Profile: "km-claude"}},
-		{Part: "implementer", Name: "implementer", Chair: loop.Chair{Provider: "codex", Profile: "km-codex"}},
-		{Part: "reviewer", Name: "reviewer-1", Chair: loop.Chair{Provider: "copilot_cli", Profile: "km-copilot"}},
-		{Part: "reviewer", Name: "reviewer-2", Chair: loop.Chair{Provider: "antigravity_cli", Profile: "km-agy", Model: "gemini-3.8-flash-low"}},
+		{Section: "planner", Part: "planner", Name: "planner", Chair: loop.Chair{Provider: "claude_code", Profile: "km-claude"}},
+		{Section: "implementer", Part: "implementer", Name: "implementer", Chair: loop.Chair{Provider: "codex", Profile: "km-codex"}},
+		{Section: "review", Part: "reviewer", Name: "reviewer-1", Chair: loop.Chair{Provider: "copilot_cli", Profile: "km-copilot"}},
+		{Section: "review", Part: "reviewer", Name: "reviewer-2", Chair: loop.Chair{Provider: "antigravity_cli", Profile: "km-agy", Model: "gemini-3.8-flash-low"}},
 	}
 }
 
@@ -143,7 +143,7 @@ func audition(client *cao.Client, worktree string) Audition {
 	return Audition{Client: client, Ensemble: "thorough", Worktree: worktree, Members: members(), Timeout: 2 * time.Second, KM: "/opt/km bin/km"}
 }
 
-func TestAnAuditionBootsEveryChairInOneCAOSessionGroupedByEnsembleAndPart(t *testing.T) {
+func TestAnAuditionBootsEveryChairInOneCAOSessionGroupedByEnsembleAndSection(t *testing.T) {
 	fake, client := newFakeCAO(t, nil)
 	wt := t.TempDir()
 	report, err := audition(client, wt).Run(context.Background())
@@ -168,11 +168,14 @@ func TestAnAuditionBootsEveryChairInOneCAOSessionGroupedByEnsembleAndPart(t *tes
 		if term.dir != wt {
 			t.Errorf("%s started in %q, want the worktree %q", m.Name, term.dir, wt)
 		}
-		if want := []string{"thorough", m.Part}; !slices.Equal(term.group, want) {
+		if want := []string{"thorough", m.Section}; !slices.Equal(term.group, want) {
 			t.Errorf("%s group = %v, want %v", m.Name, term.group, want)
 		}
-		if got, want := term.metadata["chair"], m.Part+"."+m.Name+"@thorough"; got != want {
+		if got, want := term.metadata["chair"], m.Section+"."+m.Name+"@thorough"; got != want {
 			t.Errorf("%s chair address = %v, want %s", m.Name, got, want)
+		}
+		if term.metadata["part"] != m.Part || term.metadata["section"] != m.Section {
+			t.Errorf("%s metadata = %v, want its part and section", m.Name, term.metadata)
 		}
 	}
 }
@@ -193,7 +196,7 @@ func TestAnAuditionCuesEachChairOnceWithTheKmCommandThatClosesTheCue(t *testing.
 		if match == nil || match[1] != "/opt/km bin/km" {
 			t.Errorf("%s cue = %q, want the quoted km binary", m.Name, term.cues[0])
 		}
-		if !strings.Contains(term.cues[0], m.Part+"."+m.Name+"@thorough") {
+		if !strings.Contains(term.cues[0], m.Section+"."+m.Name+"@thorough") {
 			t.Errorf("%s cue does not name its chair: %q", m.Name, term.cues[0])
 		}
 	}
@@ -286,14 +289,14 @@ func TestCloseAppendsOneClosurePerCueToTheQueue(t *testing.T) {
 	}
 }
 
-func TestMembersOfNameEachPartAndNumberSeveralReviewers(t *testing.T) {
+func TestMembersOfSeatEachPartInASectionOfItsOwnAndNumberSeveralReviewers(t *testing.T) {
 	c := loop.Chair{Provider: "claude_code", Profile: "km-claude"}
 	got := MembersOf(loop.Chairs{Planner: c, Implementer: c, Reviewers: []loop.Chair{c, c}, Gate: c, Classifier: c})
 	var names []string
 	for _, m := range got {
-		names = append(names, m.Part+"."+m.Name)
+		names = append(names, m.Section+"."+m.Name+":"+m.Part)
 	}
-	want := []string{"planner.planner", "implementer.implementer", "reviewer.reviewer-1", "reviewer.reviewer-2", "gate.gate", "classifier.classifier"}
+	want := []string{"planner.planner:planner", "implementer.implementer:implementer", "reviewer.reviewer-1:reviewer", "reviewer.reviewer-2:reviewer", "gate.gate:gate", "classifier.classifier:classifier"}
 	if !slices.Equal(names, want) {
 		t.Errorf("members = %v, want %v", names, want)
 	}
@@ -309,7 +312,7 @@ func TestASilentChairFailsWhenItsCueTimesOutWithNothingOnItsScreen(t *testing.T)
 	}
 	requireEveryChair(t, report)
 	for _, c := range report.Chairs {
-		if c.Address == "reviewer.reviewer-1@thorough" && (c.OK || c.Problem != "cue not closed within 300ms") {
+		if c.Address == "review.reviewer-1@thorough" && (c.OK || c.Problem != "cue not closed within 300ms") {
 			t.Errorf("reviewer-1 = %+v, want a plain timeout", c)
 		}
 	}

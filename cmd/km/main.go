@@ -130,34 +130,9 @@ func chairFlags(fs *flag.FlagSet, roles ...string) map[string]*string {
 		if role == "reviewer" {
 			listHelp = "; accepts a comma-separated list replacing all configured reviewers"
 		}
-		out[role] = fs.String(role, "", role+" chair: an agent ("+strings.Join(agentNames(), ", ")+") or provider:profile[:model], with optional @small|@medium|@large (default [chairs] "+role+" in "+loop.UserConfigPath(loop.Home())+")"+listHelp)
+		out[role] = fs.String(role, "", role+" chair: an agent ("+strings.Join(loop.AgentNames(), ", ")+") or provider:profile[:model], with optional @small|@medium|@large (default [chairs] "+role+" in "+loop.UserConfigPath(loop.Home())+")"+listHelp)
 	}
 	return out
-}
-
-func agentNames() []string {
-	var names []string
-	for _, a := range loop.DefaultAgents {
-		names = append(names, a.Name)
-	}
-	return names
-}
-
-func resolveChair(spec string) (loop.Chair, error) {
-	base, tier, err := loop.SplitTier(spec)
-	if err != nil {
-		return loop.Chair{}, err
-	}
-	if !strings.Contains(base, ":") {
-		agents, err := loop.SelectAgents(base)
-		if err != nil {
-			return loop.Chair{}, fmt.Errorf("chair %q: want an agent (%s) or provider:profile[:model], with optional @small|@medium|@large", spec, strings.Join(agentNames(), ", "))
-		}
-		chair := agents[0].Chair
-		chair.Tier = tier
-		return chair, nil
-	}
-	return loop.ParseChair(spec)
 }
 
 func chairSpecs(s loop.Settings, flags map[string]*string) map[string]string {
@@ -180,7 +155,7 @@ func resolveChairs(specs map[string]string) (loop.Chairs, error) {
 		if role == "reviewer" {
 			list := loop.ChairList(specs[role])
 			for i, spec := range list {
-				chair, err := resolveChair(spec)
+				chair, err := loop.ResolveChair(spec)
 				if err != nil {
 					return loop.Chairs{}, fmt.Errorf("%s: %w", loop.ReviewerName(i, len(list)), err)
 				}
@@ -191,7 +166,7 @@ func resolveChairs(specs map[string]string) (loop.Chairs, error) {
 		if strings.Contains(specs[role], ",") {
 			return loop.Chairs{}, fmt.Errorf("%s: chair %q: only reviewer takes a list of chairs", role, specs[role])
 		}
-		chair, err := resolveChair(specs[role])
+		chair, err := loop.ResolveChair(specs[role])
 		if err != nil {
 			return loop.Chairs{}, fmt.Errorf("%s: %w", role, err)
 		}
@@ -226,18 +201,25 @@ func checkPins(policy loop.Policy, specs map[string]string, chairs loop.Chairs) 
 			if role == "reviewer" {
 				name = loop.ReviewerName(i, len(group))
 			}
-			if chair.Tier == "" {
-				continue
-			}
-			tiers := policy.Tiers[chair.Provider]
-			if len(tiers) == 0 {
-				return fmt.Errorf("%s: chair %q: no [tiers.%s] to pin a tier against", name, list[i], chair.Provider)
-			}
-			_, assigned := policy.Chair(roleSteps[role], chair, "", 0)
-			if _, ok := tiers[assigned.Tier]; !ok {
-				return fmt.Errorf("%s: chair %q: [tiers.%s] has no %s tier to pin against", name, list[i], chair.Provider, assigned.Tier)
+			if err := checkPin(policy, role, name, list[i], chair); err != nil {
+				return err
 			}
 		}
+	}
+	return nil
+}
+
+func checkPin(policy loop.Policy, part, name, spec string, chair loop.Chair) error {
+	if chair.Tier == "" {
+		return nil
+	}
+	tiers := policy.Tiers[chair.Provider]
+	if len(tiers) == 0 {
+		return fmt.Errorf("%s: chair %q: no [tiers.%s] to pin a tier against", name, spec, chair.Provider)
+	}
+	_, assigned := policy.Chair(roleSteps[part], chair, "", 0)
+	if _, ok := tiers[assigned.Tier]; !ok {
+		return fmt.Errorf("%s: chair %q: [tiers.%s] has no %s tier to pin against", name, spec, chair.Provider, assigned.Tier)
 	}
 	return nil
 }
@@ -247,7 +229,7 @@ func runCommand(args []string) error {
 	c := commonFlags(fs)
 	worktree := fs.String("worktree", "", "use this existing worktree instead of creating one")
 	roles := chairFlags(fs, loop.ChairRoles...)
-	ensemble := fs.String("ensemble", "", "named chair set from [ensembles.NAME] in "+loop.UserConfigPath(loop.Home())+"; role flags override it")
+	ensemble := fs.String("ensemble", "", ensembleHelp)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -259,7 +241,7 @@ func runCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	if _, _, err := runChairs(userSettings, *ensemble, roles); err != nil {
+	if _, _, _, err := lineUp(userSettings, firstNonEmpty(*worktree, *c.repo), *ensemble, roles); err != nil {
 		return err
 	}
 	wt := *worktree
@@ -274,18 +256,15 @@ func runCommand(args []string) error {
 			return err
 		}
 	}
-	if wt, err = filepath.EvalSymlinks(wt); err != nil {
+	if wt, err = worktreeDir(wt); err != nil {
 		return err
 	}
 	s, err := c.settings(wt)
 	if err != nil {
 		return err
 	}
-	s, chairs, err := runChairs(s, *ensemble, roles)
+	s, chairs, _, err := lineUp(s, wt, *ensemble, roles)
 	if err != nil {
-		return err
-	}
-	if err := checkPins(s.Policy, chairSpecs(s, roles), chairs); err != nil {
 		return err
 	}
 	verifyCmd, checkCmd, err := loop.ResolveHooks(wt, *c.verify)
@@ -327,7 +306,7 @@ func runCommand(args []string) error {
 func preflightCommand(args []string) error {
 	fs := flag.NewFlagSet("preflight", flag.ContinueOnError)
 	worktree := fs.String("worktree", "", "git worktree to start the chairs in")
-	agents := fs.String("agents", "", "agents to check (default "+strings.Join(agentNames(), ",")+")")
+	agents := fs.String("agents", "", "agents to check (default "+strings.Join(loop.AgentNames(), ",")+")")
 	timeout := fs.Duration("timeout", 0, "how long each chair gets to answer (default [run] preflight_timeout, else 4m)")
 	tier := fs.String("tier", "", "check each agent on this tier's model and effort (small, medium or large) instead of its profile's own")
 	caoURL := fs.String("cao", "", "cao-server URL (default $CAO_API_BASE_URL, then [cao] url, else http://127.0.0.1:9889)")
@@ -337,7 +316,11 @@ func preflightCommand(args []string) error {
 	if *worktree == "" {
 		return errors.New("-worktree is required")
 	}
-	s, err := loop.LoadSettings(loop.Home(), *worktree)
+	wt, err := worktreeDir(*worktree)
+	if err != nil {
+		return err
+	}
+	s, err := loop.LoadSettings(loop.Home(), wt)
 	if err != nil {
 		return err
 	}
@@ -345,7 +328,7 @@ func preflightCommand(args []string) error {
 	if set["timeout"] {
 		s.PreflightTimeout = *timeout
 	}
-	selected, err := loop.SelectAgents(firstNonEmpty(*agents, strings.Join(agentNames(), ",")))
+	selected, err := loop.SelectAgents(firstNonEmpty(*agents, strings.Join(loop.AgentNames(), ",")))
 	if err != nil {
 		return err
 	}
@@ -366,7 +349,7 @@ func preflightCommand(args []string) error {
 			chairs[i], _ = pinned.At(chair, *tier)
 		}
 	}
-	return preflight(context.Background(), client, *worktree, s.PreflightTimeout, chairs...)
+	return preflight(context.Background(), client, wt, s.PreflightTimeout, chairs...)
 }
 
 func configCommand(args []string) error {
@@ -384,6 +367,7 @@ func configCommand(args []string) error {
 		s.CAOURL, loop.StateDir(), s.Rounds, s.VerifyRetries, s.Timeout, s.ReplyGrace, s.PreflightTimeout)
 	printChairs(os.Stdout, s)
 	printEnsembles(os.Stdout, s)
+	printEnsembleFiles(os.Stdout, loop.Home(), *worktree)
 	printPolicy(os.Stdout, &s.Policy)
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "\nPROVIDER\tTIER\tMODEL\tEFFORT")

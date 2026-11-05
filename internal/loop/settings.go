@@ -98,8 +98,11 @@ type FileConfig struct {
 	CAO  struct {
 		URL string `toml:"url"`
 	} `toml:"cao"`
-	Run       RunConfig                      `toml:"run"`
-	Chairs    map[string]ChairSpec           `toml:"chairs"`
+	Run    RunConfig            `toml:"run"`
+	Chairs map[string]ChairSpec `toml:"chairs"`
+	Agents struct {
+		Available []string `toml:"available"`
+	} `toml:"agents"`
 	Ensembles map[string]Ensemble            `toml:"ensembles"`
 	Tiers     map[string]map[string]TierSpec `toml:"tiers"`
 	Steps     map[string]StepPolicy          `toml:"steps"`
@@ -116,6 +119,7 @@ type Settings struct {
 	ReplyGrace       time.Duration       `json:"reply_grace"`
 	PreflightTimeout time.Duration       `json:"preflight_timeout"`
 	Chairs           map[string]string   `json:"chairs"`
+	Agents           []string            `json:"agents"`
 	Ensembles        map[string]Ensemble `json:"ensembles,omitempty"`
 	Policy           Policy              `json:"policy"`
 }
@@ -176,12 +180,13 @@ func DefaultSettings() Settings {
 		Chairs: map[string]string{
 			"planner": "claude", "implementer": "codex", "reviewer": "copilot", "gate": "claude", "classifier": "claude",
 		},
+		Agents: AgentNames(),
 		Policy: DefaultPolicy(),
 	}
 }
 
 var (
-	userOnlySections = []string{"cao", "chairs", "ensembles"}
+	userOnlySections = []string{"cao", "chairs", "agents", "ensembles"}
 	repoOnlySections = []string{"test"}
 )
 
@@ -221,6 +226,14 @@ func LoadSettings(home, worktree string) (Settings, error) {
 			return s, fmt.Errorf("%s: chairs.%s: only reviewer takes a list of chairs", userPath, role)
 		}
 		s.Chairs[role] = user.Chairs[role].Spec
+	}
+	if user.md.IsDefined("agents", "available") {
+		for _, name := range user.Agents.Available {
+			if !slices.Contains(AgentNames(), name) {
+				return s, fmt.Errorf("%s: agents.available: unknown agent %q (want %s)", userPath, name, strings.Join(AgentNames(), ", "))
+			}
+		}
+		s.Agents = user.Agents.Available
 	}
 	for _, name := range sortedKeys(user.Ensembles) {
 		ensemble := user.Ensembles[name]
