@@ -166,3 +166,110 @@ func TestHomeAndStateFollowTheirEnvironmentOverrides(t *testing.T) {
 		t.Fatalf("home %q", Home())
 	}
 }
+
+func TestANamedEnsembleLoadsFromTheUserConfig(t *testing.T) {
+	home := writeUserConfig(t, `[seats]
+implementer = "codex"
+[ensembles.thorough]
+reviewer = "claude@large"
+gate = "claude@large"
+escalate = false
+`)
+	if _, err := LoadSettings(home, ""); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEnsemblesInTheRepositoryConfigAreRejected(t *testing.T) {
+	for _, body := range []string{"[ensembles]\n", "[ensembles.thorough]\nreviewer = \"claude\"\n"} {
+		repo, home := t.TempDir(), t.TempDir()
+		writeConfig(t, repo, body)
+		_, err := LoadSettings(home, repo)
+		if err == nil || !strings.Contains(err.Error(), ConfigFile+": [ensembles] belongs in "+UserConfigPath(home)) {
+			t.Fatalf("repo ensembles: %v", err)
+		}
+	}
+}
+
+func TestAnUnknownKeyInAnEnsembleIsRejectedNamingTheFileAndKey(t *testing.T) {
+	home := writeUserConfig(t, "[ensembles.thorough]\nreviewers = \"claude\"\n")
+	_, err := LoadSettings(home, "")
+	if err == nil || !strings.Contains(err.Error(), UserConfigPath(home)+": unknown keys") || !strings.Contains(err.Error(), "ensembles.thorough.reviewers") {
+		t.Fatalf("unknown ensemble key: %v", err)
+	}
+}
+
+func TestAnEnsembleOverlaysSeatsAndTakesTheRestFromSeatsThenDefaults(t *testing.T) {
+	home := writeUserConfig(t, `[seats]
+implementer = "codex@small"
+planner = "agy"
+[ensembles.thorough]
+reviewer = "claude@large"
+gate = "claude@large"
+`)
+	s, err := LoadSettings(home, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := s.WithEnsemble("thorough")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"planner": "agy", "implementer": "codex@small", "reviewer": "claude@large", "gate": "claude@large", "classifier": "claude"}
+	for role, spec := range want {
+		if selected.Seats[role] != spec {
+			t.Fatalf("%s = %q, want %q", role, selected.Seats[role], spec)
+		}
+	}
+	if s.Seats["reviewer"] != "copilot" || s.Seats["gate"] != "claude" || s.Seats["implementer"] != "codex@small" {
+		t.Fatalf("selection mutated the default seats: %v", s.Seats)
+	}
+}
+
+func TestAnUnknownEnsembleIsRejectedListingTheDefinedOnes(t *testing.T) {
+	home := writeUserConfig(t, "[ensembles.thorough]\n[ensembles.careful]\n")
+	s, err := LoadSettings(home, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.WithEnsemble("fast"); err == nil || !strings.Contains(err.Error(), `unknown ensemble "fast"`) || !strings.Contains(err.Error(), "defined: careful, thorough") {
+		t.Fatalf("unknown ensemble: %v", err)
+	}
+	if _, err := DefaultSettings().WithEnsemble("fast"); err == nil || !strings.Contains(err.Error(), "no ensembles defined") {
+		t.Fatalf("no ensembles: %v", err)
+	}
+}
+
+func TestEnsembleEscalateFalseTurnsEscalationOffAndCannotTurnItOn(t *testing.T) {
+	for _, tc := range []struct {
+		name, key, repo string
+		want            int
+	}{
+		{"disabled", "escalate = false", "", 0},
+		{"enabled", "escalate = true", "", 2},
+		{"absent", "", "", 2},
+		{"repository disables", "escalate = true", "[sizing]\nescalate_after = 0\n", 0},
+		{"repository configures", "escalate = false", "[sizing]\nescalate_after = 1\n", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := writeUserConfig(t, "[ensembles.steady]\n"+tc.key+"\n")
+			repo := t.TempDir()
+			writeConfig(t, repo, tc.repo)
+			s, err := LoadSettings(home, repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := s.Policy.EscalateAfter()
+			selected, err := s.WithEnsemble("steady")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := selected.Policy.EscalateAfter(); got != tc.want {
+				t.Fatalf("escalate after = %d, want %d", got, tc.want)
+			}
+			if s.Policy.EscalateAfter() != before {
+				t.Fatal("selection mutated the original escalation policy")
+			}
+		})
+	}
+}

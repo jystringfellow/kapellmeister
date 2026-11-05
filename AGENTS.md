@@ -1,7 +1,7 @@
 # kapellmeister Agents Guide
 
 kapellmeister conducts coding agents through CAO: a plan → implement → review → gate loop with
-configurable seats, tiers and line-ups. The binary is `km`.
+configurable seats, tiers and ensembles. The binary is `km`.
 
 ## Tests are the spec
 

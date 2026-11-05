@@ -35,14 +35,37 @@ type RunConfig struct {
 	PreflightTimeout string `toml:"preflight_timeout"`
 }
 
+type Ensemble struct {
+	Planner     string `toml:"planner" json:"planner,omitempty"`
+	Implementer string `toml:"implementer" json:"implementer,omitempty"`
+	Reviewer    string `toml:"reviewer" json:"reviewer,omitempty"`
+	Gate        string `toml:"gate" json:"gate,omitempty"`
+	Classifier  string `toml:"classifier" json:"classifier,omitempty"`
+	Escalate    *bool  `toml:"escalate" json:"escalate,omitempty"`
+}
+
+func (e Ensemble) Seats() map[string]string {
+	seats := map[string]string{}
+	for role, spec := range map[string]string{
+		"planner": e.Planner, "implementer": e.Implementer, "reviewer": e.Reviewer,
+		"gate": e.Gate, "classifier": e.Classifier,
+	} {
+		if spec != "" {
+			seats[role] = spec
+		}
+	}
+	return seats
+}
+
 type FileConfig struct {
 	Test TestConfig `toml:"test"`
 	CAO  struct {
 		URL string `toml:"url"`
 	} `toml:"cao"`
-	Run   RunConfig         `toml:"run"`
-	Seats map[string]string `toml:"seats"`
-	Rig   struct {
+	Run       RunConfig           `toml:"run"`
+	Seats     map[string]string   `toml:"seats"`
+	Ensembles map[string]Ensemble `toml:"ensembles"`
+	Rig       struct {
 		Agents []string `toml:"agents"`
 	} `toml:"rig"`
 	Tiers  map[string]map[string]TierSpec `toml:"tiers"`
@@ -51,16 +74,41 @@ type FileConfig struct {
 }
 
 type Settings struct {
-	Files            []string          `json:"files"`
-	CAOURL           string            `json:"cao_url"`
-	Rounds           int               `json:"rounds"`
-	VerifyRetries    int               `json:"verify_retries"`
-	Timeout          time.Duration     `json:"timeout"`
-	ReplyGrace       time.Duration     `json:"reply_grace"`
-	PreflightTimeout time.Duration     `json:"preflight_timeout"`
-	Seats            map[string]string `json:"seats"`
-	RigAgents        []string          `json:"rig_agents"`
-	Policy           Policy            `json:"policy"`
+	Files            []string            `json:"files"`
+	CAOURL           string              `json:"cao_url"`
+	Rounds           int                 `json:"rounds"`
+	VerifyRetries    int                 `json:"verify_retries"`
+	Timeout          time.Duration       `json:"timeout"`
+	ReplyGrace       time.Duration       `json:"reply_grace"`
+	PreflightTimeout time.Duration       `json:"preflight_timeout"`
+	Seats            map[string]string   `json:"seats"`
+	Ensembles        map[string]Ensemble `json:"ensembles,omitempty"`
+	RigAgents        []string            `json:"rig_agents"`
+	Policy           Policy              `json:"policy"`
+}
+
+func (s Settings) WithEnsemble(name string) (Settings, error) {
+	ensemble, ok := s.Ensembles[name]
+	if !ok {
+		defined := "no ensembles defined"
+		if len(s.Ensembles) > 0 {
+			defined = "defined: " + strings.Join(sortedKeys(s.Ensembles), ", ")
+		}
+		return s, fmt.Errorf("unknown ensemble %q (%s)", name, defined)
+	}
+	seats := make(map[string]string, len(s.Seats))
+	for role, spec := range s.Seats {
+		seats[role] = spec
+	}
+	for role, spec := range ensemble.Seats() {
+		seats[role] = spec
+	}
+	s.Seats = seats
+	if ensemble.Escalate != nil && !*ensemble.Escalate {
+		off := 0
+		s.Policy.Sizing.EscalateAfter = &off
+	}
+	return s, nil
 }
 
 func Home() string {
@@ -99,7 +147,7 @@ func DefaultSettings() Settings {
 }
 
 var (
-	userOnlySections = []string{"cao", "seats", "rig"}
+	userOnlySections = []string{"cao", "seats", "rig", "ensembles"}
 	repoOnlySections = []string{"test"}
 )
 
@@ -129,6 +177,7 @@ func LoadSettings(home, worktree string) (Settings, error) {
 		s.Files = append(s.Files, filepath.Join(worktree, ConfigFile))
 	}
 
+	s.Ensembles = user.Ensembles
 	s.CAOURL = firstSet(os.Getenv(CAOURLEnv), user.CAO.URL, s.CAOURL)
 	for _, role := range sortedKeys(user.Seats) {
 		if !slices.Contains(SeatRoles, role) {

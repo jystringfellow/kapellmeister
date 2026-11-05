@@ -26,7 +26,7 @@ import (
 )
 
 const usage = `usage:
-  km run -repo DIR (-task TEXT | -task-file FILE) [flags]   one pod
+  km run -repo DIR (-task TEXT | -task-file FILE) [-ensemble NAME] [flags]   one pod
   km rig -repo DIR (-task TEXT | -task-file FILE) [flags]   every agent in every seat, one pod per rotation
   km preflight -worktree DIR [-agents LIST] [-tier T]       check each agent starts and answers
   km config [-worktree DIR]                                  show the effective settings and the files they come from`
@@ -126,7 +126,7 @@ func (c common) settings(worktree string) (loop.Settings, error) {
 func seatFlags(fs *flag.FlagSet, roles ...string) map[string]*string {
 	out := map[string]*string{}
 	for _, role := range roles {
-		out[role] = fs.String(role, "", role+" seat: an agent ("+strings.Join(agentNames(), ", ")+") or provider:profile[:model] (default [seats] "+role+" in "+loop.UserConfigPath(loop.Home())+")")
+		out[role] = fs.String(role, "", role+" seat: an agent ("+strings.Join(agentNames(), ", ")+") or provider:profile[:model], with optional @small|@medium|@large (default [seats] "+role+" in "+loop.UserConfigPath(loop.Home())+")")
 	}
 	return out
 }
@@ -140,12 +140,18 @@ func agentNames() []string {
 }
 
 func resolveSeat(spec string) (loop.Seat, error) {
-	if !strings.Contains(spec, ":") {
-		agents, err := rig.SelectAgents(spec)
+	base, tier, err := loop.SplitTier(spec)
+	if err != nil {
+		return loop.Seat{}, err
+	}
+	if !strings.Contains(base, ":") {
+		agents, err := rig.SelectAgents(base)
 		if err != nil {
-			return loop.Seat{}, fmt.Errorf("seat %q: want an agent (%s) or provider:profile[:model]", spec, strings.Join(agentNames(), ", "))
+			return loop.Seat{}, fmt.Errorf("seat %q: want an agent (%s) or provider:profile[:model], with optional @small|@medium|@large", spec, strings.Join(agentNames(), ", "))
 		}
-		return agents[0].Seat, nil
+		seat := agents[0].Seat
+		seat.Tier = tier
+		return seat, nil
 	}
 	return loop.ParseSeat(spec)
 }
@@ -175,11 +181,48 @@ func resolveSeats(specs map[string]string) (loop.Seats, error) {
 	return loop.Seats{Planner: resolved["planner"], Implementer: resolved["implementer"], Reviewer: resolved["reviewer"], Gate: resolved["gate"], Classifier: resolved["classifier"]}, nil
 }
 
+func runSeats(s loop.Settings, ensemble string, roles map[string]*string) (loop.Settings, loop.Seats, error) {
+	if ensemble != "" {
+		var err error
+		s, err = s.WithEnsemble(ensemble)
+		if err != nil {
+			return s, loop.Seats{}, err
+		}
+	}
+	seats, err := resolveSeats(seatSpecs(s, roles))
+	return s, seats, err
+}
+
+var roleSteps = map[string]string{"planner": "plan", "implementer": "implement", "reviewer": "review", "gate": "gate", "classifier": "classify"}
+
+func checkPins(policy loop.Policy, specs map[string]string, seats loop.Seats) error {
+	resolved := map[string]loop.Seat{
+		"planner": seats.Planner, "implementer": seats.Implementer, "reviewer": seats.Reviewer,
+		"gate": seats.Gate, "classifier": seats.Classifier,
+	}
+	for _, role := range loop.SeatRoles {
+		seat := resolved[role]
+		if seat.Tier == "" {
+			continue
+		}
+		tiers := policy.Tiers[seat.Provider]
+		if len(tiers) == 0 {
+			return fmt.Errorf("%s: seat %q: no [tiers.%s] to pin a tier against", role, specs[role], seat.Provider)
+		}
+		_, assigned := policy.Seat(roleSteps[role], seat, "", 0)
+		if _, ok := tiers[assigned.Tier]; !ok {
+			return fmt.Errorf("%s: seat %q: [tiers.%s] has no %s tier to pin against", role, specs[role], seat.Provider, assigned.Tier)
+		}
+	}
+	return nil
+}
+
 func runCommand(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	c := commonFlags(fs)
 	worktree := fs.String("worktree", "", "use this existing worktree instead of creating one")
 	roles := seatFlags(fs, loop.SeatRoles...)
+	ensemble := fs.String("ensemble", "", "named seat set from [ensembles.NAME] in "+loop.UserConfigPath(loop.Home())+"; role flags override it")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -187,7 +230,11 @@ func runCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := c.settings(""); err != nil {
+	userSettings, err := c.settings("")
+	if err != nil {
+		return err
+	}
+	if _, _, err := runSeats(userSettings, *ensemble, roles); err != nil {
 		return err
 	}
 	wt := *worktree
@@ -209,8 +256,11 @@ func runCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	seats, err := resolveSeats(seatSpecs(s, roles))
+	s, seats, err := runSeats(s, *ensemble, roles)
 	if err != nil {
+		return err
+	}
+	if err := checkPins(s.Policy, seatSpecs(s, roles), seats); err != nil {
 		return err
 	}
 	verifyCmd, checkCmd, err := loop.ResolveHooks(wt, *c.verify)
@@ -223,6 +273,9 @@ func runCommand(args []string) error {
 	defer stop()
 	client := cao.NewClient(s.CAOURL)
 	printSources(os.Stdout, s)
+	if *ensemble != "" {
+		fmt.Printf("ensemble %s\n", *ensemble)
+	}
 	printPolicy(os.Stdout, &policy)
 	if err := ensureProfiles(ctx, client, &policy, stepSeats(seats)); err != nil {
 		return err
@@ -269,7 +322,8 @@ func rigCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	cls, err := resolveSeat(seatSpecs(userSettings, classifier)["classifier"])
+	classifierSpec := seatSpecs(userSettings, classifier)["classifier"]
+	cls, err := resolveSeat(classifierSpec)
 	if err != nil {
 		return err
 	}
@@ -298,6 +352,9 @@ func rigCommand(args []string) error {
 	}
 	s, err := c.settings(worktrees[0])
 	if err != nil {
+		return err
+	}
+	if err := checkPins(s.Policy, map[string]string{"classifier": classifierSpec}, loop.Seats{Classifier: cls}); err != nil {
 		return err
 	}
 
@@ -457,6 +514,7 @@ func configCommand(args []string) error {
 		seats = append(seats, role+"="+s.Seats[role])
 	}
 	fmt.Printf("seats  %s\nrig    %s\n", strings.Join(seats, " "), strings.Join(s.RigAgents, ","))
+	printEnsembles(os.Stdout, s)
 	printPolicy(os.Stdout, &s.Policy)
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "\nPROVIDER\tTIER\tMODEL\tEFFORT")
@@ -470,6 +528,23 @@ func configCommand(args []string) error {
 		}
 	}
 	return tw.Flush()
+}
+
+func printEnsembles(w io.Writer, s loop.Settings) {
+	for _, name := range sortedKeys(s.Ensembles) {
+		ensemble := s.Ensembles[name]
+		specs := ensemble.Seats()
+		var seats []string
+		for _, role := range loop.SeatRoles {
+			if spec, ok := specs[role]; ok {
+				seats = append(seats, role+"="+spec)
+			}
+		}
+		if ensemble.Escalate != nil {
+			seats = append(seats, fmt.Sprintf("escalate=%t", *ensemble.Escalate))
+		}
+		fmt.Fprintf(w, "ensemble %s  %s\n", name, strings.Join(seats, " "))
+	}
 }
 
 func printSources(w io.Writer, s loop.Settings) {
