@@ -90,7 +90,7 @@ func preflightChair(ctx context.Context, stepper Stepper, worktree string, i int
 	if sc, ok := stepper.(Screener); ok && out.TerminalID != "" {
 		if session, screen, serr := sc.Screen(context.WithoutCancel(ctx), out.TerminalID); serr == nil {
 			res.Session = session
-			res.Blocker = findBlocker(screen)
+			res.Blocker = FindBlocker(screen)
 		}
 	}
 	return res
@@ -114,7 +114,7 @@ func awaitFile(ctx context.Context, path string, grace time.Duration) {
 	}
 }
 
-func findBlocker(screen string) string {
+func FindBlocker(screen string) string {
 	var lines []string
 	for _, line := range strings.Split(screen, "\n") {
 		if strings.TrimSpace(line) != "" {

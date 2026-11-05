@@ -7,6 +7,7 @@ works in a throwaway detached worktree and leaves its change uncommitted for you
 
 ```sh
 km run -repo ~/Code/app -task-file task.md [-ensemble thorough]  # one ensemble
+km audition -worktree DIR [-ensemble thorough]   # can this ensemble play? no real work
 km preflight -worktree DIR [-tier large]          # check each agent starts and answers
 km config [-worktree DIR]                         # show the effective settings and their files
 ```
@@ -21,6 +22,20 @@ The reviewer role can have several chairs. Use `-reviewer copilot,claude@large` 
 whole configured reviewer list for one run. Each reviewer runs concurrently in its own CAO
 terminal and resolves its tier separately: pinned reviewers keep their tier, while unpinned
 reviewers follow sizing. Other roles have one chair.
+
+## Audition
+
+`km audition -worktree DIR [-ensemble NAME]` checks that an ensemble can play without doing any
+work. It boots every chair into one CAO session, in the worktree, at the tier its part uses by
+default. Each chair is labelled with the CAO group `[ensemble, part]` and the metadata address
+`part.chair@ensemble`, for example `reviewer.reviewer-2@thorough`. Then km cues each chair once
+through CAO's inbox, and the chair closes the cue by running `km cue done`, which appends to
+the audition's queue under `.kapellmeister/runs/audition-*/`.
+
+A chair passes when its cue is closed within `-timeout` (default `[run] preflight_timeout`).
+A chair fails if it does not boot, if its screen shows a trust or hook-review prompt before the
+cue, or if it never closes the cue. The report names the problem, and `report.json` sits next to
+the queue. The session is torn down afterwards unless you pass `-keep`.
 
 ## Configuration
 

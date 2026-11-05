@@ -540,11 +540,11 @@ func TestPreflightWaitsBrieflyForAReplyWrittenAfterCAOReportsCompleted(t *testin
 
 func TestBlockersAreReadOnlyFromTheBottomOfTheScreen(t *testing.T) {
 	skills := "  - **cao-workflow**: running it is a separate, user-approved step.\n" + strings.Repeat("  more startup text\n", blockerLines) + "> ready\n"
-	if got := findBlocker(skills); got != "" {
+	if got := FindBlocker(skills); got != "" {
 		t.Fatalf("text scrolled above the prompt was read as a blocker: %q", got)
 	}
 	prompt := strings.Repeat("startup\n", 30) + "Do you trust the files in this folder?\n\n  1. Yes\n  2. No\n"
-	if got := findBlocker(prompt); got != "Do you trust the files in this folder?" {
+	if got := FindBlocker(prompt); got != "Do you trust the files in this folder?" {
 		t.Fatalf("blocker = %q", got)
 	}
 }

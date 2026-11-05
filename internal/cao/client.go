@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 )
 
 type Client struct {
@@ -37,6 +38,8 @@ type StepResponse struct {
 }
 
 type Terminal struct {
+	ID           string  `json:"id"`
+	Status       string  `json:"status"`
 	SessionName  string  `json:"session_name"`
 	Provider     string  `json:"provider"`
 	AgentProfile string  `json:"agent_profile"`
@@ -69,6 +72,60 @@ func (c *Client) Profiles(ctx context.Context) ([]Profile, error) {
 
 func (c *Client) DeleteTerminal(ctx context.Context, id string) error {
 	return c.call(ctx, http.MethodDelete, "/terminals/"+id, nil, nil)
+}
+
+type Launch struct {
+	Profile, Provider, Model, WorkingDirectory string
+}
+
+func (l Launch) query() url.Values {
+	q := url.Values{"agent_profile": {l.Profile}, "working_directory": {l.WorkingDirectory}}
+	if l.Provider != "" {
+		q.Set("provider", l.Provider)
+	}
+	if l.Model != "" {
+		q.Set("model", l.Model)
+	}
+	return q
+}
+
+func (c *Client) CreateSession(ctx context.Context, name string, l Launch) (Terminal, error) {
+	q := l.query()
+	q.Set("session_name", name)
+	var t Terminal
+	err := c.call(ctx, http.MethodPost, "/sessions?"+q.Encode(), nil, &t)
+	return t, err
+}
+
+func (c *Client) AddTerminal(ctx context.Context, session string, l Launch) (Terminal, error) {
+	var t Terminal
+	err := c.call(ctx, http.MethodPost, "/sessions/"+url.PathEscape(session)+"/terminals?"+l.query().Encode(), nil, &t)
+	return t, err
+}
+
+func (c *Client) DeleteSession(ctx context.Context, session string) error {
+	return c.call(ctx, http.MethodDelete, "/sessions/"+url.PathEscape(session), nil, nil)
+}
+
+func (c *Client) SetGroup(ctx context.Context, id string, group []string) error {
+	return c.call(ctx, http.MethodPatch, "/terminals/"+id+"/group", map[string]any{"group": group}, nil)
+}
+
+func (c *Client) SetMetadata(ctx context.Context, id string, metadata map[string]any) error {
+	return c.call(ctx, http.MethodPatch, "/terminals/"+id+"/metadata", map[string]any{"metadata": metadata}, nil)
+}
+
+func (c *Client) SendMessage(ctx context.Context, receiver, sender, message string) error {
+	q := url.Values{"sender_id": {sender}, "message": {message}}
+	return c.call(ctx, http.MethodPost, "/terminals/"+receiver+"/inbox/messages?"+q.Encode(), nil, nil)
+}
+
+func (c *Client) Output(ctx context.Context, id string) (string, error) {
+	var out struct {
+		Output string `json:"output"`
+	}
+	err := c.call(ctx, http.MethodGet, "/terminals/"+id+"/output?mode=full", nil, &out)
+	return out.Output, err
 }
 
 func (c *Client) call(ctx context.Context, method, path string, body, out any) error {
