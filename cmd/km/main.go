@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -16,18 +15,15 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"text/tabwriter"
 	"time"
 
 	"github.com/jystringfellow/kapellmeister/internal/cao"
 	"github.com/jystringfellow/kapellmeister/internal/loop"
-	"github.com/jystringfellow/kapellmeister/internal/rig"
 )
 
 const usage = `usage:
   km run -repo DIR (-task TEXT | -task-file FILE) [-ensemble NAME] [flags]   one pod
-  km rig -repo DIR (-task TEXT | -task-file FILE) [flags]   every agent in every seat, one pod per rotation
   km preflight -worktree DIR [-agents LIST] [-tier T]       check each agent starts and answers
   km config [-worktree DIR]                                  show the effective settings and the files they come from`
 
@@ -40,8 +36,6 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		err = runCommand(os.Args[2:])
-	case "rig":
-		err = rigCommand(os.Args[2:])
 	case "preflight":
 		err = preflightCommand(os.Args[2:])
 	case "config":
@@ -137,7 +131,7 @@ func seatFlags(fs *flag.FlagSet, roles ...string) map[string]*string {
 
 func agentNames() []string {
 	var names []string
-	for _, a := range rig.DefaultAgents {
+	for _, a := range loop.DefaultAgents {
 		names = append(names, a.Name)
 	}
 	return names
@@ -149,7 +143,7 @@ func resolveSeat(spec string) (loop.Seat, error) {
 		return loop.Seat{}, err
 	}
 	if !strings.Contains(base, ":") {
-		agents, err := rig.SelectAgents(base)
+		agents, err := loop.SelectAgents(base)
 		if err != nil {
 			return loop.Seat{}, fmt.Errorf("seat %q: want an agent (%s) or provider:profile[:model], with optional @small|@medium|@large", spec, strings.Join(agentNames(), ", "))
 		}
@@ -324,162 +318,10 @@ func runCommand(args []string) error {
 	return nil
 }
 
-func rigCommand(args []string) error {
-	fs := flag.NewFlagSet("rig", flag.ContinueOnError)
-	c := commonFlags(fs)
-	agents := fs.String("agents", "", "agents to rotate through the planner, implementer, reviewer and gate seats (default [rig] agents, else "+strings.Join(agentNames(), ",")+")")
-	classifier := seatFlags(fs, "classifier")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if *c.repo == "" {
-		return errors.New("-repo is required")
-	}
-	text, err := taskText(*c.task, *c.taskFile)
-	if err != nil {
-		return err
-	}
-	userSettings, err := c.settings("")
-	if err != nil {
-		return err
-	}
-	selected, err := rig.SelectAgents(firstNonEmpty(*agents, strings.Join(userSettings.RigAgents, ",")))
-	if err != nil {
-		return err
-	}
-	classifierSpec := seatSpecs(userSettings, classifier)["classifier"]
-	cls, err := resolveSeat(classifierSpec)
-	if err != nil {
-		return err
-	}
-	pods, err := rig.Rotation(selected, cls)
-	if err != nil {
-		return err
-	}
-
-	rigID := newRunID()
-	rigDir := filepath.Join(loop.StateDir(), "rigs", rigID)
-	if err := os.MkdirAll(rigDir, 0o755); err != nil {
-		return err
-	}
-	if err := fetchRepo(*c.repo); err != nil {
-		return err
-	}
-	worktrees := make([]string, len(pods))
-	for i := range pods {
-		wt, err := addWorktree(*c.repo, *c.base)
-		if err != nil {
-			return err
-		}
-		if worktrees[i], err = filepath.EvalSymlinks(wt); err != nil {
-			return err
-		}
-	}
-	s, err := c.settings(worktrees[0])
-	if err != nil {
-		return err
-	}
-	if err := checkPins(s.Policy, map[string]string{"classifier": classifierSpec}, loop.Seats{Classifier: cls}); err != nil {
-		return err
-	}
-
-	fmt.Printf("km rig %s\n  state  %s\n", rigID, rigDir)
-	for i, p := range pods {
-		fmt.Printf("  %s  %s\n        %s\n", p.Name, p.CastLine(), worktrees[i])
-	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-	client := cao.NewClient(s.CAOURL)
-	verifyCmd, checkCmd, err := loop.ResolveHooks(worktrees[0], *c.verify)
-	if err != nil {
-		return err
-	}
-	policy := s.Policy
-	printSources(os.Stdout, s)
-	printPolicy(os.Stdout, &policy)
-	var all []loop.Seat
-	needed := map[string][]loop.Seat{}
-	for _, p := range pods {
-		all = append(all, defaultSeats(&policy, p.Seats)...)
-		for k, v := range stepSeats(p.Seats) {
-			needed[k] = append(needed[k], v...)
-		}
-	}
-	if err := ensureProfiles(ctx, client, &policy, needed); err != nil {
-		return err
-	}
-	if err := preflight(ctx, client, worktrees[0], s.PreflightTimeout, all...); err != nil {
-		return err
-	}
-	verify := loop.Retrying(loop.CommandVerifier(verifyCmd), s.VerifyRetries)
-	if verifyCmd != "" {
-		fmt.Printf("→ verify[baseline] %s\n", verifyCmd)
-		start := time.Now()
-		v, err := verify(ctx, worktrees[0])
-		if err != nil {
-			return err
-		}
-		_ = os.WriteFile(filepath.Join(rigDir, "verify-baseline.txt"), []byte(v.Output), 0o644)
-		fmt.Printf("  exit %d in %s (%d attempt(s))\n", v.ExitCode, time.Since(start).Round(time.Second), v.Attempts)
-		if v.ExitCode != 0 {
-			return fmt.Errorf("verify already fails on %s before any change; see %s", *c.base, filepath.Join(rigDir, "verify-baseline.txt"))
-		}
-	}
-
-	var verifyMu, outMu sync.Mutex
-	sums := make([]podSummary, len(pods))
-	errs := make([]error, len(pods))
-	start := time.Now()
-	var wg sync.WaitGroup
-	for i, p := range pods {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			runID := rigID + "-" + p.Name
-			sums[i], errs[i] = runPod(ctx, podRun{
-				Pod: p.Name, Cast: p.Cast, RunID: runID, StateDir: filepath.Join(rigDir, p.Name),
-				Config: loop.Config{
-					RunID: runID, Task: text, Worktree: worktrees[i], Seats: p.Seats,
-					MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, CheckCommand: checkCmd, SkipBaseline: true, Policy: &policy,
-				},
-				Client: client, Verify: loop.Serialized(verify, &verifyMu),
-				Progress: &prefixWriter{mu: &outMu, w: os.Stdout, prefix: "[" + p.Name + "] "},
-			})
-		}()
-	}
-	wg.Wait()
-
-	for i, err := range errs {
-		if err != nil {
-			sums[i] = podSummary{Pod: pods[i].Name, Cast: pods[i].Cast, Result: loop.Result{Outcome: loop.Failed, Reason: err.Error(), Worktree: worktrees[i]}}
-		}
-	}
-	if err := writeJSON(filepath.Join(rigDir, "rig.json"), map[string]any{
-		"rig_id": rigID, "task": text, "verify": verifyCmd, "check": checkCmd, "duration_ms": time.Since(start).Milliseconds(), "pods": sums,
-	}); err != nil {
-		return err
-	}
-	fmt.Printf("\nrig %s finished in %s\n\n", rigID, time.Since(start).Round(time.Second))
-	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "POD\tPLANNER\tIMPLEMENTER\tREVIEWER\tGATE\tOUTCOME\tROUNDS\tTIME\tDIFF")
-	for _, s := range sums {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n", s.Pod, s.Cast["planner"], s.Cast["implementer"], s.Cast["reviewer"], s.Cast["gate"],
-			s.Outcome, s.Rounds, (time.Duration(s.DurationMS) * time.Millisecond).Round(time.Second), shortStat(s.DiffStat))
-	}
-	tw.Flush()
-	for _, s := range sums {
-		if s.Reason != "" {
-			fmt.Printf("%s: %s\n", s.Pod, s.Reason)
-		}
-	}
-	return nil
-}
-
 func preflightCommand(args []string) error {
 	fs := flag.NewFlagSet("preflight", flag.ContinueOnError)
 	worktree := fs.String("worktree", "", "git worktree to start the seats in")
-	agents := fs.String("agents", "", "agents to check (default [rig] agents, else "+strings.Join(agentNames(), ",")+")")
+	agents := fs.String("agents", "", "agents to check (default "+strings.Join(agentNames(), ",")+")")
 	timeout := fs.Duration("timeout", 0, "how long each seat gets to answer (default [run] preflight_timeout, else 4m)")
 	tier := fs.String("tier", "", "check each agent on this tier's model and effort (small, medium or large) instead of its profile's own")
 	caoURL := fs.String("cao", "", "cao-server URL (default $CAO_API_BASE_URL, then [cao] url, else http://127.0.0.1:9889)")
@@ -497,7 +339,7 @@ func preflightCommand(args []string) error {
 	if set["timeout"] {
 		s.PreflightTimeout = *timeout
 	}
-	selected, err := rig.SelectAgents(firstNonEmpty(*agents, strings.Join(s.RigAgents, ",")))
+	selected, err := loop.SelectAgents(firstNonEmpty(*agents, strings.Join(agentNames(), ",")))
 	if err != nil {
 		return err
 	}
@@ -535,7 +377,6 @@ func configCommand(args []string) error {
 	fmt.Printf("cao    %s\nstate  %s\nrun    rounds %d, verify retries %d, step timeout %s, reply grace %s, preflight %s\n",
 		s.CAOURL, loop.StateDir(), s.Rounds, s.VerifyRetries, s.Timeout, s.ReplyGrace, s.PreflightTimeout)
 	printSeats(os.Stdout, s)
-	fmt.Printf("rig    %s\n", strings.Join(s.RigAgents, ","))
 	printEnsembles(os.Stdout, s)
 	printPolicy(os.Stdout, &s.Policy)
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
@@ -721,8 +562,6 @@ func firstNonEmpty(values ...string) string {
 }
 
 type podRun struct {
-	Pod      string
-	Cast     map[string]string
 	RunID    string
 	StateDir string
 	Config   loop.Config
@@ -732,8 +571,6 @@ type podRun struct {
 }
 
 type podSummary struct {
-	Pod  string            `json:"pod,omitempty"`
-	Cast map[string]string `json:"cast,omitempty"`
 	loop.Result
 	DurationMS int64  `json:"duration_ms"`
 	DiffStat   string `json:"diff_stat"`
@@ -751,9 +588,7 @@ func runPod(ctx context.Context, p podRun) (podSummary, error) {
 	if err := writeJSON(filepath.Join(p.StateDir, "config.json"), p.Config); err != nil {
 		return podSummary{}, err
 	}
-	if p.Pod == "" {
-		fmt.Fprintf(p.Progress, "km run %s\n  worktree  %s\n  state     %s\n", p.RunID, p.Config.Worktree, p.StateDir)
-	}
+	fmt.Fprintf(p.Progress, "km run %s\n  worktree  %s\n  state     %s\n", p.RunID, p.Config.Worktree, p.StateDir)
 	eng := &loop.Engine{Config: p.Config, Stepper: loop.CAOStepper{Client: p.Client}, Verify: p.Verify, Records: telemetry, Progress: p.Progress}
 	start := time.Now()
 	res, err := eng.Run(ctx)
@@ -764,12 +599,9 @@ func runPod(ctx context.Context, p podRun) (podSummary, error) {
 		fmt.Fprintln(os.Stderr, "km: copying replies:", err)
 	}
 	stat, _ := exec.Command("git", "-C", p.Config.Worktree, "diff", "HEAD", "--stat").CombinedOutput()
-	sum := podSummary{Pod: p.Pod, Cast: p.Cast, Result: res, DurationMS: time.Since(start).Milliseconds(), DiffStat: string(stat)}
+	sum := podSummary{Result: res, DurationMS: time.Since(start).Milliseconds(), DiffStat: string(stat)}
 	if err := writeJSON(filepath.Join(p.StateDir, "result.json"), sum); err != nil {
 		return sum, err
-	}
-	if p.Pod != "" {
-		printOutcome(p.Progress, sum)
 	}
 	return sum, nil
 }
@@ -780,39 +612,6 @@ func printOutcome(w io.Writer, s podSummary) {
 		line += ": " + s.Reason
 	}
 	fmt.Fprintln(w, "\n"+line)
-}
-
-func shortStat(stat string) string {
-	lines := strings.Split(strings.TrimSpace(stat), "\n")
-	if len(lines) == 0 || lines[len(lines)-1] == "" {
-		return "-"
-	}
-	return strings.TrimSpace(lines[len(lines)-1])
-}
-
-type prefixWriter struct {
-	mu     *sync.Mutex
-	w      io.Writer
-	prefix string
-}
-
-func (p *prefixWriter) Write(b []byte) (int, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	var out bytes.Buffer
-	for _, line := range strings.SplitAfter(string(b), "\n") {
-		if line == "" {
-			continue
-		}
-		if line != "\n" {
-			out.WriteString(p.prefix)
-		}
-		out.WriteString(line)
-	}
-	if _, err := p.w.Write(out.Bytes()); err != nil {
-		return 0, err
-	}
-	return len(b), nil
 }
 
 func taskText(task, file string) (string, error) {

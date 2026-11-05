@@ -98,15 +98,12 @@ type FileConfig struct {
 	CAO  struct {
 		URL string `toml:"url"`
 	} `toml:"cao"`
-	Run       RunConfig           `toml:"run"`
-	Seats     map[string]SeatSpec `toml:"seats"`
-	Ensembles map[string]Ensemble `toml:"ensembles"`
-	Rig       struct {
-		Agents []string `toml:"agents"`
-	} `toml:"rig"`
-	Tiers  map[string]map[string]TierSpec `toml:"tiers"`
-	Steps  map[string]StepPolicy          `toml:"steps"`
-	Sizing SizingConfig                   `toml:"sizing"`
+	Run       RunConfig                      `toml:"run"`
+	Seats     map[string]SeatSpec            `toml:"seats"`
+	Ensembles map[string]Ensemble            `toml:"ensembles"`
+	Tiers     map[string]map[string]TierSpec `toml:"tiers"`
+	Steps     map[string]StepPolicy          `toml:"steps"`
+	Sizing    SizingConfig                   `toml:"sizing"`
 }
 
 type Settings struct {
@@ -120,7 +117,6 @@ type Settings struct {
 	PreflightTimeout time.Duration       `json:"preflight_timeout"`
 	Seats            map[string]string   `json:"seats"`
 	Ensembles        map[string]Ensemble `json:"ensembles,omitempty"`
-	RigAgents        []string            `json:"rig_agents"`
 	Policy           Policy              `json:"policy"`
 }
 
@@ -180,13 +176,12 @@ func DefaultSettings() Settings {
 		Seats: map[string]string{
 			"planner": "claude", "implementer": "codex", "reviewer": "copilot", "gate": "claude", "classifier": "claude",
 		},
-		RigAgents: []string{"claude", "codex", "copilot", "agy"},
-		Policy:    DefaultPolicy(),
+		Policy: DefaultPolicy(),
 	}
 }
 
 var (
-	userOnlySections = []string{"cao", "seats", "rig", "ensembles"}
+	userOnlySections = []string{"cao", "seats", "ensembles"}
 	repoOnlySections = []string{"test"}
 )
 
@@ -245,9 +240,6 @@ func LoadSettings(home, worktree string) (Settings, error) {
 		}
 	}
 
-	if len(user.Rig.Agents) > 0 {
-		s.RigAgents = user.Rig.Agents
-	}
 	for _, layer := range []loadedConfig{user, repo} {
 		if err := s.applyRun(layer); err != nil {
 			return s, err

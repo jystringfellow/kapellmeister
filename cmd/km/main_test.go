@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"flag"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -280,17 +279,6 @@ func TestRunRejectsAPinOnAProviderWithoutATierTableBeforeAnyCAOCall(t *testing.T
 	}
 }
 
-func TestRigRejectsAPinOnAProviderWithoutATierTableBeforeAnyCAOCall(t *testing.T) {
-	t.Setenv(loop.HomeEnv, t.TempDir())
-	t.Setenv(loop.StateEnv, t.TempDir())
-	t.Setenv("TMPDIR", t.TempDir())
-	err := rigCommand([]string{"-task", "x", "-repo", clonedRepo(t), "-base", "origin/main", "-cao", unreachableCAO, "-classifier", "myprov:myprof@large"})
-	want := `classifier: seat "myprov:myprof@large": no [tiers.myprov] to pin a tier against`
-	if err == nil || err.Error() != want {
-		t.Errorf("rig error = %v, want %s", err, want)
-	}
-}
-
 func TestAPinOnATierItsProvidersTableLacksIsRejected(t *testing.T) {
 	s := loop.DefaultSettings()
 	s.Policy.Tiers["myprov"] = map[string]loop.TierSpec{"medium": {Model: "m"}}
@@ -324,21 +312,6 @@ func TestAPinOnATierItsProvidersTableLacksIsRejected(t *testing.T) {
 }
 
 const unreachableCAO = "http://127.0.0.1:1"
-
-func clonedRepo(t *testing.T) string {
-	t.Helper()
-	origin, clone := t.TempDir(), filepath.Join(t.TempDir(), "clone")
-	for _, args := range [][]string{
-		{"-C", origin, "init", "-q", "-b", "main"},
-		{"-C", origin, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", "base"},
-		{"clone", "-q", origin, clone},
-	} {
-		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, out)
-		}
-	}
-	return clone
-}
 
 func TestTheReviewerFlagReplacesTheWholeConfiguredList(t *testing.T) {
 	s := ensembleSettings(t)

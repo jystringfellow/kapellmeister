@@ -7,7 +7,6 @@ works in a throwaway detached worktree and leaves its change uncommitted for you
 
 ```sh
 km run -repo ~/Code/app -task-file task.md [-ensemble thorough]  # one pod
-km rig -repo ~/Code/app -task-file task.md        # every agent in every seat, one pod each
 km preflight -worktree DIR [-tier large]          # check each agent starts and answers
 km config [-worktree DIR]                         # show the effective settings and their files
 ```
@@ -21,7 +20,7 @@ explicit model always runs that model and cannot also use `@tier`.
 The reviewer role can have several seats. Use `-reviewer copilot,claude@large` to replace the
 whole configured reviewer list for one run. Each reviewer runs concurrently in its own CAO
 terminal and resolves its tier separately: pinned reviewers keep their tier, while unpinned
-reviewers follow sizing. Other roles have one seat; `km rig` keeps one reviewer per pod.
+reviewers follow sizing. Other roles have one seat.
 
 ## Configuration
 
@@ -29,12 +28,12 @@ kapellmeister layers two files over its built-in defaults; flags override both f
 optional, and unknown keys are an error.
 
 - **`~/.kapellmeister/config.toml`** (`$KAPELLMEISTER_HOME` moves it) holds what depends on your machine and accounts:
-  `[cao]`, `[seats]`, `[ensembles]`, `[rig]`, timeouts, and the model each tier means for you.
+  `[cao]`, `[seats]`, `[ensembles]`, timeouts, and the model each tier means for you.
 - **`.kapellmeister/config.toml`** in the repository holds the contract everyone working in it shares:
   `[test]`, step tiers and floors, rounds and sizing.
 
 The repository's values win for `[run]` rounds and retries, `[steps]` and `[sizing]`; yours win
-for `[tiers]`, because only you know what your accounts can run. `[cao]`, `[seats]`, `[ensembles]` and `[rig]`
+for `[tiers]`, because only you know what your accounts can run. `[cao]`, `[seats]` and `[ensembles]`
 are machine-only and `[test]` is repository-only; putting one in the wrong file is an error.
 `$CAO_API_BASE_URL` overrides `[cao] url`. State lives in `~/.kapellmeister/state` (`$KAPELLMEISTER_STATE_DIR`).
 
@@ -57,9 +56,6 @@ reviewer = ["copilot", "claude@large"]
 gate_when = "any"
 gate = "claude@large"
 escalate = false
-
-[rig]
-agents = ["claude", "codex", "copilot", "agy"]
 
 [tiers.copilot_cli]
 large = { model = "claude-sonnet-5.5" }
@@ -154,7 +150,7 @@ A pin such as `claude@large` or `codex:km-codex@small` replaces the step's defau
 does not move it. The repository's `[steps.<step>]` min and max still clamp it: a gate pinned to
 small runs at medium with the default gate floor. Pins work in `[seats]`, ensembles and role flags.
 A pin needs a `[tiers.<provider>]` table (built in or configured) with the tier it resolves to;
-`km run` and `km rig` refuse to start otherwise.
+`km run` refuses to start otherwise.
 An explicit model (`provider:profile:model`) cannot also carry `@tier`.
 
 Models must be IDs (CAO rejects display names). Effort applies to Claude Code and Codex only,

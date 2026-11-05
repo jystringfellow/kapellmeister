@@ -24,7 +24,7 @@ func TestWithoutConfigFilesSettingsAreTheBuiltInDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := DefaultSettings()
-	if len(s.Files) != 0 || s.CAOURL != want.CAOURL || s.Rounds != 3 || s.Timeout != 40*time.Minute || s.Seats["implementer"] != "codex" || len(s.RigAgents) != 4 {
+	if len(s.Files) != 0 || s.CAOURL != want.CAOURL || s.Rounds != 3 || s.Timeout != 40*time.Minute || s.Seats["implementer"] != "codex" {
 		t.Fatalf("settings = %+v", s)
 	}
 }
@@ -42,9 +42,6 @@ rounds = 5
 [seats]
 implementer = "claude"
 gate = "codex:km-codex:gpt-6-astra"
-
-[rig]
-agents = ["claude", "codex", "copilot", "claude"]
 
 [steps.gate]
 tier = "large"
@@ -82,9 +79,6 @@ mode = "shadow"
 	}
 	if s.Seats["implementer"] != "claude" || s.Seats["gate"] != "codex:km-codex:gpt-6-astra" || s.Seats["planner"] != "claude" {
 		t.Fatalf("seats = %v", s.Seats)
-	}
-	if strings.Join(s.RigAgents, ",") != "claude,codex,copilot,claude" {
-		t.Fatalf("rig agents = %v", s.RigAgents)
 	}
 	if gate := s.Policy.Steps["gate"]; gate != (StepPolicy{Tier: "large", Min: "medium", Max: "large"}) {
 		t.Fatalf("gate = %+v, want the user's tier under the repo's floor", gate)
@@ -125,7 +119,7 @@ func TestSectionsInTheWrongLayerAreRejectedWithWhereTheyBelong(t *testing.T) {
 	if _, err := LoadSettings(writeUserConfig(t, "[test]\nverify = \"make\"\n"), ""); err == nil || !strings.Contains(err.Error(), "[test] belongs in the repository's .kapellmeister/config.toml") {
 		t.Fatalf("user [test]: %v", err)
 	}
-	for _, section := range []string{"[seats]\nimplementer = \"claude\"\n", "[cao]\nurl = \"x\"\n", "[rig]\nagents = [\"claude\"]\n"} {
+	for _, section := range []string{"[seats]\nimplementer = \"claude\"\n", "[cao]\nurl = \"x\"\n"} {
 		repo := t.TempDir()
 		writeConfig(t, repo, section)
 		home := t.TempDir()
