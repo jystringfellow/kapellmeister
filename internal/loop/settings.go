@@ -229,8 +229,9 @@ func LoadSettings(home, worktree string) (Settings, error) {
 	}
 	for _, name := range sortedKeys(user.Ensembles) {
 		ensemble := user.Ensembles[name]
-		for role, spec := range map[string]SeatSpec{"planner": ensemble.Planner, "implementer": ensemble.Implementer, "reviewer": ensemble.Reviewer, "gate": ensemble.Gate, "classifier": ensemble.Classifier} {
-			if spec.List && role != "reviewer" {
+		specs := map[string]SeatSpec{"planner": ensemble.Planner, "implementer": ensemble.Implementer, "reviewer": ensemble.Reviewer, "gate": ensemble.Gate, "classifier": ensemble.Classifier}
+		for _, role := range SeatRoles {
+			if specs[role].List && role != "reviewer" {
 				return s, fmt.Errorf("%s: ensembles.%s.%s: only reviewer takes a list of seats", userPath, name, role)
 			}
 		}

@@ -74,7 +74,7 @@ that depend on your accounts. In `[seats]` and ensembles, `reviewer` accepts eit
 string or an array such as `reviewer = ["copilot", "claude@large"]`. Other roles reject arrays.
 `km config` shows the reviewer lists and `gate_when`.
 
-An ensemble's `gate_when` controls when verification passes the round to the gate:
+An ensemble's `gate_when` controls whether a round that passed verification goes to the gate:
 
 - `any` (the default): at least one reviewer approves.
 - `all`: every reviewer approves.
