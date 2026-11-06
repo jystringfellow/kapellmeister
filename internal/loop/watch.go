@@ -2,12 +2,13 @@ package loop
 
 import (
 	"context"
+	"io"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/hinshun/vt10x"
+	"github.com/charmbracelet/x/vt"
 	"github.com/jystringfellow/kapellmeister/internal/cao"
 )
 
@@ -40,11 +41,27 @@ func (w CAOWatcher) Output(ctx context.Context, id string) (string, error) {
 	if err != nil || !strings.Contains(raw, "\x1b") {
 		return raw, err
 	}
-	screen := vt10x.New(vt10x.WithSize(220, 50))
-	if _, err := screen.Write([]byte(raw)); err != nil {
-		return "", err
-	}
-	return screen.String(), nil
+	return renderScreen(raw), nil
+}
+
+func renderScreen(raw string) (screen string) {
+	emulator := vt.NewEmulator(220, 50)
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		_, _ = io.Copy(io.Discard, emulator)
+	}()
+	defer func() {
+		if replies, ok := emulator.InputPipe().(io.Closer); ok {
+			_ = replies.Close()
+			<-drained
+		}
+		if recover() != nil {
+			screen = ""
+		}
+	}()
+	_, _ = emulator.WriteString(raw)
+	return emulator.String()
 }
 
 type blockedChair struct {

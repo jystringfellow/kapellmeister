@@ -238,15 +238,18 @@ repo. Chairs: `km-claude` (Haiku 5.5), `km-codex` (GPT-6 Luna), `km-copilot` (Ha
     `confirmation`, and cursor-row updates between lines. Later spinner updates appended enough
     nonblank fragments to hide the dialog from a last-12-lines scan after naive escape stripping.
     Rendering the captured stream with a terminal emulator recovered the exact permission line;
-    km uses `vt10x` behind its CAO watcher, with CAO's default 220×50 pane size and a discarded
-    response writer. Replaying the captured live output through the watcher passed. No live
-    unblock-after-answer probe was attempted; no prompt was answered. Rolling-buffer truncation
-    or a resized pane can still limit reconstruction. A rendered-screen output mode belongs in CAO.
+    km renders it with `charmbracelet/x/vt` behind its CAO watcher, at CAO's default 220×50 pane
+    size, draining the emulator's replies to terminal queries (an undrained reply blocks the write)
+    and treating a render panic as no blocker. Replaying the captured live output through the
+    watcher passed. No live unblock-after-answer probe was attempted; no prompt was answered.
+    Rolling-buffer truncation or a resized pane can still limit reconstruction. CAO already renders
+    the viewport internally (`get_history(visible_only=True)`, tmux `capture-pane -S 0`) for its
+    status monitor, but `GET /terminals/{id}/output` offers only `full` and `last`.
 18. **Run-step ignores description on reused terminals.** The reuse branch of CAO's
     `run_agent_step` validates the occupant but never updates its description. km must use
     `PATCH /terminals/{id}/description` before a reused cue so its standing chairs and kept
     implementer can be matched to the current step by the same label as new terminals.
-    Upstream candidates: honour description on reuse; provide empty sessions, rendered output,
+    Upstream candidates: honour description on reuse; provide empty sessions,
     and pushed terminal status changes (or a status filter on the session listing). Pushed status
     would replace km's polling seam with a subscriber.
 
@@ -260,6 +263,26 @@ repo. Chairs: `km-claude` (Haiku 5.5), `km-codex` (GPT-6 Luna), `km-copilot` (Ha
     Both telemetry records named `plan`, `planner`, and the same terminal. No prompt was answered.
     The scratch repository had no commit, so its final diff-stat command reported missing HEAD;
     that did not prevent session cleanup. The temporary profile was removed (lookup 404).
+
+20. **The right upstream fix is Claude's status, and CAO main already has it.** Checked on
+    2026-11-06 against the installed 2.5.4 source and `awslabs/cli-agent-orchestrator` on GitHub.
+    km reads screens only because Claude's tool-permission dialog reports `processing` (finding 16).
+    In 2.5.4, `providers/claude_code.py` reports `waiting_user_answer` only for the footers
+    `↑/↓ to navigate` and `Enter to confirm ·`, or a plan-approval dialog; the permission dialog's
+    footer is `Esc to cancel · Tab to amend`. CAO PR #1107 (closes #1106, merged 2026-10-28) adds
+    `Esc to cancel[ \t]*·[ \t]*Tab to amend` to that pattern, with Bash and Write permission
+    fixtures. It is on `main`, 149 commits past `v2.5.4`, and PyPI's latest is still 2.5.4. Once a
+    release carries it, km's watcher can treat `waiting_user_answer` as blocked and drop its
+    screen reads and terminal emulator. Related open issue: #405 (AskUserQuestion and plan dialogs
+    classifying as idle or completed). The other chairs km seats, from source only, not probed live:
+    - **Codex** reports `waiting_user_answer` for its approval prompts (`APPROVAL_PROMPT_PATTERN`,
+      numbered approval menu with a footer, the "Command Approval Required" modal; PR #567). It
+      prompts only when launched without `--yolo`, which CAO uses when `allowedTools` contains `*`.
+    - **Copilot** is always launched with `--allow-all`, so tool calls do not prompt. Its waiting
+      detection covers folder trust, `press enter to continue` and `[y/n]` only, on 2.5.4 and main.
+    - **Antigravity** is always launched with `--dangerously-skip-permissions`. Its waiting pattern
+      also matches `Allow once`, `Allow always`, `Do you want to (allow|run|proceed)` and `[y/n]`
+      for the prompts that flag does not suppress.
 
 ## Implications for the team layer
 

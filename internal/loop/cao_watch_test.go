@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jystringfellow/kapellmeister/internal/cao"
 )
@@ -85,5 +86,26 @@ func TestAReusedTerminalGetsTheRunningStepsDescriptionBeforeItsCue(t *testing.T)
 	}
 	if !updated {
 		t.Fatal("running description was never set")
+	}
+}
+
+func TestCAOWatcherRendersAScreenThatQueriesTheTerminal(t *testing.T) {
+	raw := "\x1b[?2004$p\x1b[6n\x1b[c\x1b[H\x1b[2JPermission rule Bash(cp*) requires confirmation for this command.\r\nDo you want to proceed?"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]string{"output": raw})
+	}))
+	defer srv.Close()
+	rendered := make(chan string, 1)
+	go func() {
+		screen, _ := (CAOWatcher{Client: cao.NewClient(srv.URL), Session: "cao-run"}).Output(context.Background(), "t")
+		rendered <- screen
+	}()
+	select {
+	case screen := <-rendered:
+		if got := FindBlocker(screen); got != "Permission rule Bash(cp*) requires confirmation for this command." {
+			t.Fatalf("blocker = %q, screen = %q", got, screen)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("rendering a screen that queries the terminal did not return")
 	}
 }
