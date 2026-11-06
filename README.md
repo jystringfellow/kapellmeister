@@ -178,6 +178,7 @@ url = "http://127.0.0.1:9889"
 timeout = "40m"                     # each agent step
 reply_grace = "15m"
 preflight_timeout = "4m"
+blocker_poll = "20s"
 
 [chairs]                            # agent or provider:profile; optional @tier, or :model
 implementer = "claude"
@@ -339,3 +340,20 @@ and `escalate` records for each decision. A seated tester adds `test-plan`, `tes
 `classify-test` and `verdict-test` records; both tester steps use the `test` tier. With several reviewers,
 their review, nudge, classification and verdict records include `chair_name` (`reviewer-1`, `reviewer-2`, etc.).
 A failed review has verdict `FAILED` and its error; single-reviewer records omit `chair_name`.
+
+`km run` keeps every step in one CAO session, held open by an idle podium terminal, and deletes
+that session when the run finishes or is interrupted. `km play` watches its standing session and
+leaves it standing.
+
+While steps run, `[run] blocker_poll` sets how often km checks the session for blocked chairs
+(default `"20s"`; `"0"` disables watching). Both user and repository config may set it; the repository
+value wins. Progress reports a new or changed blocker once:
+
+```text
+  blocked: test[1] tester — Permission rule Bash(cp*) requires confirmation for this command. — attach with tmux attach -t cao-km-...
+  unblocked: test[1] tester
+```
+
+Use the attachment command to inspect and answer the prompt. km only reports it. Telemetry records
+`blocked` and `unblocked` with the step, round, chair, terminal and blocker line. A forced kill or crash
+can leave the session running.

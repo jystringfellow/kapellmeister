@@ -382,3 +382,30 @@ func TestAvailableAgentsBelongInTheUserConfig(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestBlockerPollingDefaultsToTwentySecondsAndCanBeOverriddenOrDisabled(t *testing.T) {
+	if got := DefaultSettings().BlockerPoll; got != 20*time.Second {
+		t.Fatalf("default = %s", got)
+	}
+	for _, value := range []string{"3s", "0", "-1s", "soon"} {
+		t.Run(value, func(t *testing.T) {
+			home := writeUserConfig(t, "[run]\nblocker_poll = '1s'\n")
+			repo := t.TempDir()
+			writeConfig(t, repo, "[run]\nblocker_poll = '"+value+"'\n")
+			s, err := LoadSettings(home, repo)
+			if value == "-1s" || value == "soon" {
+				if err == nil || !strings.Contains(err.Error(), "run.blocker_poll") {
+					t.Fatalf("error = %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			want, _ := time.ParseDuration(value)
+			if s.BlockerPoll != want {
+				t.Fatalf("poll = %s", s.BlockerPoll)
+			}
+		})
+	}
+}

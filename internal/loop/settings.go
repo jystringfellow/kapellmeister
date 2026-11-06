@@ -34,6 +34,7 @@ type TestConfig struct {
 }
 
 type RunConfig struct {
+	BlockerPoll      string `toml:"blocker_poll"`
 	Rounds           *int   `toml:"rounds"`
 	VerifyRetries    *int   `toml:"verify_retries"`
 	Timeout          string `toml:"timeout"`
@@ -117,6 +118,7 @@ type FileConfig struct {
 }
 
 type Settings struct {
+	BlockerPoll      time.Duration       `json:"blocker_poll"`
 	GateWhen         string              `json:"gate_when"`
 	Files            []string            `json:"files"`
 	CAOURL           string              `json:"cao_url"`
@@ -177,6 +179,7 @@ func UserConfigPath(home string) string {
 
 func DefaultSettings() Settings {
 	return Settings{
+		BlockerPoll:      20 * time.Second,
 		GateWhen:         GateWhenAny,
 		CAOURL:           "http://127.0.0.1:9889",
 		Rounds:           3,
@@ -327,6 +330,7 @@ func (s *Settings) applyRun(layer loadedConfig) error {
 		value string
 		into  *time.Duration
 	}{
+		{"blocker_poll", r.BlockerPoll, &s.BlockerPoll},
 		{"timeout", r.Timeout, &s.Timeout},
 		{"reply_grace", r.ReplyGrace, &s.ReplyGrace},
 		{"preflight_timeout", r.PreflightTimeout, &s.PreflightTimeout},

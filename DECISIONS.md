@@ -94,3 +94,16 @@ Evidence: two km-built PRs passed checks and won reviewer and gate approval, yet
 whose GET was already 404. Tests:
 `TestATestPlanStartsAfterThePlanAndRunsAlongsideRoundOnesImplementer` and
 `TestATestChangesStartsAnotherRoundWithTheTestReportLeadingTheFeedback`.
+
+## 2026-11-06: One CAO session per run, watched for blocked chairs
+
+`km run` creates an idle podium terminal because CAO cannot create an empty session, adds each
+step to that session, and deletes the session on completion or interrupt. `km play` watches its
+standing session and keeps it. The watcher polls `GET /sessions/{name}`, because the terminals
+listing lacks live status, and reads output only for waiting or processing terminals. It sits
+behind the two read calls so CAO status events can replace polling. Evidence:
+`TestRunCreatesOnePodiumSessionAndPassesItOnEveryNewRunStep`,
+`TestRunDeletesItsSessionOnSuccessFailureAndInterrupt`,
+`TestPlayPollsTheStandingSessionAndNeverDeletesIt` and
+`TestABlockedTerminalIsReportedOnceWhileItPersistsAndAgainWhenItChanges`;
+CAO 2.5.4 live findings in `spike/SPIKE.md`.

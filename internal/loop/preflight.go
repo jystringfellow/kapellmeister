@@ -24,7 +24,7 @@ type PreflightResult struct {
 	Honored    *bool  `json:"model_honored,omitempty"`
 }
 
-var blockerRE = regexp.MustCompile(`(?i)needs review|do you trust|trust (this|all|the)|sign in|log ?in|authenticat|approve|allow .* to`)
+var blockerRE = regexp.MustCompile(`(?i)requires confirmation|do you want to proceed|needs review|do you trust|trust (this|all|the)|sign in|log ?in|authenticat|approve|allow .* to`)
 
 func UniqueChairs(chairs ...Chair) []Chair {
 	seen := map[Chair]bool{}
