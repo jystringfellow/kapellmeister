@@ -72,6 +72,12 @@ func playCommand(args []string) error {
 	if err != nil {
 		return err
 	}
+	runID := newRunID()
+	runDir := filepath.Join(loop.StateDir(), "runs", runID)
+	scratch, err := prepareScratch(runDir)
+	if err != nil {
+		return err
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	client := cao.NewClient(s.CAOURL)
@@ -84,11 +90,10 @@ func playCommand(args []string) error {
 	}
 	printSources(os.Stdout, s)
 	fmt.Printf("ensemble %s (session %s); sizing and tier escalation off\n", standing.Ensemble, standing.Session)
-	runID := newRunID()
 	sum, err := runEnsemble(ctx, ensembleRun{
-		Command: "play", RunID: runID, StateDir: filepath.Join(loop.StateDir(), "runs", runID),
+		Command: "play", RunID: runID, StateDir: runDir,
 		Config: loop.Config{
-			RunID: runID, Task: text, Worktree: standing.Worktree, Chairs: chairs, GateWhen: firstNonEmpty(standing.GateWhen, s.GateWhen),
+			ScratchDir: scratch, RunID: runID, Task: text, Worktree: standing.Worktree, Chairs: chairs, GateWhen: firstNonEmpty(standing.GateWhen, s.GateWhen),
 			BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, CheckCommand: checkCmd,
 		},
 		Watcher: loop.CAOWatcher{Client: client, Session: standing.Session},
@@ -98,9 +103,7 @@ func playCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	printOutcome(os.Stdout, sum)
-	fmt.Print(sum.DiffStat)
-	return nil
+	return finishRun(os.Stdout, sum)
 }
 
 func reseatHints(session string, addresses []string) string {

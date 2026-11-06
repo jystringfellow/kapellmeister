@@ -35,38 +35,46 @@ const usage = `usage:
   km config [-worktree DIR]                                  show the effective settings and the files they come from`
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, usage)
-		os.Exit(2)
+	os.Exit(execute(os.Args[1:], os.Stderr))
+}
+
+func execute(args []string, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, usage)
+		return 2
 	}
 	var err error
-	switch os.Args[1] {
+	switch args[0] {
 	case "run":
-		err = runCommand(os.Args[2:])
+		err = runCommand(args[1:])
 	case "audition":
-		err = auditionCommand(os.Args[2:])
+		err = auditionCommand(args[1:])
 	case "rehearse":
-		err = rehearseCommand(os.Args[2:])
+		err = rehearseCommand(args[1:])
 	case "play":
-		err = playCommand(os.Args[2:])
+		err = playCommand(args[1:])
 	case "reseat":
-		err = reseatCommand(os.Args[2:])
+		err = reseatCommand(args[1:])
 	case "ensemble":
-		err = ensembleCommand(os.Args[2:], os.Stdout)
+		err = ensembleCommand(args[1:], os.Stdout)
 	case "cue":
-		err = cueCommand(os.Args[2:])
+		err = cueCommand(args[1:])
 	case "preflight":
-		err = preflightCommand(os.Args[2:])
+		err = preflightCommand(args[1:])
 	case "config":
-		err = configCommand(os.Args[2:])
+		err = configCommand(args[1:])
 	default:
-		fmt.Fprintln(os.Stderr, usage)
-		os.Exit(2)
+		fmt.Fprintln(stderr, usage)
+		return 2
+	}
+	if errors.Is(err, errNotApproved) {
+		return 1
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "km:", err)
-		os.Exit(1)
+		fmt.Fprintln(stderr, "km:", err)
+		return 1
 	}
+	return 0
 }
 
 type common struct {
@@ -293,6 +301,11 @@ func runCommand(args []string) error {
 	}
 	policy := s.Policy
 	runID := newRunID()
+	runDir := filepath.Join(loop.StateDir(), "runs", runID)
+	scratch, err := prepareScratch(runDir)
+	if err != nil {
+		return err
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	client := cao.NewClient(s.CAOURL)
@@ -320,9 +333,9 @@ func runCommand(args []string) error {
 		}
 	}()
 	sum, err := runEnsemble(ctx, ensembleRun{
-		RunID: runID, StateDir: filepath.Join(loop.StateDir(), "runs", runID),
+		RunID: runID, StateDir: runDir,
 		Config: loop.Config{
-			RunID: runID, Task: text, Worktree: wt, Chairs: chairs, GateWhen: s.GateWhen,
+			ScratchDir: scratch, RunID: runID, Task: text, Worktree: wt, Chairs: chairs, GateWhen: s.GateWhen,
 			BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, CheckCommand: checkCmd, Policy: &policy,
 		},
 		Watcher: loop.CAOWatcher{Client: client, Session: podium.SessionName},
@@ -331,9 +344,7 @@ func runCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	printOutcome(os.Stdout, sum)
-	fmt.Print(sum.DiffStat)
-	return nil
+	return finishRun(os.Stdout, sum)
 }
 
 func preflightCommand(args []string) error {
@@ -606,9 +617,16 @@ type ensembleSummary struct {
 	loop.Result
 	DurationMS int64  `json:"duration_ms"`
 	DiffStat   string `json:"diff_stat"`
+	Base       string `json:"base"`
+	Head       string `json:"head,omitempty"`
+	HeadMoved  bool   `json:"head_moved,omitempty"`
 }
 
 func runEnsemble(ctx context.Context, p ensembleRun) (ensembleSummary, error) {
+	base, err := gitOutput(p.Config.Worktree, "rev-parse", "HEAD")
+	if err != nil {
+		return ensembleSummary{}, err
+	}
 	if err := os.MkdirAll(p.StateDir, 0o755); err != nil {
 		return ensembleSummary{}, err
 	}
@@ -630,12 +648,103 @@ func runEnsemble(ctx context.Context, p ensembleRun) (ensembleSummary, error) {
 	if err := copyDir(res.RunDir, filepath.Join(p.StateDir, "replies")); err != nil {
 		fmt.Fprintln(os.Stderr, "km: copying replies:", err)
 	}
-	stat, _ := exec.Command("git", "-C", p.Config.Worktree, "diff", "HEAD", "--stat").CombinedOutput()
-	sum := ensembleSummary{Result: res, DurationMS: time.Since(start).Milliseconds(), DiffStat: string(stat)}
+	head, err := gitOutput(p.Config.Worktree, "rev-parse", "HEAD")
+	if err != nil {
+		return ensembleSummary{}, err
+	}
+	stat, err := gitDiffStat(p.Config.Worktree, base)
+	if err != nil {
+		return ensembleSummary{}, err
+	}
+	sum := ensembleSummary{Result: res, DurationMS: time.Since(start).Milliseconds(), DiffStat: stat, Base: base}
+	if head != base {
+		sum.Head, sum.HeadMoved = head, true
+	}
 	if err := writeJSON(filepath.Join(p.StateDir, "result.json"), sum); err != nil {
 		return sum, err
 	}
 	return sum, nil
+}
+
+func gitDiffStat(worktree, base string) (string, error) {
+	dir, err := os.MkdirTemp("", "km-diff-")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(dir)
+	indexPath, err := gitOutput(worktree, "rev-parse", "--path-format=absolute", "--git-path", "index")
+	if err != nil {
+		return "", err
+	}
+	index, err := os.ReadFile(indexPath)
+	steps := [][]string{{"add", "--intent-to-add", "--all"}, {"diff", base, "--stat"}}
+	if errors.Is(err, os.ErrNotExist) {
+		steps = append([][]string{{"read-tree", "HEAD"}}, steps...)
+	} else if err != nil {
+		return "", err
+	} else if err := os.WriteFile(filepath.Join(dir, "index"), index, 0600); err != nil {
+		return "", err
+	}
+	var output []byte
+	for _, args := range steps {
+		cmd := exec.Command("git", append([]string{"-c", "core.splitIndex=false", "-C", worktree}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_INDEX_FILE="+filepath.Join(dir, "index"))
+		output, err = cmd.CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, output)
+		}
+	}
+	return string(output), nil
+}
+
+var errNotApproved = errors.New("run was not approved")
+
+func finishRun(w io.Writer, sum ensembleSummary) error {
+	printOutcome(w, sum)
+	fmt.Fprint(w, sum.DiffStat)
+	printHeadMoved(w, sum)
+	if sum.Outcome != loop.Approved {
+		return errNotApproved
+	}
+	return nil
+}
+
+func printHeadMoved(w io.Writer, sum ensembleSummary) {
+	if !sum.HeadMoved {
+		return
+	}
+	base, _ := gitOutput(sum.Worktree, "rev-parse", "--short", sum.Base)
+	head, _ := gitOutput(sum.Worktree, "rev-parse", "--short", sum.Head)
+	subject, _ := gitOutput(sum.Worktree, "log", "-1", "--format=%s", sum.Head)
+	fmt.Fprintf(w, "  HEAD moved: %s → %s %q — the run's changes are in that commit\n", base, head, subject)
+}
+
+func gitOutput(worktree string, args ...string) (string, error) {
+	output, err := exec.Command("git", append([]string{"-C", worktree}, args...)...).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, output)
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+func prepareScratch(runDir string) (string, error) {
+	scratch, err := filepath.Abs(filepath.Join(runDir, "scratch"))
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(scratch, 0o755); err != nil {
+		return "", err
+	}
+	inside, err := gitOutput(scratch, "rev-parse", "--is-inside-work-tree")
+	if err == nil && inside == "true" {
+		top, err := gitOutput(scratch, "rev-parse", "--show-toplevel")
+		_ = os.RemoveAll(runDir)
+		if err != nil {
+			return "", err
+		}
+		return "", fmt.Errorf("scratch directory %s is inside the git work tree %s; point KAPELLMEISTER_STATE_DIR outside any repository", scratch, top)
+	}
+	return scratch, nil
 }
 
 func printOutcome(w io.Writer, s ensembleSummary) {

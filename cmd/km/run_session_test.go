@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -113,6 +114,12 @@ func (f *runCAO) serve(t *testing.T) *httptest.Server {
 
 func runSessionFixture(t *testing.T, f *runCAO) (string, error) {
 	t.Helper()
+	wt, args := runSessionArgs(t, f)
+	return wt, runCommand(args)
+}
+
+func runSessionArgs(t *testing.T, f *runCAO) (string, []string) {
+	t.Helper()
 	s := playStanding(t)
 	writeFile(t, filepath.Join(s.Worktree, loop.ConfigFile), "[test]\nverify = 'true'\n[run]\npreflight_timeout = '0'\nreply_grace = '1ms'\nrounds = 2\n[sizing]\nmode = 'off'\n")
 	srv := f.serve(t)
@@ -128,7 +135,7 @@ func runSessionFixture(t *testing.T, f *runCAO) (string, error) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return wt, runCommand(args)
+	return wt, args
 }
 
 func TestRunCreatesOnePodiumSessionAndPassesItOnEveryNewRunStep(t *testing.T) {
@@ -159,8 +166,12 @@ func TestRunDeletesItsSessionOnSuccessFailureAndInterrupt(t *testing.T) {
 			}
 			var runErr error
 			stderr := captureRunStderr(t, func() { _, runErr = runSessionFixture(t, f) })
-			if runErr != nil {
-				t.Fatal(runErr)
+			wantErr := error(nil)
+			if outcome == "failure" || outcome == "interrupt" {
+				wantErr = errNotApproved
+			}
+			if !errors.Is(runErr, wantErr) {
+				t.Fatalf("run error = %v, want %v", runErr, wantErr)
 			}
 			if outcome == "delete failure" && !strings.Contains(stderr, "km: deleting session cao-run:") {
 				t.Fatalf("stderr = %q", stderr)
