@@ -114,6 +114,7 @@ type VerifyResult struct {
 type Verifier func(ctx context.Context, dir string) (VerifyResult, error)
 
 type Config struct {
+	ScratchDir    string
 	BlockerPoll   time.Duration
 	GateWhen      string
 	RunID         string
@@ -130,6 +131,8 @@ type Config struct {
 }
 
 type Record struct {
+	PID          int           `json:"pid,omitempty"`
+	Command      string        `json:"command,omitempty"`
 	BlockedStep  string        `json:"blocked_step,omitempty"`
 	ChairName    string        `json:"chair_name,omitempty"`
 	At           time.Time     `json:"at"`
@@ -229,7 +232,7 @@ func (e *Engine) Run(ctx context.Context) (Result, error) {
 		go func() {
 			path := e.rel("test-plan.md")
 			_, err := e.step(testCtx, Step{Name: "test-plan", Chair: *cfg.Chairs.Tester,
-				Prompt: testPlanPrompt(cfg.Task, plan, path), ReplyPath: path})
+				Prompt: testPlanPrompt(cfg.Task, plan, path, cfg.ScratchDir), ReplyPath: path})
 			testPlanDone <- err
 		}()
 		defer func() {
@@ -360,9 +363,10 @@ func (e *Engine) Run(ctx context.Context) (Result, error) {
 }
 
 func (e *Engine) testRound(ctx context.Context, round int, plan, summary string, verify VerifyResult, verifyPath, path string) (string, error) {
+	defer e.reportLeftRunning(round)
 	errs, err := e.readOnlySteps(ctx, []Step{{
 		Name: "test", Round: round, Chair: *e.Config.Chairs.Tester,
-		Prompt:    testPrompt(e.Config.Task, plan, e.rel("test-plan.md"), summary, e.Config.VerifyCommand, verify, verifyPath, RunDirRel(e.Config.RunID), path),
+		Prompt:    testPrompt(e.Config.Task, plan, e.rel("test-plan.md"), summary, e.Config.VerifyCommand, verify, verifyPath, e.Config.ScratchDir, path),
 		ReplyPath: path,
 	}})
 	if err != nil {

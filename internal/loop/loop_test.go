@@ -114,7 +114,7 @@ func newEngine(t *testing.T, verify Verifier) (*Engine, *fakeStepper, *bytes.Buf
 	chair := Chair{Provider: "p", Profile: "x"}
 	eng := &Engine{
 		Config: Config{
-			RunID: "r1", Task: "do the thing", Worktree: dir, MaxRounds: 3,
+			ScratchDir: t.TempDir(), RunID: "r1", Task: "do the thing", Worktree: dir, MaxRounds: 3,
 			Chairs:        Chairs{Planner: chair, Implementer: chair, Reviewers: []Chair{chair}, Gate: chair, Classifier: chair},
 			VerifyCommand: "check",
 		},

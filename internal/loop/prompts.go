@@ -107,24 +107,28 @@ Do not modify any file other than %s. When done, reply with one short sentence.
 `, plan, summary, reviewNote, failedNote, verifyLine(command, v, verifyPath), out, out)
 }
 
-func testPlanPrompt(task, plan, out string) string {
+func testPlanPrompt(task, plan, out, scratch string) string {
 	return preamble("tester") + taskBlock(task) + fmt.Sprintf(`
 Read the plan in %s. Plan how to exercise the change end to end in its real environment, the way a user would, including hostile conditions: missing, stale or concurrent state and external services misbehaving. Do not restate unit tests.
 Stay blind to the implementation: do not look at git diff or git status, or at the implementer's output or reviews.
+Use only %s for scratch files, build output, scratch repositories and server state.
 Write the test plan to %s and change no other file. When done, reply with one short sentence.
-`, plan, out)
+`, plan, scratch, out)
 }
 
-func testPrompt(task, plan, testPlan, summary, command string, v VerifyResult, verifyPath, runDir, out string) string {
+func testPrompt(task, plan, testPlan, summary, command string, v VerifyResult, verifyPath, scratch, out string) string {
 	return preamble("tester") + taskBlock(task) + fmt.Sprintf(`
 Read the plan in %s, the test plan in %s and the implementation summary in %s.
 %s
 `+verifiedNote+`Execute the test plan against the real environment, the way a user would.
-Keep scratch files and build output under %s. Before finishing, clean up anything you create outside the worktree, including processes and sessions. Touch nothing you did not create.
+Use only %s for scratch files, build output, scratch repositories and server state.
+Never run a git command that writes (init, add, commit, checkout, reset, stash and so on) anywhere except a repository you created inside %s. Run each such command as `+"`git -C <that repository> ...`"+`.
+Append the PID of every long-running process you start to %s/pids, one per line, and stop them all before finishing.
+Before finishing, clean up anything you create outside the worktree, including processes and sessions. Touch nothing you did not create.
 Do not change any tracked or untracked non-ignored file in the worktree.
 Write to %s: each scenario, what you ran, and pass or fail with evidence. End with APPROVE if everything passed, or CHANGES with the failures.
 When done, reply with one short sentence.
-`, plan, testPlan, summary, verifyLine(command, v, verifyPath), runDir, out)
+`, plan, testPlan, summary, verifyLine(command, v, verifyPath), scratch, scratch, scratch, out)
 }
 
 func classifyPrompt(subject, path, out string) string {

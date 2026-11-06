@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -58,6 +59,7 @@ func savePlayStanding(t *testing.T, s ensemble.Standing) {
 }
 
 type playCAO struct {
+	afterReply  func(worktree, name string)
 	mu          sync.Mutex
 	requests    []cao.StepRequest
 	replies     []string
@@ -120,6 +122,9 @@ func (f *playCAO) serve(t *testing.T) *httptest.Server {
 					t.Error(err)
 				}
 			}
+			if f.afterReply != nil {
+				f.afterReply(req.WorkingDirectory, filepath.Base(path))
+			}
 			id := req.ReuseTerminalID
 			if id == "" {
 				id = fmt.Sprintf("step-%d", len(f.requests))
@@ -152,6 +157,11 @@ func playReplyPart(path string) string {
 
 func capturePlay(t *testing.T, args []string) (string, error) {
 	t.Helper()
+	return captureStdout(t, func() error { return playCommand(args) })
+}
+
+func captureStdout(t *testing.T, run func() error) (string, error) {
+	t.Helper()
 	reader, writer, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -161,7 +171,7 @@ func capturePlay(t *testing.T, args []string) (string, error) {
 	defer func() { os.Stdout = original }()
 	done := make(chan string, 1)
 	go func() { var b bytes.Buffer; _, _ = io.Copy(&b, reader); done <- b.String() }()
-	playErr := playCommand(args)
+	playErr := run()
 	_ = writer.Close()
 	out := <-done
 	_ = reader.Close()
@@ -358,7 +368,7 @@ func TestPlayKeepsEachChairsRecordedBindingEvenWhenSizingAndEscalationAreConfigu
 	fake := &playCAO{changes: true}
 	srv := fake.serve(t)
 	out, err := capturePlay(t, []string{s.Session, "-cao", srv.URL, "-max-rounds", "3"})
-	if err != nil || !strings.Contains(out, "rounds_exhausted after 3 round(s)") {
+	if !errors.Is(err, errNotApproved) || !strings.Contains(out, "rounds_exhausted after 3 round(s)") {
 		t.Fatalf("play: %v\n%s", err, out)
 	}
 	requirePlayBindings(t, s, fake)
@@ -399,7 +409,7 @@ func TestPlayLeavesTheSessionStandingWhenTheRunFails(t *testing.T) {
 			}
 			srv := fake.serve(t)
 			out, err := capturePlay(t, []string{s.Session, "-cao", srv.URL})
-			if err != nil || !strings.Contains(out, "failed after 1 round(s)") {
+			if !errors.Is(err, errNotApproved) || !strings.Contains(out, "failed after 1 round(s)") {
 				t.Fatalf("play: %v\n%s", err, out)
 			}
 			requirePlayStillStanding(t, s, fake, out)
@@ -414,8 +424,8 @@ func TestPlayPreservesTheRecordedGateWhenInsteadOfUsingTheDefault(t *testing.T) 
 	fake := &playCAO{noReplyPart: "reviewer"}
 	srv := fake.serve(t)
 	_, err := capturePlay(t, []string{s.Session, "-cao", srv.URL})
-	if err != nil {
-		t.Fatal(err)
+	if !errors.Is(err, errNotApproved) {
+		t.Fatalf("run error = %v, want %v", err, errNotApproved)
 	}
 	entries, err := os.ReadDir(filepath.Join(loop.StateDir(), "runs"))
 	if err != nil || len(entries) != 1 {

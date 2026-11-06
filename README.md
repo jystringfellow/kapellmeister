@@ -236,8 +236,17 @@ km waits for the test plan, then runs `test` in the tester's chair and reads the
 report back as the leading feedback, with instructions to reproduce each failure in a failing
 regression test before fixing it. Later rounds reuse the same test plan.
 A failed test-plan or test step fails the run. The test step gets the same worktree check as the
-gate and reviewers; scratch files belong under the run directory, and the tester must clean up
-processes and sessions it creates without touching anyone else's. The concurrent test-plan step
+gate and reviewers. Both tester prompts restrict scratch files, build output, scratch repositories
+and server state to the absolute `<state dir>/runs/<run id>/scratch` directory, outside the worktree.
+`km run` and `km play` create it before starting the score and refuse to start if it is inside a git
+work tree; set `KAPELLMEISTER_STATE_DIR` outside any repository. The test prompt permits git commands
+that write only in repositories the tester created inside scratch, always using `git -C <repository>`.
+The tester must append every long-running process's PID to `<scratch>/pids`, one per line, and stop
+those processes and its sessions before finishing, without touching anyone else's. After every
+test step, including failure, timeout or interruption, km reports each distinct listed process still alive as
+`  left running: pid <pid> (<command>)` and records its PID and command in `left-running` telemetry.
+km never signals these processes. It silently skips non-regular `pids` files (including FIFOs) and
+files larger than 1 MiB. The concurrent test-plan step
 relies on its prompt to forbid file changes because implementation is editing at the same time.
 Without a tester, gate approval finishes the run as usual.
 
@@ -332,14 +341,26 @@ in the selected ensemble to turn escalation off for that run. `true` or an omitt
 `[sizing] escalate_after` in charge; an ensemble cannot enable escalation when the repository sets
 `escalate_after = 0`.
 
+`km run` and `km play` exit 0 only for an `approved` outcome. Every other outcome, including a failed,
+interrupted or rounds-exhausted run, exits 1 after printing the outcome and diff-stat. Missing or
+unknown subcommands exit 2.
+
 ## Telemetry
 
 Each run writes `telemetry.jsonl` under `~/.kapellmeister/state/runs/<run>/`: one record per step with its chair, tier, effort, tier source (`default`,
 `pinned`, `sized`, `escalated` or `explicit`), the model CAO reported, durations and verdicts, plus `size`
 and `escalate` records for each decision. A seated tester adds `test-plan`, `test`,
-`classify-test` and `verdict-test` records; both tester steps use the `test` tier. With several reviewers,
+`classify-test`, `verdict-test` and any `left-running` records; both tester steps use the `test` tier. With several reviewers,
 their review, nudge, classification and verdict records include `chair_name` (`reviewer-1`, `reviewer-2`, etc.).
 A failed review has verdict `FAILED` and its error; single-reviewer records omit `chair_name`.
+
+Beside the telemetry, `result.json` records the worktree's starting commit as `base`. Its `diff_stat`
+compares the final tree against that base, including untracked non-ignored files and changes committed
+during the run. Generating this report uses a temporary index and leaves the worktree's index unchanged.
+If HEAD moves, the result also records `head` and `head_moved: true`, and km prints
+`  HEAD moved: <base short> → <head short> "<subject>" — the run's changes are in that commit`.
+km leaves the commit and worktree in place; the existing tree check still fails a read-only step
+that moves HEAD.
 
 `km run` keeps every step in one CAO session, held open by an idle podium terminal, and deletes
 that session when the run finishes or is interrupted. `km play` watches its standing session and
