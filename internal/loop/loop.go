@@ -114,6 +114,7 @@ type VerifyResult struct {
 type Verifier func(ctx context.Context, dir string) (VerifyResult, error)
 
 type Config struct {
+	BlockerPoll   time.Duration
 	GateWhen      string
 	RunID         string
 	Task          string
@@ -129,6 +130,7 @@ type Config struct {
 }
 
 type Record struct {
+	BlockedStep  string        `json:"blocked_step,omitempty"`
 	ChairName    string        `json:"chair_name,omitempty"`
 	At           time.Time     `json:"at"`
 	RunID        string        `json:"run_id"`
@@ -174,6 +176,8 @@ type Result struct {
 }
 
 type Engine struct {
+	Watcher  Watcher
+	watch    watchState
 	Config   Config
 	Stepper  Stepper
 	Verify   Verifier
@@ -192,6 +196,8 @@ func RunDirRel(runID string) string {
 }
 
 func (e *Engine) Run(ctx context.Context) (Result, error) {
+	stopWatcher := e.startWatcher(ctx)
+	defer stopWatcher()
 	cfg := e.Config
 	res := Result{RunID: cfg.RunID, Worktree: cfg.Worktree, RunDir: filepath.Join(cfg.Worktree, RunDirRel(cfg.RunID))}
 	if err := PrepareRunDir(cfg.Worktree, cfg.RunID); err != nil {
@@ -544,7 +550,9 @@ func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 		Tier: s.Assignment.Tier, Effort: s.Assignment.Effort, TierSource: s.Assignment.Source}
 	e.progress("→ %s %s%s", strings.TrimSpace(label(s.Name, s.Round)+" "+s.ChairName), chair, tierNote(s.Assignment))
 	start := time.Now()
+	finishWatch := e.watchStep(s)
 	out, err := e.Stepper.Run(ctx, s)
+	finishWatch()
 	rec.DurationMS = time.Since(start).Milliseconds()
 	rec.TerminalID, rec.Status, rec.Model, rec.ModelHonored = out.TerminalID, out.Status, out.ReportedModel, out.ModelHonored
 	if err == nil {

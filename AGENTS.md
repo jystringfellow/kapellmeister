@@ -32,6 +32,7 @@ Behavior is defined by tests, and only by tests. There are no spec documents.
 kapellmeister names things from orchestral practice. Use these words in code, tests, commands and
 docs, and do not coin a synonym for one of them.
 
+- **podium:** the idle terminal that keeps a run's CAO session alive between steps.
 - **conductor:** km itself. It seats an ensemble's chairs, cues them and waits for them to close
   their cues.
 - **ensemble:** the chairs seated together in one CAO session.

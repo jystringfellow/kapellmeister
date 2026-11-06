@@ -20,6 +20,7 @@ func NewClient(baseURL string) *Client {
 }
 
 type StepRequest struct {
+	SessionName      string  `json:"session_name,omitempty"`
 	Provider         string  `json:"provider"`
 	Agent            string  `json:"agent"`
 	Prompt           string  `json:"prompt"`
@@ -38,6 +39,8 @@ type StepResponse struct {
 }
 
 type Terminal struct {
+	Description  string  `json:"description"`
+	TmuxSession  string  `json:"tmux_session"`
 	ID           string  `json:"id"`
 	Status       string  `json:"status"`
 	SessionName  string  `json:"session_name"`
@@ -182,4 +185,16 @@ type HTTPError struct {
 
 func (e *HTTPError) Error() string {
 	return fmt.Sprintf("%s %s: HTTP %d: %s", e.Method, e.Path, e.Status, e.Body)
+}
+
+func (c *Client) SessionTerminals(ctx context.Context, name string) ([]Terminal, error) {
+	var out struct {
+		Terminals []Terminal `json:"terminals"`
+	}
+	err := c.call(ctx, http.MethodGet, "/sessions/"+url.PathEscape(name), nil, &out)
+	return out.Terminals, err
+}
+
+func (c *Client) SetDescription(ctx context.Context, id, description string) error {
+	return c.call(ctx, http.MethodPatch, "/terminals/"+url.PathEscape(id)+"/description", map[string]string{"description": description}, nil)
 }

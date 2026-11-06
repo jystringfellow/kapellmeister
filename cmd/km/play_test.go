@@ -77,6 +77,8 @@ func (f *playCAO) serve(t *testing.T) *httptest.Server {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		switch {
+		case r.Method == http.MethodPatch && strings.HasSuffix(r.URL.Path, "/description"):
+			w.Write([]byte(`{}`))
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/terminals/"):
 			id := strings.TrimPrefix(r.URL.Path, "/terminals/")
 			f.checked = append(f.checked, id)
@@ -118,7 +120,11 @@ func (f *playCAO) serve(t *testing.T) *httptest.Server {
 					t.Error(err)
 				}
 			}
-			_ = json.NewEncoder(w).Encode(cao.StepResponse{TerminalID: req.ReuseTerminalID, Status: "completed"})
+			id := req.ReuseTerminalID
+			if id == "" {
+				id = fmt.Sprintf("step-%d", len(f.requests))
+			}
+			_ = json.NewEncoder(w).Encode(cao.StepResponse{TerminalID: id, Status: "completed"})
 		default:
 			f.unexpected = append(f.unexpected, r.Method+" "+r.URL.Path)
 			http.NotFound(w, r)

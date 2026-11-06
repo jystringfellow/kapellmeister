@@ -209,6 +209,81 @@ repo. Chairs: `km-claude` (Haiku 5.5), `km-codex` (GPT-6 Luna), `km-copilot` (Ha
     a failed delete as done when the lookup is 404. Upstream candidate: make DELETE idempotent (404
     or 200 once the terminal is unregistered) and name the right provider.
 
+13. **Run-step needs an existing named session; a podium keeps it alive.** Checked the installed
+    CAO 2.5.4 `services/agent_step.py`, `services/session_service.py`, `api/main.py`,
+    `clients/database.py` and `providers/claude_code.py` on 2026-11-06. The default shell Python
+    cannot import CAO; the interpreter in `~/.local/share/uv/tools/cli-agent-orchestrator/bin/python`
+    can. Live probes used isolated temporary scratch directories and state, sessions
+    `cao-km-blocker-probe-5imho6vo` and `cao-km-blocker-lifecycle-ydg5973k`, and no existing sessions.
+    `POST /sessions` creates its initial terminal; there is no empty-session operation. Run-step
+    with `session_name` joined that session and its terminal's description was `km probe · tester`.
+    An unknown session returned HTTP 404, `Session 'km-blocker-probe-5imho6vo-absent' not found`.
+14. **Teardown removes the step terminal, leaving the session's podium.** A live run-step with
+    `teardown:true` replied `OK` and completed; the session lookup afterwards contained just its
+    initial terminal. Explicitly deleting the permission-blocked step also left its initial terminal
+    and session alive. Both probe sessions were taken down with `km ensemble down` using their own
+    temporary standing records and state directories. The second session lookup then returned 404.
+    The temporary permission profile was removed. No prompt was answered.
+15. **The session endpoint carries live status; the terminals endpoint does not.** Live
+    `GET /sessions/{name}` returned a `session` object plus `terminals`, each with `status`,
+    `description`, `id` and `tmux_session`. `GET /sessions/{name}/terminals` returned the DB rows
+    with description and tmux session but no status. The initial Claude terminal reported `idle`.
+16. **Claude's Bash permission prompt reports processing.** A temporary Claude profile with
+    `permissionMode: default` and scratch `.claude/settings.json` asking for `Bash(cp*)` produced
+    the task's exact permission dialog when asked to run `cp a b`. Both terminal and session
+    lookups reported `processing` while the dialog remained visible. A separate `AskUserQuestion`
+    dialog reported `waiting_user_answer`. This confirms both watcher paths are necessary.
+17. **Full output is a rolling stream of terminal updates, not a rendered screen.** The live
+    permission output placed cursor-column escapes between `Permission`, `rule`, `requires` and
+    `confirmation`, and cursor-row updates between lines. Later spinner updates appended enough
+    nonblank fragments to hide the dialog from a last-12-lines scan after naive escape stripping.
+    Rendering the captured stream with a terminal emulator recovered the exact permission line;
+    km renders it with `charmbracelet/x/vt` behind its CAO watcher, at CAO's default 220×50 pane
+    size, draining the emulator's replies to terminal queries (an undrained reply blocks the write)
+    and treating a render panic as no blocker. Replaying the captured live output through the
+    watcher passed. No live unblock-after-answer probe was attempted; no prompt was answered.
+    Rolling-buffer truncation or a resized pane can still limit reconstruction. CAO already renders
+    the viewport internally (`get_history(visible_only=True)`, tmux `capture-pane -S 0`) for its
+    status monitor, but `GET /terminals/{id}/output` offers only `full` and `last`.
+18. **Run-step ignores description on reused terminals.** The reuse branch of CAO's
+    `run_agent_step` validates the occupant but never updates its description. km must use
+    `PATCH /terminals/{id}/description` before a reused cue so its standing chairs and kept
+    implementer can be matched to the current step by the same label as new terminals.
+    Upstream candidates: honour description on reuse; provide empty sessions,
+    and pushed terminal status changes (or a status filter on the session listing). Pushed status
+    would replace km's polling seam with a subscriber.
+
+19. **Live km progress sees the permission prompt and cleans up on interrupt.** Ran the changed
+    binary in scratch repository `km-blocker-e2e-htfkecfg` with isolated km home and state,
+    `blocker_poll = "1s"`, preflight disabled, and an explicit-model Claude permission profile.
+    An AGENTS instruction to run `cp a b` before writing the plan blocked the planner.
+    Progress printed exactly one `blocked: plan planner` with the permission-rule line and
+    `tmux attach -t cao-km-20261106-063834-30ded8`. Three seconds later the harness sent SIGINT;
+    progress printed one `unblocked`, the run ended as failed, and session lookup returned 404.
+    Both telemetry records named `plan`, `planner`, and the same terminal. No prompt was answered.
+    The scratch repository had no commit, so its final diff-stat command reported missing HEAD;
+    that did not prevent session cleanup. The temporary profile was removed (lookup 404).
+
+20. **The right upstream fix is Claude's status, and CAO main already has it.** Checked on
+    2026-11-06 against the installed 2.5.4 source and `awslabs/cli-agent-orchestrator` on GitHub.
+    km reads screens only because Claude's tool-permission dialog reports `processing` (finding 16).
+    In 2.5.4, `providers/claude_code.py` reports `waiting_user_answer` only for the footers
+    `↑/↓ to navigate` and `Enter to confirm ·`, or a plan-approval dialog; the permission dialog's
+    footer is `Esc to cancel · Tab to amend`. CAO PR #1107 (closes #1106, merged 2026-10-28) adds
+    `Esc to cancel[ \t]*·[ \t]*Tab to amend` to that pattern, with Bash and Write permission
+    fixtures. It is on `main`, 149 commits past `v2.5.4`, and PyPI's latest is still 2.5.4. Once a
+    release carries it, km's watcher can treat `waiting_user_answer` as blocked and drop its
+    screen reads and terminal emulator. Related open issue: #405 (AskUserQuestion and plan dialogs
+    classifying as idle or completed). The other chairs km seats, from source only, not probed live:
+    - **Codex** reports `waiting_user_answer` for its approval prompts (`APPROVAL_PROMPT_PATTERN`,
+      numbered approval menu with a footer, the "Command Approval Required" modal; PR #567). It
+      prompts only when launched without `--yolo`, which CAO uses when `allowedTools` contains `*`.
+    - **Copilot** is always launched with `--allow-all`, so tool calls do not prompt. Its waiting
+      detection covers folder trust, `press enter to continue` and `[y/n]` only, on 2.5.4 and main.
+    - **Antigravity** is always launched with `--dangerously-skip-permissions`. Its waiting pattern
+      also matches `Allow once`, `Allow always`, `Do you want to (allow|run|proceed)` and `[y/n]`
+      for the prompts that flag does not suppress.
+
 ## Implications for the team layer
 
 - km owns the queue of obligations, as decided: a cue is done only when its reply lands in the km

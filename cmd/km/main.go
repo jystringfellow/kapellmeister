@@ -307,13 +307,26 @@ func runCommand(args []string) error {
 	if err := preflight(ctx, client, wt, s.PreflightTimeout, defaultChairs(&policy, chairs)...); err != nil {
 		return err
 	}
+	podiumChair, _ := policy.Chair("classify", chairs.Classifier, "", 0)
+	podium, err := client.CreateSession(ctx, "km-"+runID, cao.Launch{Provider: podiumChair.Provider, Profile: podiumChair.Profile, Model: podiumChair.Model, WorkingDirectory: wt})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		if err := client.DeleteSession(cleanupCtx, podium.SessionName); err != nil {
+			fmt.Fprintf(os.Stderr, "km: deleting session %s: %v\n", podium.SessionName, err)
+		}
+	}()
 	sum, err := runEnsemble(ctx, ensembleRun{
 		RunID: runID, StateDir: filepath.Join(loop.StateDir(), "runs", runID),
 		Config: loop.Config{
 			RunID: runID, Task: text, Worktree: wt, Chairs: chairs, GateWhen: s.GateWhen,
-			MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, CheckCommand: checkCmd, Policy: &policy,
+			BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, CheckCommand: checkCmd, Policy: &policy,
 		},
-		Stepper: loop.CAOStepper{Client: client}, Verify: loop.Retrying(loop.CommandVerifier(verifyCmd), s.VerifyRetries), Progress: os.Stdout,
+		Watcher: loop.CAOWatcher{Client: client, Session: podium.SessionName},
+		Stepper: loop.CAOStepper{Client: client, Session: podium.SessionName}, Verify: loop.Retrying(loop.CommandVerifier(verifyCmd), s.VerifyRetries), Progress: os.Stdout,
 	})
 	if err != nil {
 		return err
@@ -383,8 +396,8 @@ func configCommand(args []string) error {
 		return err
 	}
 	printSources(os.Stdout, s)
-	fmt.Printf("cao    %s\nstate  %s\nrun    rounds %d, verify retries %d, step timeout %s, reply grace %s, preflight %s\n",
-		s.CAOURL, loop.StateDir(), s.Rounds, s.VerifyRetries, s.Timeout, s.ReplyGrace, s.PreflightTimeout)
+	fmt.Printf("cao    %s\nstate  %s\nrun    rounds %d, verify retries %d, step timeout %s, reply grace %s, preflight %s, blocker poll %s\n",
+		s.CAOURL, loop.StateDir(), s.Rounds, s.VerifyRetries, s.Timeout, s.ReplyGrace, s.PreflightTimeout, s.BlockerPoll)
 	printChairs(os.Stdout, s)
 	printEnsembles(os.Stdout, s)
 	printEnsembleFiles(os.Stdout, loop.Home(), *worktree)
@@ -579,6 +592,7 @@ func firstNonEmpty(values ...string) string {
 }
 
 type ensembleRun struct {
+	Watcher  loop.Watcher
 	Command  string
 	RunID    string
 	StateDir string
@@ -607,7 +621,7 @@ func runEnsemble(ctx context.Context, p ensembleRun) (ensembleSummary, error) {
 		return ensembleSummary{}, err
 	}
 	fmt.Fprintf(p.Progress, "km %s %s\n  worktree  %s\n  state     %s\n", firstNonEmpty(p.Command, "run"), p.RunID, p.Config.Worktree, p.StateDir)
-	eng := &loop.Engine{Config: p.Config, Stepper: p.Stepper, Verify: p.Verify, Records: telemetry, Progress: p.Progress}
+	eng := &loop.Engine{Watcher: p.Watcher, Config: p.Config, Stepper: p.Stepper, Verify: p.Verify, Records: telemetry, Progress: p.Progress}
 	start := time.Now()
 	res, err := eng.Run(ctx)
 	if err != nil {

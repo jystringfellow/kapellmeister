@@ -10,10 +10,16 @@ import (
 )
 
 type CAOStepper struct {
-	Client *cao.Client
+	Session string
+	Client  *cao.Client
 }
 
 func (c CAOStepper) Run(ctx context.Context, s Step) (StepResult, error) {
+	if s.ReuseTerminal != "" {
+		if err := c.Client.SetDescription(ctx, s.ReuseTerminal, s.Label); err != nil {
+			return StepResult{TerminalID: s.ReuseTerminal}, err
+		}
+	}
 	req := cao.StepRequest{
 		Provider:         s.Chair.Provider,
 		Agent:            s.Chair.Profile,
@@ -23,6 +29,9 @@ func (c CAOStepper) Run(ctx context.Context, s Step) (StepResult, error) {
 		ReuseTerminalID:  s.ReuseTerminal,
 		Description:      s.Label,
 		Timeout:          s.Timeout.Seconds(),
+	}
+	if s.ReuseTerminal == "" {
+		req.SessionName = c.Session
 	}
 	resp, err := c.Client.RunStep(ctx, req)
 	if err != nil {
