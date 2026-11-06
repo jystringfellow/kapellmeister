@@ -1,0 +1,23 @@
+[sections.leads.chairs.planner]
+part = "planner"
+agents = ["claude"]
+
+[sections.leads.chairs.implementer]
+part = "implementer"
+agents = ["codex", "claude"]
+
+[sections.review.chairs.lead]
+part = "reviewer"
+agents = ["copilot", "claude"]
+
+[sections.review.chairs.second]
+part = "reviewer"
+agents = ["agy", "claude@large"]
+
+[sections.leads.chairs.gate]
+part = "gate"
+agents = ["claude"]
+
+[sections.leads.chairs.classifier]
+part = "classifier"
+agents = ["claude"]
