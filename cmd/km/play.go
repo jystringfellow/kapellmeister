@@ -49,7 +49,7 @@ func playCommand(args []string) error {
 		return err
 	}
 	if unbriefed := standing.Unbriefed(); len(unbriefed) > 0 {
-		return fmt.Errorf("chair(s) %s were not briefed when session %s was rehearsed; take it down with km ensemble down %s and km rehearse again", strings.Join(unbriefed, ", "), standing.Session, standing.Session)
+		return fmt.Errorf("chair(s) %s were not briefed when session %s was rehearsed; take it down with km ensemble down %s and km rehearse again; %s", strings.Join(unbriefed, ", "), standing.Session, standing.Session, reseatHints(standing.Session, unbriefed))
 	}
 	chairs, err := standing.RebuildChairs()
 	if err != nil {
@@ -80,7 +80,7 @@ func playCommand(args []string) error {
 		return err
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("chair(s) %s have no occupant in session %s; take it down with km ensemble down %s and km rehearse again", strings.Join(missing, ", "), standing.Session, standing.Session)
+		return fmt.Errorf("chair(s) %s have no occupant in session %s; take it down with km ensemble down %s and km rehearse again; %s", strings.Join(missing, ", "), standing.Session, standing.Session, reseatHints(standing.Session, missing))
 	}
 	printSources(os.Stdout, s)
 	fmt.Printf("ensemble %s (session %s); sizing and tier escalation off\n", standing.Ensemble, standing.Session)
@@ -100,4 +100,12 @@ func playCommand(args []string) error {
 	printOutcome(os.Stdout, sum)
 	fmt.Print(sum.DiffStat)
 	return nil
+}
+
+func reseatHints(session string, addresses []string) string {
+	commands := make([]string, 0, len(addresses))
+	for _, address := range addresses {
+		commands = append(commands, "`km reseat "+session+" "+address+"`")
+	}
+	return "or replace the occupant with " + strings.Join(commands, ", ")
 }

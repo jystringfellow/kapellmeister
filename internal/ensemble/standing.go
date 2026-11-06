@@ -86,20 +86,26 @@ func RemoveStanding(dir, session string) error {
 }
 
 func (s Standing) RebuildChairs() (loop.Chairs, error) {
-	var members []Member
 	for _, c := range s.Chairs {
 		if c.Binding.Provider == "" {
 			return loop.Chairs{}, fmt.Errorf("session %s was rehearsed by an older km (no recorded binding); take it down and rehearse again", s.Session)
 		}
-		binding := c.Binding
-		binding.Address = c.Address
-		members = append(members, Member{Section: c.Section, Part: c.Part, Name: c.Name, Chair: binding})
 	}
-	chairs, err := ChairsOf(members)
+	chairs, err := ChairsOf(s.Members())
 	if err != nil {
 		return loop.Chairs{}, fmt.Errorf("session %s: %w", s.Session, err)
 	}
 	return chairs, nil
+}
+
+func (s Standing) Members() []Member {
+	members := make([]Member, 0, len(s.Chairs))
+	for _, c := range s.Chairs {
+		binding := c.Binding
+		binding.Address = c.Address
+		members = append(members, Member{Section: c.Section, Part: c.Part, Name: c.Name, Chair: binding})
+	}
+	return members
 }
 
 func MissingOccupants(ctx context.Context, client *cao.Client, s Standing) ([]string, error) {

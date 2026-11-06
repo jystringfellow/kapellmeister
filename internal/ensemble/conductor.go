@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -70,13 +71,17 @@ func (c conductor) boot(ctx context.Context, name string, chairs []ChairReport) 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			start := time.Now()
-			t, err := c.Client.AddTerminal(ctx, session, c.launch(c.Members[i]))
-			c.booted(ctx, c.Members[i], t, err, time.Since(start), &chairs[i])
+			c.bootInto(ctx, session, c.Members[i], &chairs[i])
 		}()
 	}
 	wg.Wait()
 	return session
+}
+
+func (c conductor) bootInto(ctx context.Context, session string, m Member, r *ChairReport) {
+	start := time.Now()
+	t, err := c.Client.AddTerminal(ctx, session, c.launch(m))
+	c.booted(ctx, m, t, err, time.Since(start), r)
 }
 
 func (c conductor) launch(m Member) cao.Launch {
@@ -86,6 +91,10 @@ func (c conductor) launch(m Member) cao.Launch {
 func (c conductor) booted(ctx context.Context, m Member, t cao.Terminal, err error, took time.Duration, r *ChairReport) {
 	r.BootMS = took.Milliseconds()
 	if err != nil {
+		var httpErr *cao.HTTPError
+		if errors.As(err, &httpErr) {
+			r.TerminalID = httpErr.TerminalID
+		}
 		r.Problem = "boot: " + err.Error()
 		return
 	}
