@@ -48,18 +48,18 @@ func TestTheWatcherSeamOffersNoWayToSendInput(t *testing.T) {
 
 func TestABlockedTerminalIsReportedOnceWhileItPersistsAndAgainWhenItChanges(t *testing.T) {
 	var progress, records bytes.Buffer
-	w := &fakeWatcher{terminals: []WatchedTerminal{{ID: "t", Session: "cao-run", Status: "processing", Description: "test-label"}}, screens: map[string]string{"t": "Please approve copying"}}
+	w := &fakeWatcher{terminals: []WatchedTerminal{{ID: "t", Session: "cao-run", Status: "processing", Description: "test-label"}}, screens: map[string]string{"t": claudePermissionDialog("cp")}}
 	e := &Engine{Watcher: w, Progress: &progress, Records: &records, Config: Config{RunID: "r"}}
 	finish := e.watchStep(Step{Name: "test", Round: 1, ChairName: "tonmeister", Label: "test-label"})
 	e.pollBlockers(context.Background())
 	e.pollBlockers(context.Background())
 	e.pollBlockers(context.Background())
-	w.screens["t"] = "Please approve running"
+	w.screens["t"] = claudePermissionDialog("rm")
 	e.pollBlockers(context.Background())
 	w.terminals[0].Status = "completed"
 	e.pollBlockers(context.Background())
 	finish()
-	want := "  blocked: test[1] tonmeister — Please approve copying — attach with tmux attach -t cao-run\n  blocked: test[1] tonmeister — Please approve running — attach with tmux attach -t cao-run\n  unblocked: test[1] tonmeister\n"
+	want := "  blocked: test[1] tonmeister — Permission rule Bash(cp*) requires confirmation for this command. — attach with tmux attach -t cao-run\n  blocked: test[1] tonmeister — Permission rule Bash(rm*) requires confirmation for this command. — attach with tmux attach -t cao-run\n  unblocked: test[1] tonmeister\n"
 	if progress.String() != want {
 		t.Fatalf("progress = %q", progress.String())
 	}
@@ -212,5 +212,43 @@ func TestWithoutAWatcherTheEngineStillRuns(t *testing.T) {
 	result, err := e.Run(context.Background())
 	if err != nil || result.Outcome != Approved {
 		t.Fatalf("result=%+v error=%v", result, err)
+	}
+}
+
+func TestABusyScreenIsBlockedOnlyByAPermissionDialogNotByPromptTextOrProse(t *testing.T) {
+	busy := []string{
+		"APPROVE if it approves the change as it stands with no required changes,",
+		"Write your review to .kapellmeister/runs/r/review-1-2.md: state plainly whether you approve the change as it stands, then list every required change with file and line.",
+		"● I approve the change as it stands, with no required changes; the review is in  .kapellmeister/runs/r/review-2-1.md .",
+		`echo "I approve." > "$REPLY"`,
+		"blocking point you find yourself. Approve when the task is done, the verification passed, and nothing is blocking.",
+		"The watcher reports a rule that requires confirmation. Do you want to proceed? is the dialog's question.",
+	}
+	for _, screen := range busy {
+		var progress bytes.Buffer
+		w := &fakeWatcher{terminals: []WatchedTerminal{{ID: "t", Session: "cao-run", Status: "processing", Description: "review"}}, screens: map[string]string{"t": screen}}
+		e := &Engine{Watcher: w, Progress: &progress, Records: &bytes.Buffer{}, Config: Config{RunID: "r"}}
+		finish := e.watchStep(Step{Name: "review", Round: 1, ChairName: "reviewer-1", Label: "review"})
+		e.pollBlockers(context.Background())
+		finish()
+		if progress.Len() != 0 {
+			t.Errorf("screen %q reported %q", screen, progress.String())
+		}
+	}
+}
+
+func claudePermissionDialog(command string) string {
+	return "⏺ Bash(" + command + " a b)\nPermission rule Bash(" + command + "*) requires confirmation for this command.\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\nEsc to cancel · Tab to amend"
+}
+
+func TestAWaitingTerminalWithoutAPermissionDialogIsReportedAsWaitingForAnAnswer(t *testing.T) {
+	var progress bytes.Buffer
+	w := &fakeWatcher{terminals: []WatchedTerminal{{ID: "t", Session: "cao-run", Status: "waiting_user_answer", Description: "plan"}}, screens: map[string]string{"t": "APPROVE if it approves the change as it stands\n↑/↓ to navigate · Enter to select"}}
+	e := &Engine{Watcher: w, Progress: &progress, Records: &bytes.Buffer{}, Config: Config{RunID: "r"}}
+	finish := e.watchStep(Step{Name: "plan", ChairName: "planner", Label: "plan"})
+	e.pollBlockers(context.Background())
+	finish()
+	if want := "  blocked: plan planner — waiting for an answer — attach with tmux attach -t cao-run\n  unblocked: plan planner\n"; progress.String() != want {
+		t.Fatalf("progress = %q", progress.String())
 	}
 }

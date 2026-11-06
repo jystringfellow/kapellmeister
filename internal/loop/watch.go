@@ -163,7 +163,7 @@ func (e *Engine) pollBlockers(ctx context.Context) {
 			if err != nil {
 				continue
 			}
-			line = FindBlocker(screen)
+			line = FindPermissionDialog(screen)
 			if line == "" && terminal.Status == "waiting_user_answer" {
 				line = "waiting for an answer"
 			}
