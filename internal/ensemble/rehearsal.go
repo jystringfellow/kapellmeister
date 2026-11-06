@@ -18,6 +18,7 @@ type Rehearsal struct {
 	KM       string
 	Task     string
 	TaskFile string
+	GateWhen string
 	StateDir string
 }
 
@@ -27,17 +28,17 @@ func (a Rehearsal) Run(ctx context.Context) (Report, error) {
 	if err != nil {
 		return report, err
 	}
+	var standing Standing
 	if report.Session != "" {
-		standing := Standing{Ensemble: a.Ensemble, Session: report.Session, Worktree: a.Worktree, Queue: report.Queue, TaskFile: a.TaskFile}
+		standing = Standing{Ensemble: a.Ensemble, Session: report.Session, Worktree: a.Worktree, Queue: report.Queue, TaskFile: a.TaskFile, GateWhen: a.GateWhen}
 		if a.TaskFile == "" {
 			standing.Task = a.Task
 		}
 		for i, c := range report.Chairs {
-			if c.TerminalID == "" {
-				continue
-			}
 			m := a.Members[i]
-			standing.Chairs = append(standing.Chairs, StandingChair{Address: c.Address, Section: m.Section, Part: m.Part, Chair: c.Chair, TerminalID: c.TerminalID})
+			binding := m.Chair
+			binding.Address = c.Address
+			standing.Chairs = append(standing.Chairs, StandingChair{Name: m.Name, Binding: binding, Address: c.Address, Section: m.Section, Part: m.Part, Chair: c.Chair, TerminalID: c.TerminalID})
 		}
 		if err := standing.Save(a.StateDir); err != nil {
 			return report, fmt.Errorf("recording standing ensemble: session %s is still running: %w", report.Session, err)
@@ -47,6 +48,14 @@ func (a Rehearsal) Run(ctx context.Context) (Report, error) {
 		id := "rehearse-" + m.Section + "-" + m.Name
 		return id, a.briefing(id, m, report.Queue)
 	})
+	if standing.Session != "" {
+		for i := range standing.Chairs {
+			standing.Chairs[i].Briefed = report.Chairs[i].OK
+		}
+		if err := standing.Save(a.StateDir); err != nil {
+			return report, fmt.Errorf("recording briefings: session %s is still running: %w", report.Session, err)
+		}
+	}
 	report.OK = report.allOK()
 	return report, nil
 }

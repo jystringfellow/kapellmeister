@@ -50,23 +50,9 @@ func ensembleCommand(args []string, w io.Writer) error {
 		if fs.NArg() != 1 {
 			return errors.New(usage)
 		}
-		records, err := ensemble.ListStanding(dir)
-		if err != nil {
-			return err
-		}
 		session := fs.Arg(0)
-		var names []string
-		found := false
-		for _, s := range records {
-			names = append(names, s.Session)
-			found = found || s.Session == session
-		}
-		if !found {
-			recorded := "none recorded"
-			if len(names) > 0 {
-				recorded = "recorded: " + strings.Join(names, ", ")
-			}
-			return fmt.Errorf("unknown session %q (%s)", session, recorded)
+		if _, err := findStanding(dir, session); err != nil {
+			return err
 		}
 		s, err := loop.LoadSettings(loop.Home(), "")
 		if err != nil {
@@ -88,4 +74,23 @@ func ensembleCommand(args []string, w io.Writer) error {
 	default:
 		return errors.New(usage)
 	}
+}
+
+func findStanding(dir, session string) (ensemble.Standing, error) {
+	records, err := ensemble.ListStanding(dir)
+	if err != nil {
+		return ensemble.Standing{}, err
+	}
+	var names []string
+	for _, s := range records {
+		if s.Session == session {
+			return s, nil
+		}
+		names = append(names, s.Session)
+	}
+	recorded := "none recorded"
+	if len(names) > 0 {
+		recorded = "recorded: " + strings.Join(names, ", ")
+	}
+	return ensemble.Standing{}, fmt.Errorf("unknown session %q (%s)", session, recorded)
 }

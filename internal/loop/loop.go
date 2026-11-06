@@ -18,6 +18,7 @@ import (
 )
 
 type Chair struct {
+	Address  string        `json:"address,omitempty"`
 	Provider string        `json:"provider"`
 	Profile  string        `json:"profile"`
 	Model    string        `json:"model,omitempty"`
