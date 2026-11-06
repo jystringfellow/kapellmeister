@@ -358,3 +358,46 @@ func (f *cancellingTestPlanStepper) Run(ctx context.Context, s Step) (StepResult
 	close(f.stopped)
 	return StepResult{}, ctx.Err()
 }
+
+func TestATestReportEndingInABareVerdictLineIsTakenAtItsWordWithoutTheClassifier(t *testing.T) {
+	for _, tc := range []struct {
+		last    string
+		outcome string
+		rounds  int
+	}{{"APPROVE", Approved, 1}, {"  CHANGES  ", Approved, 2}} {
+		t.Run(strings.TrimSpace(tc.last), func(t *testing.T) {
+			e, f := testerEngine(t)
+			f.verdicts["test"] = []string{"UNCLEAR", "UNCLEAR"}
+			reports := 0
+			f.actions = map[string]func(Step){"test": func(s Step) {
+				reports++
+				last := tc.last
+				if reports > 1 {
+					last = "APPROVE"
+				}
+				f.write(s.ReplyPath, "| scenario | Observed, not a failure |\n\n"+last+"\n\n")
+			}}
+			res := run(t, e)
+			if res.Outcome != tc.outcome || res.Rounds != tc.rounds {
+				t.Fatal(res)
+			}
+			if n := len(testerSteps(f, "classify-test")); n != 0 {
+				t.Errorf("classifier ran %d time(s) on a report with a bare verdict line", n)
+			}
+		})
+	}
+}
+
+func TestATestReportWithoutABareVerdictLineIsStillClassified(t *testing.T) {
+	e, f := testerEngine(t)
+	f.verdicts["test"] = []string{"APPROVE"}
+	f.actions = map[string]func(Step){"test": func(s Step) {
+		f.write(s.ReplyPath, "Everything passed, so I APPROVE.\n")
+	}}
+	if res := run(t, e); res.Outcome != Approved {
+		t.Fatal(res)
+	}
+	if n := len(testerSteps(f, "classify-test")); n != 1 {
+		t.Errorf("classify-test ran %d time(s)", n)
+	}
+}

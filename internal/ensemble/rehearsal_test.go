@@ -247,6 +247,7 @@ func TestAnInterruptedRehearsalKeepsItsSessionAndStandingRecord(t *testing.T) {
 	defer cancel()
 	fake.onCue = cancel
 	report, err := a.Run(ctx)
+	fake.settle()
 	if err != nil {
 		t.Fatal(err)
 	}

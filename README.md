@@ -230,8 +230,8 @@ toward escalation.
 When a tester is seated, it writes `test-plan.md` from the task and plan alone, blind to the
 implementation, while round 1 implements. The plan targets end to end use in the real environment,
 including missing, stale or concurrent state and misbehaving services. After the gate approves,
-km waits for the test plan, then runs `test` in the tester's chair and classifies its
-`test-<round>.md` report. Only a test APPROVE finishes the run. Any other verdict sends the test
+km waits for the test plan, then runs `test` in the tester's chair and reads the verdict from
+`test-<round>.md`: a bare `APPROVE` or `CHANGES` last line is taken as is; otherwise the classifier reads the report. Only a test APPROVE finishes the run. Any other verdict sends the test
 report back as the leading feedback, with instructions to reproduce each failure in a failing
 regression test before fixing it. Later rounds reuse the same test plan.
 A failed test-plan or test step fails the run. The test step gets the same worktree check as the

@@ -58,6 +58,11 @@ func newFakeCAO(t *testing.T, behaviours map[string]behaviour) (*fakeCAO, *cao.C
 	return f, cao.NewClient(srv.URL)
 }
 
+func (f *fakeCAO) settle() {
+	f.mu.Lock()
+	f.mu.Unlock()
+}
+
 func (f *fakeCAO) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

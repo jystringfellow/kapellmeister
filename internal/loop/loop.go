@@ -365,7 +365,22 @@ func (e *Engine) testRound(ctx context.Context, round int, plan, summary string,
 	if errs[0] != nil {
 		return "", errs[0]
 	}
+	text, _ := e.readReply(path)
+	if verdict := lastVerdictLine(text); verdict != "" {
+		e.record(Record{RunID: e.Config.RunID, Round: round, Step: "verdict-test", Verdict: verdict, Reply: path})
+		e.progress("  test verdict: %s (from the report's last line)", verdict)
+		return verdict, nil
+	}
 	return e.classify(ctx, round, "test", path, "")
+}
+
+func lastVerdictLine(text string) string {
+	lines := strings.Split(strings.TrimSpace(text), "\n")
+	switch last := strings.TrimSpace(lines[len(lines)-1]); last {
+	case "APPROVE", "CHANGES":
+		return last
+	}
+	return ""
 }
 
 func (e *Engine) fail(res Result, err error) Result {
