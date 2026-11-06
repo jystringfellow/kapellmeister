@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 )
@@ -17,7 +18,7 @@ var generatedBases = map[string]string{
 	"codex":       "km-codex",
 }
 
-func EffortProfileSource(provider, base, effort string) (string, error) {
+func EffortProfileSource(provider, base, effort string, perms Permissions) (string, error) {
 	if generatedBases[provider] != base {
 		return "", fmt.Errorf("profile %s is not installed in CAO, and kapellmeister only generates effort profiles for %s; install a copy of %s with %s effort as %s",
 			EffortProfile(base, effort), generatedBaseList(), base, effort, EffortProfile(base, effort))
@@ -25,9 +26,27 @@ func EffortProfileSource(provider, base, effort string) (string, error) {
 	if !slices.Contains(effortLevels[provider], effort) {
 		return "", fmt.Errorf("%s does not support effort %q", provider, effort)
 	}
+	permissions := ""
+	if perms.PermissionMode != "" {
+		permissions += "permissionMode: " + perms.PermissionMode + "\n"
+	}
+	if perms.AllowedTools != nil {
+		tools, err := json.Marshal(perms.AllowedTools)
+		if err != nil {
+			return "", err
+		}
+		permissions += "allowedTools: " + string(tools) + "\n"
+	}
+	if perms.CodexProfile != "" {
+		profile, err := json.Marshal(perms.CodexProfile)
+		if err != nil {
+			return "", err
+		}
+		permissions += "codexProfile: " + string(profile) + "\n"
+	}
 	name := EffortProfile(base, effort)
-	return fmt.Sprintf("---\nname: %s\ndescription: kapellmeister chair at %s effort; kapellmeister passes the model per step\nprovider: %s\nrole: developer\n"+effortConfigKey[provider]+"---\n\n%s",
-		name, effort, provider, effort, chairInstructions), nil
+	return fmt.Sprintf("---\nname: %s\ndescription: kapellmeister chair at %s effort; kapellmeister passes the model per step\nprovider: %s\nrole: developer\n%s%s---\n\n%s",
+		name, effort, provider, permissions, fmt.Sprintf(effortConfigKey[provider], effort), chairInstructions), nil
 }
 
 func generatedBaseList() string {

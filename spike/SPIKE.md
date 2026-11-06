@@ -284,6 +284,53 @@ repo. Chairs: `km-claude` (Haiku 5.5), `km-codex` (GPT-6 Luna), `km-copilot` (Ha
       also matches `Allow once`, `Allow always`, `Do you want to (allow|run|proceed)` and `[y/n]`
       for the prompts that flag does not suppress.
 
+21. **Chair permission fields are available over HTTP; effort variants must preserve them.**
+    Read the installed CAO 2.5.4 source on 2026-11-06 (no live sessions or profile writes):
+    - `api/main.py:2875-2898`, `GET /agents/profiles/{name}`, returns
+      `load_agent_profile(name).model_dump(exclude_none=True)`. It includes `permissionMode` and
+      `allowedTools` when set, preserving `allowedTools: []`. The response resolves environment
+      variables and includes other profile content; km decodes only `permissionMode`, `allowedTools`
+      and `codexProfile`, and never prints the rest. The endpoint covers km's needs; no local profile reader or upstream
+      profile-read candidate is needed.
+    - `providers/claude_code.py:435-455`: explicit `permissionMode` selects
+      `--permission-mode <mode>`; otherwise CAO uses `--dangerously-skip-permissions`. Exception:
+      `allowedTools` containing `*` plus root euid omits the skip flag. km does not model the root
+      exception. `bypassPermissions` is the explicit mode that bypasses prompts. Lines 566-576
+      apply `--disallowedTools` when `allowedTools` is present without `*`, even if it is empty.
+      Tool restrictions are separate from the permission mode.
+    - `providers/copilot_cli.py:203,229-238`: always `--allow-all`; a present `allowedTools` list
+      without `*` adds `--deny-tool` restrictions (including for an empty list).
+    - `providers/antigravity_cli.py:318`: always `--dangerously-skip-permissions`.
+    - `providers/codex.py:1375-1419`: `allowedTools` containing `*` forces `--yolo`, overriding
+      `codexProfile`. Without `*`, `codexProfile` selects `--profile <name>`; without either,
+      CAO still defaults to `--yolo`. This qualifies finding 20 and the task's assumption that
+      Codex prompts without `*`. km uses `codexProfile` as well as `allowedTools` to identify the
+      launch mode and copies `codexProfile` into effort variants. The `approvals` label means CAO
+      uses `--profile`; the named Codex configuration controls the actual approval policy.
+    - `services/install_service.py:1872-1895` guards ownership, then reimports a supplied profile
+      with `write_profile(..., overwrite=True)`. Reinstall uses km's existing `cao install` CLI
+      path and propagates failures; it is not an unconditional overwrite. As finding 19 notes,
+      `POST /agents/profiles/install` rejects local paths, so HTTP cannot install km's generated
+      file directly. A fake CLI tests installation and replacement without changing CAO's store.
+    - A read-only `km config` check against local CAO, using temporary `KAPELLMEISTER_HOME` and
+      `KAPELLMEISTER_STATE_DIR` in this throwaway worktree, printed all five default chair labels
+      and one note counting four unguarded chairs. No session was created or profile installed.
+
+22. **Permission labels and inheritance must include Codex's named policy.** The tester's first
+    run found the original two-field mapping falsely reported default Codex launches as guarded,
+    and effort variants lost the base's `codexProfile`. Rechecked the installed source on
+    2026-11-06: `providers/codex.py:1387-1419` selects `--profile` only when `codexProfile` is set
+    and `allowedTools` lacks `*`; otherwise it selects `--yolo`. The profile HTTP response exposes
+    this field too. km carries it through reading, generation and mismatch comparison. Config
+    projects the base's synchronized permissions for generated variants instead of reporting a
+    stale installed variant; it does not install anything. Custom profiles keep their installed
+    permissions. `models/agent_profile.py:9` permits only `default`, `acceptEdits`, `plan`, `auto`
+    and `bypassPermissions`; km displays other modes as `unknown` without echoing arbitrary text,
+    so malformed HTTP responses cannot inject notes or terminal escapes into permission labels.
+    A follow-up read-only `km config` check with temporary km home/state directories now reports
+    default Codex as `yolo` and counts all five default chairs in one closing note. No live
+    session or profile was created or modified.
+
 ## Implications for the team layer
 
 - km owns the queue of obligations, as decided: a cue is done only when its reply lands in the km

@@ -399,6 +399,7 @@ func preflightCommand(args []string) error {
 func configCommand(args []string) error {
 	fs := flag.NewFlagSet("config", flag.ContinueOnError)
 	worktree := fs.String("worktree", ".", "repository whose .kapellmeister/config.toml to layer over "+loop.UserConfigPath(loop.Home()))
+	caoURL := fs.String("cao", "", "cao-server URL (default configured CAO URL)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -406,10 +407,17 @@ func configCommand(args []string) error {
 	if err != nil {
 		return err
 	}
+	s.CAOURL = firstNonEmpty(*caoURL, s.CAOURL)
 	printSources(os.Stdout, s)
 	fmt.Printf("cao    %s\nstate  %s\nrun    rounds %d, verify retries %d, step timeout %s, reply grace %s, preflight %s, blocker poll %s\n",
 		s.CAOURL, loop.StateDir(), s.Rounds, s.VerifyRetries, s.Timeout, s.ReplyGrace, s.PreflightTimeout, s.BlockerPoll)
 	printChairs(os.Stdout, s)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	unguarded, err := printConfigPermissions(ctx, os.Stdout, cao.NewClient(s.CAOURL), s)
+	if err != nil {
+		return err
+	}
 	printEnsembles(os.Stdout, s)
 	printEnsembleFiles(os.Stdout, loop.Home(), *worktree)
 	printPolicy(os.Stdout, &s.Policy)
@@ -424,7 +432,11 @@ func configCommand(args []string) error {
 			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", provider, t, spec.Model, firstNonEmpty(spec.Effort, "-"))
 		}
 	}
-	return tw.Flush()
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	printPermissionNote(os.Stdout, unguarded)
+	return nil
 }
 
 func printChairs(w io.Writer, s loop.Settings) {
@@ -518,11 +530,29 @@ func ensureProfiles(ctx context.Context, client *cao.Client, p *loop.Policy, ste
 		have[prof.Name] = prof.Loadable
 	}
 	dir := filepath.Join(loop.StateDir(), "profiles")
+	bases := map[string]cao.ProfilePermissions{}
 	for _, v := range variants {
-		if have[v.Name()] {
-			continue
+		if _, err := loop.EffortProfileSource(v.Provider, v.Base, v.Effort, loop.Permissions{}); err != nil {
+			if have[v.Name()] {
+				continue
+			}
+			return err
 		}
-		source, err := loop.EffortProfileSource(v.Provider, v.Base, v.Effort)
+		base, ok := bases[v.Base]
+		if !ok {
+			base, err = client.ProfilePermissions(ctx, v.Base)
+			if err != nil {
+				return fmt.Errorf("reading CAO profile %s: %w", v.Base, err)
+			}
+			bases[v.Base] = base
+		}
+		if have[v.Name()] {
+			variant, err := client.ProfilePermissions(ctx, v.Name())
+			if err == nil && samePermissions(base, variant) {
+				continue
+			}
+		}
+		source, err := loop.EffortProfileSource(v.Provider, v.Base, v.Effort, loop.Permissions{PermissionMode: base.PermissionMode, AllowedTools: base.AllowedTools, CodexProfile: base.CodexProfile})
 		if err != nil {
 			return err
 		}
@@ -536,7 +566,11 @@ func ensureProfiles(ctx context.Context, client *cao.Client, p *loop.Policy, ste
 		if out, err := exec.CommandContext(ctx, "cao", "install", path, "--provider", v.Provider).CombinedOutput(); err != nil {
 			return fmt.Errorf("cao install %s: %w: %s", path, err, out)
 		}
-		fmt.Printf("→ installed CAO profile %s from %s\n", v.Name(), path)
+		if have[v.Name()] {
+			fmt.Printf("→ reinstalled CAO profile %s: permissions now match %s\n", v.Name(), v.Base)
+		} else {
+			fmt.Printf("→ installed CAO profile %s from %s\n", v.Name(), path)
+		}
 	}
 	return nil
 }

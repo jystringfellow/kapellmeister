@@ -46,15 +46,17 @@ type Audition struct {
 }
 
 type ChairReport struct {
-	Address    string `json:"address"`
-	Chair      string `json:"chair"`
-	TerminalID string `json:"terminal_id,omitempty"`
-	OK         bool   `json:"ok"`
-	Problem    string `json:"problem,omitempty"`
-	BootMS     int64  `json:"boot_ms"`
-	CueMS      int64  `json:"cue_ms,omitempty"`
-	Model      string `json:"model,omitempty"`
-	Honored    *bool  `json:"model_honored,omitempty"`
+	Permissions string `json:"permissions,omitempty"`
+	Unguarded   bool   `json:"unguarded,omitempty"`
+	Address     string `json:"address"`
+	Chair       string `json:"chair"`
+	TerminalID  string `json:"terminal_id,omitempty"`
+	OK          bool   `json:"ok"`
+	Problem     string `json:"problem,omitempty"`
+	BootMS      int64  `json:"boot_ms"`
+	CueMS       int64  `json:"cue_ms,omitempty"`
+	Model       string `json:"model,omitempty"`
+	Honored     *bool  `json:"model_honored,omitempty"`
 }
 
 type Report struct {

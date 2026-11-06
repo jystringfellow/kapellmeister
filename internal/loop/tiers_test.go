@@ -348,7 +348,7 @@ func TestEffortVariantsCoverEveryTierAStepCanReach(t *testing.T) {
 }
 
 func TestEffortProfilesAreGeneratedOnlyForKapellmeistersOwnBases(t *testing.T) {
-	src, err := EffortProfileSource("codex", "km-codex", "xhigh")
+	src, err := EffortProfileSource("codex", "km-codex", "xhigh", Permissions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,7 +360,7 @@ func TestEffortProfilesAreGeneratedOnlyForKapellmeistersOwnBases(t *testing.T) {
 	if strings.Contains(src, "\nmodel:") {
 		t.Fatalf("a generated profile must not pin a model, or agy-style providers ignore the step's model:\n%s", src)
 	}
-	if _, err := EffortProfileSource("claude_code", "my-reviewer", "high"); err == nil || !strings.Contains(err.Error(), "my-reviewer-high") {
+	if _, err := EffortProfileSource("claude_code", "my-reviewer", "high", Permissions{}); err == nil || !strings.Contains(err.Error(), "my-reviewer-high") {
 		t.Fatalf("custom base should name the profile to install, got %v", err)
 	}
 }

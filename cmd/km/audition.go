@@ -69,6 +69,7 @@ func auditionCommand(args []string) error {
 	if err != nil {
 		return err
 	}
+	fillChairPermissions(ctx, client, &report, members)
 	if err := writeJSON(filepath.Join(filepath.Dir(report.Queue), "report.json"), report); err != nil {
 		return err
 	}
@@ -80,16 +81,34 @@ func auditionCommand(args []string) error {
 	return nil
 }
 
-func printAudition(w *os.File, r ensemble.Report, kept bool) {
+func printAudition(w io.Writer, r ensemble.Report, kept bool) {
 	printChairTable(w, r, "CUE")
 	if kept && r.Session != "" {
 		fmt.Fprintf(w, "session %s kept; attach with `tmux attach -t %s`\n", r.Session, r.Session)
 	}
+	unguarded := 0
+	for _, chair := range r.Chairs {
+		if chair.Unguarded {
+			unguarded++
+		}
+	}
+	printPermissionNote(w, unguarded)
 }
 
 func printChairTable(w io.Writer, r ensemble.Report, cueHeader string) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(tw, "CHAIR\tAGENT\tBOOT\t%s\tRESULT\n", cueHeader)
+	permissions := false
+	for _, chair := range r.Chairs {
+		if chair.Permissions != "" {
+			permissions = true
+			break
+		}
+	}
+	fmt.Fprintf(tw, "CHAIR\tAGENT\tBOOT\t%s\tRESULT", cueHeader)
+	if permissions {
+		fmt.Fprint(tw, "\tPERMISSIONS")
+	}
+	fmt.Fprintln(tw)
 	for _, c := range r.Chairs {
 		result := "ok"
 		if !c.OK {
@@ -99,7 +118,11 @@ func printChairTable(w io.Writer, r ensemble.Report, cueHeader string) {
 		if c.CueMS > 0 {
 			cue = millis(c.CueMS)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", c.Address, c.Chair, millis(c.BootMS), cue, result)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s", c.Address, c.Chair, millis(c.BootMS), cue, result)
+		if permissions {
+			fmt.Fprintf(tw, "\t%s", c.Permissions)
+		}
+		fmt.Fprintln(tw)
 	}
 	tw.Flush()
 }
