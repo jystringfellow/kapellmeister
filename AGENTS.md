@@ -38,7 +38,7 @@ docs, and do not coin a synonym for one of them.
 - **section:** a group of chairs within an ensemble, recorded as a CAO group label.
 - **chair:** a stable seat, addressed `section.chair@ensemble`, that plays one part.
 - **occupant:** the CAO terminal sitting in a chair. It can be replaced while the chair keeps its
-  address.
+  address. `km reseat` replaces one.
 - **part:** what a chair plays in the score: `planner`, `implementer`, `reviewer`, `gate` or
   `classifier`.
 - **score:** what an ensemble plays. The plan → implement → review → gate loop is one score.

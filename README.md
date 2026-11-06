@@ -10,6 +10,7 @@ km run -repo ~/Code/app -task-file task.md [-ensemble thorough]  # one ensemble
 km audition -worktree DIR [-ensemble thorough]   # can this ensemble play? no real work
 km rehearse -worktree DIR -task-file task.md [-ensemble thorough]  # brief and leave standing
 km play SESSION [-max-rounds N] [-verify CMD] [-timeout D] [-cao URL]  # run the score
+km reseat SESSION ADDRESS [-agent SPEC] [-timeout D] [-cao URL]  # replace one occupant
 km ensemble list                                # list standing ensembles
 km ensemble down SESSION                        # take one down
 km preflight -worktree DIR [-tier large]          # check each agent starts and answers
@@ -70,12 +71,27 @@ its own chair. Steps sharing an occupant run one at a time.
 Sizing and tier escalation are off: each occupant keeps its recorded provider, profile and model.
 Before planning, km refuses an ensemble with any chair that did not close its rehearsal briefing,
 naming those chairs, and then checks every occupant with CAO; if any is missing, it names the chairs and asks
-you to take the session down and rehearse again. Records from an older km without bindings also
+you to replace each occupant with `km reseat SESSION ADDRESS`, or take the session down and rehearse again. Records from an older km without bindings also
 need a new rehearsal. Verify, check, progress and run records work as with `km run -worktree`.
 
 The session and its record stay standing on success, failure and interrupt. Take it down with
 `km ensemble down SESSION`. If a step times out or is interrupted, CAO may leave its occupant
 mid-turn; play does not reset it.
+
+## Reseat
+
+`km reseat SESSION ADDRESS [-agent SPEC] [-timeout D] [-cao URL]` replaces one chair's occupant
+in a standing ensemble. Use it to recover a dead, stuck or never-booted occupant. The chair keeps
+its address and, by default, its recorded binding. `-agent` selects an agent with an optional tier
+(such as `codex@large`), or `provider:profile[:model]`, using the same preparation as rehearse.
+Flags may come before or after the session and address.
+
+The new occupant receives the recorded task and closes a briefing before km deletes the old
+terminal and records the replacement. A failed boot, unclosed briefing or interruption leaves the
+old occupant and record intact and deletes any new terminal. `-timeout` defaults to
+`[run] preflight_timeout`; the cue queue lives in `.kapellmeister/runs/reseat-*/` in the recorded
+worktree. Reseat never deletes the session or changes the other chairs. Run `km play SESSION`
+when the ensemble is ready.
 
 ## Ensemble files
 

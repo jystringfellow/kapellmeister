@@ -27,6 +27,7 @@ const usage = `usage:
   km audition -worktree DIR [-ensemble NAME] [-keep]       boot the ensemble, cue every chair once, tear down
   km rehearse -worktree DIR (-task TEXT | -task-file FILE) [-ensemble NAME]  brief the ensemble and leave it standing
   km play SESSION [-max-rounds N] [-verify CMD] [-timeout D] [-cao URL]  run the score on a standing ensemble
+  km reseat SESSION ADDRESS [-agent SPEC] [-timeout D] [-cao URL]  replace one chair's occupant
   km ensemble list                                         list standing ensembles
   km ensemble down [-cao URL] SESSION                       take down a standing ensemble
   km cue done -queue FILE CUE [NOTE]                         close a cue (chairs run this)
@@ -48,6 +49,8 @@ func main() {
 		err = rehearseCommand(os.Args[2:])
 	case "play":
 		err = playCommand(os.Args[2:])
+	case "reseat":
+		err = reseatCommand(os.Args[2:])
 	case "ensemble":
 		err = ensembleCommand(os.Args[2:], os.Stdout)
 	case "cue":

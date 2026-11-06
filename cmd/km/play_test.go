@@ -222,12 +222,12 @@ func TestPlayAcceptsTheSessionBeforeOrAfterItsFlags(t *testing.T) {
 	}
 }
 
-func TestPlayFailsBeforePlanningWhenEveryMissingOccupantIsNamed(t *testing.T) {
+func TestPlayFindingMissingOccupantsSuggestsKmReseatForEachChair(t *testing.T) {
 	s := playStanding(t)
 	fake := &playCAO{missing: map[string]int{s.Chairs[0].TerminalID: 404, s.Chairs[3].TerminalID: 404}}
 	srv := fake.serve(t)
 	out, err := capturePlay(t, []string{s.Session, "-cao", srv.URL})
-	for _, want := range []string{s.Chairs[0].Address, s.Chairs[3].Address, "km ensemble down " + s.Session, "km rehearse"} {
+	for _, want := range []string{"km reseat " + s.Session + " " + s.Chairs[0].Address, "km reseat " + s.Session + " " + s.Chairs[3].Address, "km ensemble down " + s.Session, "km rehearse"} {
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("missing occupants error %v lacks %q", err, want)
 		}
@@ -431,7 +431,7 @@ func TestPlayPreservesTheRecordedGateWhenInsteadOfUsingTheDefault(t *testing.T) 
 	}
 }
 
-func TestPlayRefusesAnEnsembleWhoseRehearsalLeftChairsUnbriefed(t *testing.T) {
+func TestPlayRefusingUnbriefedChairsSuggestsKmReseatForEachChair(t *testing.T) {
 	s := playStanding(t)
 	s.Chairs[1].Briefed = false
 	s.Chairs[3].Briefed, s.Chairs[3].TerminalID = false, ""
@@ -439,7 +439,7 @@ func TestPlayRefusesAnEnsembleWhoseRehearsalLeftChairsUnbriefed(t *testing.T) {
 	fake := &playCAO{}
 	srv := fake.serve(t)
 	out, err := capturePlay(t, []string{s.Session, "-cao", srv.URL})
-	for _, want := range []string{s.Chairs[1].Address, s.Chairs[3].Address, "not briefed", "km ensemble down " + s.Session, "km rehearse"} {
+	for _, want := range []string{"km reseat " + s.Session + " " + s.Chairs[1].Address, "km reseat " + s.Session + " " + s.Chairs[3].Address, "not briefed", "km ensemble down " + s.Session, "km rehearse"} {
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("unbriefed error %v lacks %q", err, want)
 		}

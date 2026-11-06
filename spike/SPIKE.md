@@ -202,6 +202,12 @@ repo. Chairs: `km-claude` (Haiku 5.5), `km-codex` (GPT-6 Luna), `km-copilot` (Ha
     reader only in `create_terminal`. After the restart every terminal read `unknown`, and pending
     and new inbox messages stayed pending for the 3.5 minutes watched. `POST /terminals/{id}/input`
     still reached the pane, and Claude acted on it.
+12. **A deleted terminal can answer DELETE with 409 while GET says 404.** After `DELETE
+    /terminals/{id}` succeeded on an agy terminal, CAO 2.5.4 answered a second DELETE with 409
+    "cleanup deferred for terminal ...; retry delete after residual Grok processes exit" (naming
+    Grok for an agy terminal), while `GET /terminals/{id}` already returned 404. `km reseat` treats
+    a failed delete as done when the lookup is 404. Upstream candidate: make DELETE idempotent (404
+    or 200 once the terminal is unregistered) and name the right provider.
 
 ## Implications for the team layer
 

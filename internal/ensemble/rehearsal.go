@@ -61,15 +61,19 @@ func (a Rehearsal) Run(ctx context.Context) (Report, error) {
 }
 
 func (a Rehearsal) briefing(id string, m Member, queue string) string {
+	return briefing(a.Ensemble, a.Task, a.KM, id, m, a.Members, queue)
+}
+
+func briefing(ensemble, task, km, id string, m Member, members []Member, queue string) string {
 	var mates []string
-	for _, other := range a.Members {
+	for _, other := range members {
 		if other.Section == m.Section && other.Name != m.Name {
-			mates = append(mates, other.Address(a.Ensemble))
+			mates = append(mates, other.Address(ensemble))
 		}
 	}
 	sectionMates := "none"
 	if len(mates) > 0 {
 		sectionMates = strings.Join(mates, ", ")
 	}
-	return fmt.Sprintf("Cue %s from km: a rehearsal of ensemble %s. You are chair %s (part %s).\nSection-mates: %s\nTask:\n%s\nThis is a briefing: read and understand the task, but do not change any files yet. When you have, run this shell command exactly, then stop:\n%s cue done -queue %s %s", id, a.Ensemble, m.Address(a.Ensemble), m.Part, sectionMates, a.Task, shellQuote(a.KM), shellQuote(queue), id)
+	return fmt.Sprintf("Cue %s from km: a rehearsal of ensemble %s. You are chair %s (part %s).\nSection-mates: %s\nTask:\n%s\nThis is a briefing: read and understand the task, but do not change any files yet. When you have, run this shell command exactly, then stop:\n%s cue done -queue %s %s", id, ensemble, m.Address(ensemble), m.Part, sectionMates, task, shellQuote(km), shellQuote(queue), id)
 }

@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"path/filepath"
 	"slices"
 	"strings"
 
+	"github.com/jystringfellow/kapellmeister/internal/cao"
 	"github.com/jystringfellow/kapellmeister/internal/ensemble"
 	"github.com/jystringfellow/kapellmeister/internal/loop"
 )
@@ -87,8 +89,30 @@ func worktreeDir(path string) (string, error) {
 
 func sizeMembers(policy loop.Policy, members []ensemble.Member) {
 	for i, m := range members {
-		members[i].Chair, _ = policy.Chair(roleSteps[m.Part], m.Chair, "", 0)
+		members[i] = sizeMember(policy, m)
 	}
+}
+
+func sizeMember(policy loop.Policy, m ensemble.Member) ensemble.Member {
+	m.Chair, _ = policy.Chair(roleSteps[m.Part], m.Chair, "", 0)
+	return m
+}
+
+func prepareMember(ctx context.Context, client *cao.Client, policy loop.Policy, spec string, m ensemble.Member) (ensemble.Member, error) {
+	chair, err := loop.ResolveChair(spec)
+	if err != nil {
+		return m, err
+	}
+	if err := checkPin(policy, m.Part, m.Chair.Address, spec, chair); err != nil {
+		return m, err
+	}
+	chair.Address = m.Chair.Address
+	m.Chair = chair
+	m = sizeMember(policy, m)
+	if err := ensureProfiles(ctx, client, &policy, map[string][]loop.Chair{roleSteps[m.Part]: {chair}}); err != nil {
+		return m, err
+	}
+	return m, nil
 }
 
 func failedChairs(report ensemble.Report) []string {

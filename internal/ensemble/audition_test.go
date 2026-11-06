@@ -19,10 +19,13 @@ import (
 )
 
 type behaviour struct {
-	bootFails      bool
-	ignores        bool
-	screen         string
-	screenAfterCue string
+	bootFails          bool
+	bootLeavesTerminal bool
+	groupFails         bool
+	metadataFails      bool
+	ignores            bool
+	screen             string
+	screenAfterCue     string
 }
 
 type fakeTerminal struct {
@@ -33,14 +36,17 @@ type fakeTerminal struct {
 }
 
 type fakeCAO struct {
-	t          *testing.T
-	mu         sync.Mutex
-	behaviours map[string]behaviour
-	terminals  map[string]*fakeTerminal
-	order      []string
-	deleted    []string
-	next       int
-	onCue      func()
+	t                *testing.T
+	mu               sync.Mutex
+	behaviours       map[string]behaviour
+	terminals        map[string]*fakeTerminal
+	order            []string
+	deleted          []string
+	deletedTerminals []string
+	deleteStatus     map[string]int
+	events           []string
+	next             int
+	onCue            func()
 }
 
 var cueCommand = regexp.MustCompile(`'([^']+)' cue done -queue '([^']+)' (\S+)`)
@@ -65,12 +71,29 @@ func (f *fakeCAO) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodDelete && len(parts) == 2 && parts[0] == "sessions":
 		f.deleted = append(f.deleted, parts[1])
 		fmt.Fprint(w, `{"success":true}`)
+	case r.Method == http.MethodDelete && len(parts) == 2 && parts[0] == "terminals":
+		f.deletedTerminals = append(f.deletedTerminals, parts[1])
+		f.events = append(f.events, "delete "+parts[1])
+		if status := f.deleteStatus[parts[1]]; status != 0 {
+			w.WriteHeader(status)
+			return
+		}
+		delete(f.terminals, parts[1])
+		fmt.Fprint(w, `{}`)
 	case r.Method == http.MethodPatch && len(parts) == 3 && parts[2] == "group":
+		if f.behaviours[f.terminals[parts[1]].profile].groupFails {
+			http.Error(w, "group failed", 500)
+			return
+		}
 		var body struct{ Group []string }
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		f.terminals[parts[1]].group = body.Group
 		fmt.Fprint(w, `{}`)
 	case r.Method == http.MethodPatch && len(parts) == 3 && parts[2] == "metadata":
+		if f.behaviours[f.terminals[parts[1]].profile].metadataFails {
+			http.Error(w, "metadata failed", 500)
+			return
+		}
 		var body struct{ Metadata map[string]any }
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		f.terminals[parts[1]].metadata = body.Metadata
@@ -90,6 +113,8 @@ func (f *fakeCAO) serve(w http.ResponseWriter, r *http.Request) {
 				f.t.Errorf("cue to %s does not carry a km cue done command: %q", term.profile, q.Get("message"))
 			} else if err := Close(m[2], m[3], term.id, ""); err != nil {
 				f.t.Errorf("closing cue: %v", err)
+			} else {
+				f.events = append(f.events, "closed "+term.id)
 			}
 		}
 		fmt.Fprint(w, `{"success":true}`)
@@ -103,6 +128,10 @@ func (f *fakeCAO) serve(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"output": screen})
 	case r.Method == http.MethodGet && len(parts) == 2 && parts[0] == "terminals":
 		term := f.terminals[parts[1]]
+		if term == nil {
+			http.NotFound(w, r)
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]any{"id": term.id, "session_name": term.session, "agent_profile": term.profile, "status": "idle"})
 	default:
 		f.t.Errorf("unexpected CAO call %s %s", r.Method, r.URL)
@@ -120,6 +149,10 @@ func (f *fakeCAO) boot(w http.ResponseWriter, session string, q map[string][]str
 	id := fmt.Sprintf("%08x", f.next)
 	f.terminals[id] = &fakeTerminal{id: id, session: session, profile: profile, dir: q["working_directory"][0]}
 	f.order = append(f.order, id)
+	if f.behaviours[profile].bootLeavesTerminal {
+		http.Error(w, fmt.Sprintf(`{"detail":{"terminal_id":%q}}`, id), 500)
+		return
+	}
 	json.NewEncoder(w).Encode(map[string]any{"id": id, "session_name": session, "agent_profile": profile, "status": "idle"})
 }
 
