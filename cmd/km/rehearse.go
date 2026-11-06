@@ -21,7 +21,7 @@ func rehearseCommand(args []string) error {
 	task := fs.String("task", "", "task text")
 	taskFile := fs.String("task-file", "", "file holding the task text")
 	name := fs.String("ensemble", "", ensembleHelp)
-	roles := chairFlags(fs, loop.ChairRoles...)
+	roles := chairFlags(fs, loop.AllRoles()...)
 	verify := fs.String("verify", "", "baseline verify command (default [test] verify, then an executable .kapellmeister/verify)")
 	timeout := fs.Duration("timeout", 0, "how long each chair gets to close its briefing (default [run] preflight_timeout, else 4m)")
 	caoURL := fs.String("cao", "", "cao-server URL (default $CAO_API_BASE_URL, then [cao] url, else http://127.0.0.1:9889)")

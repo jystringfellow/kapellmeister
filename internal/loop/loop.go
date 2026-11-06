@@ -65,6 +65,7 @@ func (s Chair) String() string {
 }
 
 type Chairs struct {
+	Tester      *Chair  `json:"tester,omitempty"`
 	Planner     Chair   `json:"planner"`
 	Implementer Chair   `json:"implementer"`
 	Reviewers   []Chair `json:"reviewers"`
@@ -215,6 +216,32 @@ func (e *Engine) Run(ctx context.Context) (Result, error) {
 	}
 	e.decideSize(ctx, plan)
 
+	var testPlanDone chan error
+	if cfg.Chairs.Tester != nil {
+		testCtx, cancel := context.WithCancel(ctx)
+		testPlanDone = make(chan error, 1)
+		go func() {
+			path := e.rel("test-plan.md")
+			_, err := e.step(testCtx, Step{Name: "test-plan", Chair: *cfg.Chairs.Tester,
+				Prompt: testPlanPrompt(cfg.Task, plan, path), ReplyPath: path})
+			testPlanDone <- err
+		}()
+		defer func() {
+			cancel()
+			if testPlanDone != nil {
+				<-testPlanDone
+			}
+		}()
+	}
+	joinTestPlan := func() error {
+		if testPlanDone == nil {
+			return nil
+		}
+		err := <-testPlanDone
+		testPlanDone = nil
+		return err
+	}
+
 	implementer := ""
 	var implementerChair Chair
 	misses := 0
@@ -225,7 +252,7 @@ func (e *Engine) Run(ctx context.Context) (Result, error) {
 	}()
 
 	var feedback []string
-	var feedbackGate string
+	var feedbackGate, feedbackTest string
 	for round := 1; round <= cfg.MaxRounds; round++ {
 		res.Rounds = round
 		summary := e.relf("implement-%d.md", round)
@@ -236,7 +263,7 @@ func (e *Engine) Run(ctx context.Context) (Result, error) {
 		implementerChair, _ = e.resolve("implement", cfg.Chairs.Implementer)
 		out, err := e.step(ctx, Step{
 			Name: "implement", Round: round, Chair: cfg.Chairs.Implementer,
-			Prompt:    implementPrompt(cfg.Task, plan, summary, cfg.CheckCommand, feedback, feedbackGate),
+			Prompt:    implementPrompt(cfg.Task, plan, summary, cfg.CheckCommand, feedback, feedbackGate, feedbackTest),
 			ReplyPath: summary, KeepTerminal: true, ReuseTerminal: implementer,
 		})
 		if out.TerminalID != "" {
@@ -270,7 +297,7 @@ func (e *Engine) Run(ctx context.Context) (Result, error) {
 			verdicts = append(verdicts, review.Verdict)
 		}
 		feedback = append(append([]string{}, files...), verifyPath)
-		feedbackGate = ""
+		feedbackGate, feedbackTest = "", ""
 		if !gateRuns(cfg.GateWhen, verify.ExitCode == 0, verdicts) {
 			misses++
 			e.escalate(round, misses)
@@ -292,16 +319,53 @@ func (e *Engine) Run(ctx context.Context) (Result, error) {
 			return e.fail(res, err), nil
 		}
 		if gateVerdict == "APPROVE" {
-			res.Outcome = Approved
-			return res, nil
+			if cfg.Chairs.Tester == nil {
+				res.Outcome = Approved
+				return res, nil
+			}
+			if err := joinTestPlan(); err != nil {
+				return e.fail(res, err), nil
+			}
+			testPath := e.relf("test-%d.md", round)
+			verdict, err := e.testRound(ctx, round, plan, summary, verify, verifyPath, testPath)
+			if err != nil {
+				return e.fail(res, err), nil
+			}
+			if verdict == "APPROVE" {
+				res.Outcome = Approved
+				return res, nil
+			}
+			feedback = append([]string{testPath}, feedback...)
+			feedbackTest = testPath
+			misses++
+			e.escalate(round, misses)
+			continue
 		}
 		feedback = append([]string{gate}, feedback...)
 		feedbackGate = gate
 		misses++
 		e.escalate(round, misses)
 	}
+	if err := joinTestPlan(); err != nil {
+		return e.fail(res, err), nil
+	}
 	res.Outcome = RoundsExhausted
 	return res, nil
+}
+
+func (e *Engine) testRound(ctx context.Context, round int, plan, summary string, verify VerifyResult, verifyPath, path string) (string, error) {
+	errs, err := e.readOnlySteps(ctx, []Step{{
+		Name: "test", Round: round, Chair: *e.Config.Chairs.Tester,
+		Prompt:    testPrompt(e.Config.Task, plan, e.rel("test-plan.md"), summary, e.Config.VerifyCommand, verify, verifyPath, RunDirRel(e.Config.RunID), path),
+		ReplyPath: path,
+	}})
+	if err != nil {
+		return "", err
+	}
+	if errs[0] != nil {
+		return "", errs[0]
+	}
+	return e.classify(ctx, round, "test", path, "")
 }
 
 func (e *Engine) fail(res Result, err error) Result {
@@ -326,6 +390,9 @@ func (e *Engine) sizing() SizingConfig {
 }
 
 func stepKey(name string) string {
+	if name == "test-plan" {
+		return "test"
+	}
 	if strings.HasPrefix(name, "classify-") {
 		return "classify"
 	}
@@ -337,7 +404,7 @@ func (e *Engine) resolve(key string, chair Chair) (Chair, Assignment) {
 	switch key {
 	case "implement":
 		want, bump = e.size, e.bump
-	case "review", "gate":
+	case "review", "gate", "test":
 		want = e.size
 	}
 	return e.Config.Policy.Chair(key, chair, want, bump)
@@ -442,7 +509,7 @@ func (e *Engine) step(ctx context.Context, s Step) (StepResult, error) {
 	return out, err
 }
 
-var stepRoles = map[string]string{"plan": "planner", "implement": "implementer", "review": "reviewer", "gate": "gate"}
+var stepRoles = map[string]string{"plan": "planner", "implement": "implementer", "review": "reviewer", "gate": "gate", "test-plan": "tester", "test": "tester"}
 
 func TerminalLabel(runID, stepName string) string {
 	role := stepName

@@ -2,8 +2,9 @@
 
 kapellmeister runs a plan → implement → review → gate loop over coding agents (Claude Code, Codex, Copilot
 CLI, Antigravity) through [CLI Agent Orchestrator](https://github.com/awslabs/cli-agent-orchestrator)
-(CAO), repeating implement and review until the gate approves or the rounds run out. Every run
-works in a throwaway detached worktree and leaves its change uncommitted for you to ship.
+(CAO), with an optional tester that exercises the change live after gate approval. Rounds repeat
+until the gate and any tester approve or the rounds run out. Every run works in a throwaway detached
+worktree and leaves its change uncommitted for you to ship.
 
 ```sh
 km run -repo ~/Code/app -task-file task.md [-ensemble thorough]  # one ensemble
@@ -18,15 +19,15 @@ km config [-worktree DIR]                         # show the effective settings 
 ```
 
 Chairs default to claude plans, codex implements, copilot reviews, claude gates and classifies.
-Override any chair with `-planner`, `-implementer`, `-reviewer`, `-gate` or `-classifier`, as an
-agent (`claude`, `codex`, `copilot`, `agy`) or `provider:profile[:model]`. Append `@small`,
+Override any chair with `-planner`, `-implementer`, `-reviewer`, `-gate`, `-classifier` or the optional
+`-tester`, as an agent (`claude`, `codex`, `copilot`, `agy`) or `provider:profile[:model]`. Append `@small`,
 `@medium` or `@large` to pin a chair's tier, for example `-reviewer claude@large`. A chair with an
 explicit model always runs that model and cannot also use `@tier`.
 
 The reviewer role can have several chairs. Use `-reviewer copilot,claude@large` to replace the
 whole configured reviewer list for one run. Each reviewer runs concurrently in its own CAO
 terminal and resolves its tier separately: pinned reviewers keep their tier, while unpinned
-reviewers follow sizing. Other roles have one chair.
+reviewers follow sizing. Other required parts have one chair; the optional tester has at most one.
 
 ## Audition
 
@@ -132,12 +133,17 @@ agents = ["claude"]
 [sections.leads.chairs.classifier]
 part = "classifier"
 agents = ["claude@small"]
+
+[sections.leads.chairs.tonmeister]
+part = "tester"
+agents = ["claude"]
 ```
 
 Each chair has the address `section.chair@ensemble`, such as `review.security@thorough`, and
-plays one part: `planner`, `implementer`, `reviewer`, `gate` or `classifier`. The loop needs
-exactly one of each part except `reviewer`, which needs at least one. Section and chair names are
-lowercase letters, digits and dashes. Sections keep the order they first appear in the file,
+plays one part: `planner`, `implementer`, `reviewer`, `gate`, `classifier` or the optional `tester`.
+The score needs exactly one planner, implementer, gate and classifier, at least one reviewer,
+and at most one tester. Parts are roles with plain names; chairs may carry orchestral names,
+such as `tonmeister` for the tester. Section and chair names are lowercase letters, digits and dashes. Sections keep the order they first appear in the file,
 and chairs keep their order within a section.
 
 A chair plays the first of its `agents` that is in your `[agents] available`, which defaults to
@@ -176,6 +182,7 @@ preflight_timeout = "4m"
 [chairs]                            # agent or provider:profile; optional @tier, or :model
 implementer = "claude"
 reviewer = "copilot"
+tester = "claude"
 
 [agents]
 available = ["claude", "copilot"]   # agents you can run; ensemble files pick from these
@@ -184,6 +191,7 @@ available = ["claude", "copilot"]   # agents you can run; ensemble files pick fr
 reviewer = ["copilot", "claude@large"]
 gate_when = "any"
 gate = "claude@large"
+tester = "claude"
 escalate = false
 
 [tiers.copilot_cli]
@@ -197,7 +205,8 @@ unknown ensemble names are an error listing the defined names. `km config` lists
 and its chairs. `[ensembles]` belongs only in `~/.kapellmeister/config.toml`, because it names
 agents that depend on your accounts; a repository shares an ensemble as an
 [ensemble file](#ensemble-files) instead. In `[chairs]` and `[ensembles]`, `reviewer` accepts either a single
-string or an array such as `reviewer = ["copilot", "claude@large"]`. Other roles reject arrays.
+string or an array such as `reviewer = ["copilot", "claude@large"]`. Other parts, including `tester`,
+reject arrays. Omit `tester` to keep the score without live testing.
 `km config` shows the reviewer lists and `gate_when`.
 
 An ensemble's `gate_when` controls whether a round that passed verification goes to the gate:
@@ -217,6 +226,19 @@ If approval is withheld, the implementer gets the gate file when present, every 
 file, and the verification output. When the gate ran, its blocking findings supersede reviewer
 requests; findings it classifies as nits need no change. Each round without approval still counts
 toward escalation.
+
+When a tester is seated, it writes `test-plan.md` from the task and plan alone, blind to the
+implementation, while round 1 implements. The plan targets end to end use in the real environment,
+including missing, stale or concurrent state and misbehaving services. After the gate approves,
+km waits for the test plan, then runs `test` in the tester's chair and classifies its
+`test-<round>.md` report. Only a test APPROVE finishes the run. Any other verdict sends the test
+report back as the leading feedback, with instructions to reproduce each failure in a failing
+regression test before fixing it. Later rounds reuse the same test plan.
+A failed test-plan or test step fails the run. The test step gets the same worktree check as the
+gate and reviewers; scratch files belong under the run directory, and the tester must clean up
+processes and sessions it creates without touching anyone else's. The concurrent test-plan step
+relies on its prompt to forbid file changes because implementation is editing at the same time.
+Without a tester, gate approval finishes the run as usual.
 
 A reviewer whose step errors or leaves no reply after its one nudge is recorded as `FAILED`.
 It counts as not approving for `gate_when`; surviving reviews continue through the round, and
@@ -274,6 +296,7 @@ defaults are:
 | implement | medium | small–large |
 | review | medium | small–large |
 | gate | medium | medium–large |
+| test | medium | medium–large |
 | classify | small | small |
 
 A pin such as `claude@large` or `codex:km-codex@small` replaces the step's default tier and sizing
@@ -299,7 +322,7 @@ After planning, a decider rates the task `small`, `medium` or `large`:
   service you trust with them.
 
 In `shadow` mode the answer is recorded and the steps keep their defaults; in `on` mode the
-implement, review and gate steps use it, clamped to each step's bounds. A missing or invalid
+implement, review, gate and test steps use it, clamped to each step's bounds. A missing or invalid
 answer falls back to the defaults. `-sizing` overrides the mode for one run.
 
 After every `escalate_after` rounds without approval, the implementer moves up one tier (within
@@ -312,6 +335,7 @@ in the selected ensemble to turn escalation off for that run. `true` or an omitt
 
 Each run writes `telemetry.jsonl` under `~/.kapellmeister/state/runs/<run>/`: one record per step with its chair, tier, effort, tier source (`default`,
 `pinned`, `sized`, `escalated` or `explicit`), the model CAO reported, durations and verdicts, plus `size`
-and `escalate` records for each decision. With several reviewers, their review, nudge,
-classification and verdict records include `chair_name` (`reviewer-1`, `reviewer-2`, etc.).
+and `escalate` records for each decision. A seated tester adds `test-plan`, `test`,
+`classify-test` and `verdict-test` records; both tester steps use the `test` tier. With several reviewers,
+their review, nudge, classification and verdict records include `chair_name` (`reviewer-1`, `reviewer-2`, etc.).
 A failed review has verdict `FAILED` and its error; single-reviewer records omit `chair_name`.

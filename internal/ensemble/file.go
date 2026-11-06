@@ -151,8 +151,8 @@ func load(name, path string, portable bool) (Spec, error) {
 			}
 			c := raw.Chairs[chairName]
 			chair := ChairSpec{Name: chairName, Part: c.Part, Agents: c.Agents}
-			if !slices.Contains(loop.ChairRoles, c.Part) {
-				return fail(key+".part", "unknown part %q (want %s)", c.Part, strings.Join(loop.ChairRoles, ", "))
+			if !slices.Contains(loop.AllRoles(), c.Part) {
+				return fail(key+".part", "unknown part %q (want %s); optional parts: %s", c.Part, strings.Join(loop.ChairRoles, ", "), strings.Join(loop.OptionalRoles, ", "))
 			}
 			if len(c.Agents) == 0 {
 				return fail(key+".agents", "want at least one agent")
@@ -261,9 +261,12 @@ func ChairsOf(members []Member) (loop.Chairs, error) {
 		byPart[m.Part] = append(byPart[m.Part], m)
 	}
 	var chairs loop.Chairs
-	for _, part := range loop.ChairRoles {
+	for _, part := range loop.AllRoles() {
 		seated := byPart[part]
 		if len(seated) == 0 {
+			if slices.Contains(loop.OptionalRoles, part) {
+				continue
+			}
 			return loop.Chairs{}, fmt.Errorf("ensemble seats no %s; the score needs one", part)
 		}
 		if part == "reviewer" {
@@ -289,6 +292,8 @@ func ChairsOf(members []Member) (loop.Chairs, error) {
 			chairs.Gate = chair
 		case "classifier":
 			chairs.Classifier = chair
+		case "tester":
+			chairs.Tester = &chair
 		}
 	}
 	return chairs, nil

@@ -26,7 +26,7 @@ func auditionCommand(args []string) error {
 	fs := flag.NewFlagSet("audition", flag.ContinueOnError)
 	worktree := fs.String("worktree", "", "git worktree the chairs start in")
 	name := fs.String("ensemble", "", ensembleHelp)
-	roles := chairFlags(fs, loop.ChairRoles...)
+	roles := chairFlags(fs, loop.AllRoles()...)
 	timeout := fs.Duration("timeout", 0, "how long each chair gets to close its cue (default [run] preflight_timeout, else 4m)")
 	keep := fs.Bool("keep", false, "leave the ensemble's CAO session running after the audition")
 	caoURL := fs.String("cao", "", "cao-server URL (default $CAO_API_BASE_URL, then [cao] url, else http://127.0.0.1:9889)")

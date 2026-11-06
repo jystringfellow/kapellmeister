@@ -11,7 +11,7 @@ import (
 
 var TierNames = []string{"small", "medium", "large"}
 
-var StepKeys = []string{"plan", "implement", "review", "gate", "classify"}
+var StepKeys = []string{"plan", "implement", "review", "gate", "classify", "test"}
 
 const (
 	SizingOff    = "off"
@@ -99,6 +99,7 @@ func DefaultPolicy() Policy {
 			"implement": {Tier: "medium", Min: "small", Max: "large"},
 			"review":    {Tier: "medium", Min: "small", Max: "large"},
 			"gate":      {Tier: "medium", Min: "medium", Max: "large"},
+			"test":      {Tier: "medium", Min: "medium", Max: "large"},
 			"classify":  {Tier: "small", Min: "small", Max: "small"},
 		},
 		Sizing: SizingConfig{Mode: SizingShadow, Decider: DeciderPlanner, EscalateAfter: &escalateAfter},

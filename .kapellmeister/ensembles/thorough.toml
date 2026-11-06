@@ -21,3 +21,7 @@ agents = ["claude"]
 [sections.leads.chairs.classifier]
 part = "classifier"
 agents = ["claude"]
+
+[sections.leads.chairs.tonmeister]
+part = "tester"
+agents = ["claude"]

@@ -35,8 +35,8 @@ func lineUp(s loop.Settings, worktree, name string, roles map[string]*string) (l
 	if inConfig {
 		return s, loop.Chairs{}, nil, fmt.Errorf("ensemble %s is defined both in [ensembles.%s] of %s and in %s; rename one", name, name, loop.UserConfigPath(loop.Home()), spec.Path)
 	}
-	for _, role := range loop.ChairRoles {
-		if *roles[role] != "" {
+	for _, role := range loop.AllRoles() {
+		if p := roles[role]; p != nil && *p != "" {
 			return s, loop.Chairs{}, nil, fmt.Errorf("-%s cannot override ensemble %s from %s; edit it, or copy it to %s and edit that", role, name, spec.Path, loop.Home()+"/"+ensemble.UserDir)
 		}
 	}

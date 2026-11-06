@@ -1,7 +1,7 @@
 # kapellmeister Agents Guide
 
 kapellmeister conducts coding agents through CAO: a plan → implement → review → gate loop with
-configurable chairs, tiers and ensembles. The binary is `km`.
+an optional tester and configurable chairs, tiers and ensembles. The binary is `km`.
 
 ## Tests are the spec
 
@@ -39,16 +39,26 @@ docs, and do not coin a synonym for one of them.
 - **chair:** a stable seat, addressed `section.chair@ensemble`, that plays one part.
 - **occupant:** the CAO terminal sitting in a chair. It can be replaced while the chair keeps its
   address. `km reseat` replaces one.
-- **part:** what a chair plays in the score: `planner`, `implementer`, `reviewer`, `gate` or
-  `classifier`.
+- **part:** what a chair plays in the score: `planner`, `implementer`, `reviewer`, `gate`,
+  `classifier` or the optional `tester`.
 - **score:** what an ensemble plays. The plan → implement → review → gate loop is one score.
 - **cue:** an obligation km tracks until a chair closes it with `km cue done`.
 - **send:** untracked chatter between chairs through CAO's `send_message`.
 - **audition, rehearse, play:** check that an ensemble can play without doing work; brief it and
   leave it standing; run the score.
 
+Parts are roles in the score and keep plain names; chairs are seats and may carry orchestral names,
+such as `tonmeister` for the chair that plays `tester`.
+
 Name a new concept from orchestral practice, and pick a word with one meaning. `hall` is reserved
 for something that holds many ensembles.
+
+## Exercising km live
+
+Any chair running km against a real CAO must use its own `KAPELLMEISTER_STATE_DIR` under a temp
+directory and work in its own throwaway worktree or scratch repository. Take down every session
+you create with `km ensemble down` (or the audition's teardown). Never touch a session you did not
+create, including the ensemble you are sitting in.
 
 ## Checks
 

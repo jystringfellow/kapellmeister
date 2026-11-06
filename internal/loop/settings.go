@@ -22,6 +22,12 @@ const (
 
 var ChairRoles = []string{"planner", "implementer", "reviewer", "gate", "classifier"}
 
+var OptionalRoles = []string{"tester"}
+
+func AllRoles() []string {
+	return append(slices.Clone(ChairRoles), OptionalRoles...)
+}
+
 type TestConfig struct {
 	Verify string `toml:"verify"`
 	Check  string `toml:"check"`
@@ -71,6 +77,7 @@ func (s *ChairSpec) UnmarshalTOML(v any) error {
 }
 
 type Ensemble struct {
+	Tester      ChairSpec `toml:"tester" json:"tester,omitempty"`
 	GateWhen    string    `toml:"gate_when" json:"gate_when,omitempty"`
 	Planner     ChairSpec `toml:"planner" json:"planner,omitempty"`
 	Implementer ChairSpec `toml:"implementer" json:"implementer,omitempty"`
@@ -84,7 +91,7 @@ func (e Ensemble) Chairs() map[string]string {
 	chairs := map[string]string{}
 	for role, spec := range map[string]string{
 		"planner": e.Planner.Spec, "implementer": e.Implementer.Spec, "reviewer": e.Reviewer.Spec,
-		"gate": e.Gate.Spec, "classifier": e.Classifier.Spec,
+		"gate": e.Gate.Spec, "classifier": e.Classifier.Spec, "tester": e.Tester.Spec,
 	} {
 		if spec != "" {
 			chairs[role] = spec
@@ -219,8 +226,8 @@ func LoadSettings(home, worktree string) (Settings, error) {
 	s.Ensembles = user.Ensembles
 	s.CAOURL = firstSet(os.Getenv(CAOURLEnv), user.CAO.URL, s.CAOURL)
 	for _, role := range sortedKeys(user.Chairs) {
-		if !slices.Contains(ChairRoles, role) {
-			return s, fmt.Errorf("%s: chairs.%s: unknown role (want %s)", userPath, role, strings.Join(ChairRoles, ", "))
+		if !slices.Contains(AllRoles(), role) {
+			return s, fmt.Errorf("%s: chairs.%s: unknown role (want %s)", userPath, role, strings.Join(AllRoles(), ", "))
 		}
 		if user.Chairs[role].List && role != "reviewer" {
 			return s, fmt.Errorf("%s: chairs.%s: only reviewer takes a list of chairs", userPath, role)
@@ -237,8 +244,8 @@ func LoadSettings(home, worktree string) (Settings, error) {
 	}
 	for _, name := range sortedKeys(user.Ensembles) {
 		ensemble := user.Ensembles[name]
-		specs := map[string]ChairSpec{"planner": ensemble.Planner, "implementer": ensemble.Implementer, "reviewer": ensemble.Reviewer, "gate": ensemble.Gate, "classifier": ensemble.Classifier}
-		for _, role := range ChairRoles {
+		specs := map[string]ChairSpec{"planner": ensemble.Planner, "implementer": ensemble.Implementer, "reviewer": ensemble.Reviewer, "gate": ensemble.Gate, "classifier": ensemble.Classifier, "tester": ensemble.Tester}
+		for _, role := range AllRoles() {
 			if specs[role].List && role != "reviewer" {
 				return s, fmt.Errorf("%s: ensembles.%s.%s: only reviewer takes a list of chairs", userPath, name, role)
 			}
