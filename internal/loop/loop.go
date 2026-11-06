@@ -131,35 +131,36 @@ type Config struct {
 }
 
 type Record struct {
-	PID          int           `json:"pid,omitempty"`
-	Command      string        `json:"command,omitempty"`
-	BlockedStep  string        `json:"blocked_step,omitempty"`
-	ChairName    string        `json:"chair_name,omitempty"`
-	At           time.Time     `json:"at"`
-	RunID        string        `json:"run_id"`
-	Round        int           `json:"round,omitempty"`
-	Step         string        `json:"step"`
-	Chair        *Chair        `json:"chair,omitempty"`
-	Tier         string        `json:"tier,omitempty"`
-	Effort       string        `json:"effort,omitempty"`
-	TierSource   string        `json:"tier_source,omitempty"`
-	Decision     *SizeDecision `json:"decision,omitempty"`
-	Detail       string        `json:"detail,omitempty"`
-	TerminalID   string        `json:"terminal_id,omitempty"`
-	Status       string        `json:"status,omitempty"`
-	Model        string        `json:"model,omitempty"`
-	ModelHonored *bool         `json:"model_honored,omitempty"`
-	DurationMS   int64         `json:"duration_ms"`
-	Reply        string        `json:"reply,omitempty"`
-	ReplyChars   int           `json:"reply_chars,omitempty"`
-	ReplyWaitMS  int64         `json:"reply_wait_ms,omitempty"`
-	Verdict      string        `json:"verdict,omitempty"`
-	ExitCode     *int          `json:"exit_code,omitempty"`
-	Attempts     int           `json:"attempts,omitempty"`
-	TreeChanged  bool          `json:"tree_changed,omitempty"`
-	LastMessage  string        `json:"last_message,omitempty"`
-	Screen       string        `json:"screen,omitempty"`
-	Error        string        `json:"error,omitempty"`
+	PID           int           `json:"pid,omitempty"`
+	Command       string        `json:"command,omitempty"`
+	BlockedStep   string        `json:"blocked_step,omitempty"`
+	ChairName     string        `json:"chair_name,omitempty"`
+	At            time.Time     `json:"at"`
+	RunID         string        `json:"run_id"`
+	Round         int           `json:"round,omitempty"`
+	Step          string        `json:"step"`
+	Chair         *Chair        `json:"chair,omitempty"`
+	Tier          string        `json:"tier,omitempty"`
+	Effort        string        `json:"effort,omitempty"`
+	TierSource    string        `json:"tier_source,omitempty"`
+	Decision      *SizeDecision `json:"decision,omitempty"`
+	Detail        string        `json:"detail,omitempty"`
+	TerminalID    string        `json:"terminal_id,omitempty"`
+	Status        string        `json:"status,omitempty"`
+	Model         string        `json:"model,omitempty"`
+	ModelHonored  *bool         `json:"model_honored,omitempty"`
+	DurationMS    int64         `json:"duration_ms"`
+	Reply         string        `json:"reply,omitempty"`
+	ReplyChars    int           `json:"reply_chars,omitempty"`
+	ReplyWaitMS   int64         `json:"reply_wait_ms,omitempty"`
+	Verdict       string        `json:"verdict,omitempty"`
+	VerdictSource string        `json:"verdict_source,omitempty"`
+	ExitCode      *int          `json:"exit_code,omitempty"`
+	Attempts      int           `json:"attempts,omitempty"`
+	TreeChanged   bool          `json:"tree_changed,omitempty"`
+	LastMessage   string        `json:"last_message,omitempty"`
+	Screen        string        `json:"screen,omitempty"`
+	Error         string        `json:"error,omitempty"`
 }
 
 const (
@@ -323,7 +324,7 @@ func (e *Engine) Run(ctx context.Context) (Result, error) {
 		} else if errs[0] != nil {
 			return e.fail(res, errs[0]), nil
 		}
-		gateVerdict, err := e.classify(ctx, round, "gate", gate, "")
+		gateVerdict, err := e.verdict(ctx, round, "gate", gate, "")
 		if err != nil {
 			return e.fail(res, err), nil
 		}
@@ -375,13 +376,7 @@ func (e *Engine) testRound(ctx context.Context, round int, plan, summary string,
 	if errs[0] != nil {
 		return "", errs[0]
 	}
-	text, _ := e.readReply(path)
-	if verdict := lastVerdictLine(text); verdict != "" {
-		e.record(Record{RunID: e.Config.RunID, Round: round, Step: "verdict-test", Verdict: verdict, Reply: path})
-		e.progress("  test verdict: %s (from the report's last line)", verdict)
-		return verdict, nil
-	}
-	return e.classify(ctx, round, "test", path, "")
+	return e.verdict(ctx, round, "test", path, "")
 }
 
 func lastVerdictLine(text string) string {
@@ -595,6 +590,10 @@ func ReviewerName(i, n int) string {
 }
 
 func (e *Engine) readOnlySteps(ctx context.Context, steps []Step) ([]error, error) {
+	return e.readOnlyStepsThen(ctx, steps, nil)
+}
+
+func (e *Engine) readOnlyStepsThen(ctx context.Context, steps []Step, then func(int)) ([]error, error) {
 	before, err := e.treeState()
 	if err != nil {
 		return nil, err
@@ -602,7 +601,12 @@ func (e *Engine) readOnlySteps(ctx context.Context, steps []Step) ([]error, erro
 	errs := make([]error, len(steps))
 	var wg sync.WaitGroup
 	for i, s := range steps {
-		wg.Go(func() { _, errs[i] = e.step(ctx, s) })
+		wg.Go(func() {
+			_, errs[i] = e.step(ctx, s)
+			if errs[i] == nil && then != nil {
+				then(i)
+			}
+		})
 	}
 	wg.Wait()
 	after, err := e.treeState()
@@ -650,7 +654,10 @@ func (e *Engine) reviewRound(ctx context.Context, round int, plan, summary strin
 		steps[i] = Step{Name: "review", Round: round, Chair: chair, ChairName: chairName,
 			Prompt: reviewPrompt(e.Config.Task, plan, summary, e.Config.VerifyCommand, verify, verifyPath, path), ReplyPath: path}
 	}
-	errs, err := e.readOnlySteps(ctx, steps)
+	classifyErrs := make([]error, len(chairs))
+	errs, err := e.readOnlyStepsThen(ctx, steps, func(i int) {
+		reviews[i].Verdict, classifyErrs[i] = e.verdict(ctx, round, "review", reviews[i].Path, steps[i].ChairName)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -670,18 +677,8 @@ func (e *Engine) reviewRound(ctx context.Context, round int, plan, summary strin
 		}
 		return nil, fmt.Errorf("every reviewer failed: %s", strings.Join(failures, "; "))
 	}
-	var wg sync.WaitGroup
-	for i := range reviews {
-		if reviews[i].Err != nil {
-			continue
-		}
-		wg.Go(func() {
-			reviews[i].Verdict, errs[i] = e.classify(ctx, round, "review", reviews[i].Path, steps[i].ChairName)
-		})
-	}
-	wg.Wait()
-	for i, err := range errs {
-		if reviews[i].Err == nil && err != nil {
+	for _, err := range classifyErrs {
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -709,6 +706,21 @@ func gateRuns(when string, verifyPassed bool, verdicts []string) bool {
 		}
 	}
 	return false
+}
+
+func (e *Engine) verdict(ctx context.Context, round int, subject, path, chairName string) (string, error) {
+	text, _ := e.readReply(path)
+	if verdict := lastVerdictLine(text); verdict != "" {
+		e.record(Record{RunID: e.Config.RunID, Round: round, Step: "verdict-" + subject, ChairName: chairName,
+			Verdict: verdict, Reply: path, VerdictSource: "reply"})
+		noun := subject
+		if subject == "test" {
+			noun = "report"
+		}
+		e.progress("  %s verdict: %s (from the %s's last line)", firstSet(chairName, subject), verdict, noun)
+		return verdict, nil
+	}
+	return e.classify(ctx, round, subject, path, chairName)
 }
 
 func (e *Engine) classify(ctx context.Context, round int, subject, path, chairName string) (string, error) {
