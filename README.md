@@ -15,7 +15,7 @@ km reseat SESSION ADDRESS [-agent SPEC] [-timeout D] [-cao URL]  # replace one o
 km ensemble list                                # list standing ensembles
 km ensemble down SESSION                        # take one down
 km preflight -worktree DIR [-tier large]          # check each agent starts and answers
-km config [-worktree DIR]                         # show the effective settings and their files
+km config [-worktree DIR] [-cao URL]              # show the effective settings and their files
 ```
 
 Chairs default to claude plans, codex implements, copilot reviews, claude gates and classifies.
@@ -42,7 +42,66 @@ A chair passes when its cue is closed within `-timeout` (default `[run] prefligh
 A chair fails if it does not boot, if its screen shows a trust or hook-review prompt before the
 cue, or if it never closes the cue. The report names the problem, and `report.json` sits next to
 the queue. The session is torn down afterwards unless you pass `-keep`. A chair's own `timeout`
-does not apply to its audition, which does no work.
+does not apply to its audition, which does no work. The table and `report.json` include each
+chair's permission label; see "Permissions" below.
+
+## Permissions
+
+`km audition` shows a `PERMISSIONS` column for every chair. `km config` reads CAO to show the
+permission label for each default chair at its configured tier, including each reviewer and an
+optional tester. Use `-cao URL` to choose the CAO server. For generated effort profiles, config
+shows the base's permissions that the next run will synchronize, including when an installed variant
+is stale. Config only reads profiles. If CAO cannot be read, it prints `permissions unavailable` and
+still shows the configuration.
+
+These labels describe CAO 2.5.4's provider launches:
+
+| Provider | Profile setting | Label and launch |
+| --- | --- | --- |
+| `claude_code` | No `permissionMode` | `skip-permissions (CAO default)`; `--dangerously-skip-permissions` |
+| `claude_code` | `permissionMode: <mode>` | `permission-mode <mode>`; `--permission-mode <mode>` |
+| `copilot_cli` | Any | `allow-all (fixed by CAO)`; always `--allow-all` |
+| `antigravity_cli` | Any | `skip-permissions (fixed by CAO)`; always `--dangerously-skip-permissions` |
+| `codex` | No `codexProfile`, or `allowedTools` contains `*` | `yolo`; `--yolo` |
+| `codex` | `codexProfile` set and `allowedTools` has no `*` | `approvals`; `--profile <name>` uses that Codex policy |
+
+Claude's supported modes are `default`, `acceptEdits`, `plan`, `auto` and `bypassPermissions`.
+`bypassPermissions` turns permission prompts off. Unsupported modes display as `unknown`; km does
+not echo their text or infer whether prompts are enabled. The `ask` and `deny` rules in
+Claude's own settings still apply when permissions are skipped. CAO can also restrict tools through
+`allowedTools`: Claude's `--disallowedTools` and Copilot's `--deny-tool` still apply. For Claude
+running as root with `allowedTools: ["*"]` and no explicit mode, CAO omits the skip flag; km's label
+does not model this root exception.
+
+For Codex, `approvals` means CAO launches with a named `codexProfile` instead of `--yolo`.
+The named profile in Codex's own configuration controls the effective approval policy; km does not
+inspect that configuration. Without `codexProfile`, CAO defaults to `--yolo`, including when
+`allowedTools` is restricted or empty. `allowedTools: ["*"]` forces `--yolo` even with a named
+profile. To keep a chosen Codex policy through every effort variant, set `codexProfile: safe` on
+`km-codex` (where `safe` names your configured Codex profile) and omit `*` from `allowedTools`.
+
+To keep prompts on for km's Claude chairs, add this frontmatter field to `profiles/km-claude.md`,
+keeping its other fields and body:
+
+```yaml
+permissionMode: default
+```
+
+Then install the base:
+
+```sh
+cao install profiles/km-claude.md --provider claude_code
+```
+
+Every km Claude chair using `km-claude`, including generated `km-claude-<effort>` profiles,
+inherits that mode. km copies `permissionMode`, `allowedTools` and `codexProfile` from its Claude
+and Codex bases when generating effort profiles, and reinstalls existing variants when any of these
+fields differ.
+An unset `allowedTools` stays unset; an explicit empty list stays empty.
+
+When any chair has an unguarded label, km prints one closing note counting those chairs.
+km reports permissions and never refuses to run because of a permission mode. The `blocked:` lines
+from the session watcher show when a chair waits on a prompt; resolve it in that chair's terminal.
 
 ## Rehearse
 

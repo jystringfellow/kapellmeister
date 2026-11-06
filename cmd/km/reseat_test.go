@@ -41,6 +41,8 @@ func (f *reseatCAO) serve(t *testing.T, session string) *httptest.Server {
 				profiles = append(profiles, map[string]any{"name": name, "loadable": true})
 			}
 			json.NewEncoder(w).Encode(profiles)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/agents/profiles/") && (r.URL.Path == "/agents/profiles/km-codex" || slices.Contains(f.profiles, strings.TrimPrefix(r.URL.Path, "/agents/profiles/"))):
+			fmt.Fprint(w, `{}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/sessions/"+session+"/terminals":
 			f.query = r.URL.Query()
 			fmt.Fprintf(w, `{"id":"new-terminal","session_name":%q}`, session)

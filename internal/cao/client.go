@@ -198,3 +198,15 @@ func (c *Client) SessionTerminals(ctx context.Context, name string) ([]Terminal,
 func (c *Client) SetDescription(ctx context.Context, id, description string) error {
 	return c.call(ctx, http.MethodPatch, "/terminals/"+url.PathEscape(id)+"/description", map[string]string{"description": description}, nil)
 }
+
+type ProfilePermissions struct {
+	PermissionMode string   `json:"permissionMode"`
+	CodexProfile   string   `json:"codexProfile"`
+	AllowedTools   []string `json:"allowedTools"`
+}
+
+func (c *Client) ProfilePermissions(ctx context.Context, name string) (ProfilePermissions, error) {
+	var out ProfilePermissions
+	err := c.call(ctx, http.MethodGet, "/agents/profiles/"+url.PathEscape(name), nil, &out)
+	return out, err
+}
