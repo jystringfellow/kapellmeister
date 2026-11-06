@@ -35,13 +35,15 @@ Study the code this task touches, then write an implementation plan to %s coveri
 
 const sizeRequest = "End the plan with one line of the form `Size: small|medium|large — <one-line reason>`, rating how capable a model the implementation and review need: small for a mechanical change in one place, medium for a contained change with tests, large for cross-cutting, subtle, concurrent or security-sensitive work.\n"
 
-func implementPrompt(task, plan, out, check string, feedback []string, gate string) string {
+func implementPrompt(task, plan, out, check string, feedback []string, gate, test string) string {
 	var b strings.Builder
 	b.WriteString(preamble("implementer"))
 	b.WriteString(taskBlock(task))
 	fmt.Fprintf(&b, "\nThe plan is in %s.\n", plan)
 	if len(feedback) == 0 {
 		b.WriteString("Implement the task following the plan and the repository's development rules.\n")
+	} else if test != "" {
+		fmt.Fprintf(&b, "The previous attempt, still uncommitted in this worktree, passed review and the gate but failed the tester's live run. Read %s. The test report in %s is authoritative. For each failed scenario, first add a failing regression test that reproduces it and confirm it fails, then fix the code until it passes.\n", strings.Join(feedback, ", "), test)
 	} else if gate != "" {
 		fmt.Fprintf(&b, "The previous attempt, still uncommitted in this worktree, was not approved. Read %s. The gate's blocking findings in %s are authoritative and supersede reviewer requests. Address those blocking findings; findings classified by the gate as nits need no change, even if a review calls them required.\n", strings.Join(feedback, ", "), gate)
 	} else {
@@ -105,10 +107,34 @@ Do not modify any file other than %s. When done, reply with one short sentence.
 `, plan, summary, reviewNote, failedNote, verifyLine(command, v, verifyPath), out, out)
 }
 
+func testPlanPrompt(task, plan, out string) string {
+	return preamble("tester") + taskBlock(task) + fmt.Sprintf(`
+Read the plan in %s. Plan how to exercise the change end to end in its real environment, the way a user would, including hostile conditions: missing, stale or concurrent state and external services misbehaving. Do not restate unit tests.
+Stay blind to the implementation: do not look at git diff or git status, or at the implementer's output or reviews.
+Write the test plan to %s and change no other file. When done, reply with one short sentence.
+`, plan, out)
+}
+
+func testPrompt(task, plan, testPlan, summary, command string, v VerifyResult, verifyPath, runDir, out string) string {
+	return preamble("tester") + taskBlock(task) + fmt.Sprintf(`
+Read the plan in %s, the test plan in %s and the implementation summary in %s.
+%s
+`+verifiedNote+`Execute the test plan against the real environment, the way a user would.
+Keep scratch files and build output under %s. Before finishing, clean up anything you create outside the worktree, including processes and sessions. Touch nothing you did not create.
+Do not change any tracked or untracked non-ignored file in the worktree.
+Write to %s: each scenario, what you ran, and pass or fail with evidence. End with APPROVE if everything passed, or CHANGES with the failures.
+When done, reply with one short sentence.
+`, plan, testPlan, summary, verifyLine(command, v, verifyPath), runDir, out)
+}
+
 func classifyPrompt(subject, path, out string) string {
 	nitNote := ""
 	if subject == "gate" {
 		nitNote = "Points it lists as nits or non-blocking are not required changes.\n"
+	}
+	if subject == "test" {
+		subject = "test report"
+		nitNote = "APPROVE only when every scenario passed.\n"
 	}
 	return fmt.Sprintf(`Read %s. It is a %s of a code change.
 Write exactly one word to %s:

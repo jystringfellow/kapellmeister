@@ -90,7 +90,7 @@ func commonFlags(fs *flag.FlagSet) common {
 		timeout:    fs.Duration("timeout", 0, "timeout for each agent step (default [run] timeout, else 40m)"),
 		replyGrace: fs.Duration("reply-grace", 0, "how long to wait for a reply file after a chair goes idle, before nudging it (default [run] reply_grace, else 15m)"),
 		caoURL:     fs.String("cao", "", "cao-server URL (default $CAO_API_BASE_URL, then [cao] url, else http://127.0.0.1:9889)"),
-		sizing:     fs.String("sizing", "", "off, shadow or on: whether the size decider's answer picks the implement, review and gate tiers (default [sizing] mode, else shadow)"),
+		sizing:     fs.String("sizing", "", "off, shadow or on: whether the size decider's answer picks the implement, review, gate and test tiers (default [sizing] mode, else shadow)"),
 	}
 }
 
@@ -164,7 +164,10 @@ func chairSpecs(s loop.Settings, flags map[string]*string) map[string]string {
 func resolveChairs(specs map[string]string) (loop.Chairs, error) {
 	resolved := map[string]loop.Chair{}
 	var reviewers []loop.Chair
-	for _, role := range loop.ChairRoles {
+	for _, role := range loop.AllRoles() {
+		if role == "tester" && specs[role] == "" {
+			continue
+		}
 		if role == "reviewer" {
 			list := loop.ChairList(specs[role])
 			for i, spec := range list {
@@ -185,7 +188,11 @@ func resolveChairs(specs map[string]string) (loop.Chairs, error) {
 		}
 		resolved[role] = chair
 	}
-	return loop.Chairs{Planner: resolved["planner"], Implementer: resolved["implementer"], Reviewers: reviewers, Gate: resolved["gate"], Classifier: resolved["classifier"]}, nil
+	chairs := loop.Chairs{Planner: resolved["planner"], Implementer: resolved["implementer"], Reviewers: reviewers, Gate: resolved["gate"], Classifier: resolved["classifier"]}
+	if tester, ok := resolved["tester"]; ok {
+		chairs.Tester = &tester
+	}
+	return chairs, nil
 }
 
 func runChairs(s loop.Settings, ensemble string, roles map[string]*string) (loop.Settings, loop.Chairs, error) {
@@ -200,10 +207,10 @@ func runChairs(s loop.Settings, ensemble string, roles map[string]*string) (loop
 	return s, chairs, err
 }
 
-var roleSteps = map[string]string{"planner": "plan", "implementer": "implement", "reviewer": "review", "gate": "gate", "classifier": "classify"}
+var roleSteps = map[string]string{"planner": "plan", "implementer": "implement", "reviewer": "review", "gate": "gate", "classifier": "classify", "tester": "test"}
 
 func checkPins(policy loop.Policy, specs map[string]string, chairs loop.Chairs) error {
-	for _, role := range loop.ChairRoles {
+	for _, role := range loop.AllRoles() {
 		group := stepChairs(chairs)[roleSteps[role]]
 		list := []string{specs[role]}
 		if role == "reviewer" {
@@ -241,7 +248,7 @@ func runCommand(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	c := commonFlags(fs)
 	worktree := fs.String("worktree", "", "use this existing worktree instead of creating one")
-	roles := chairFlags(fs, loop.ChairRoles...)
+	roles := chairFlags(fs, loop.AllRoles()...)
 	ensemble := fs.String("ensemble", "", ensembleHelp)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -398,7 +405,10 @@ func configCommand(args []string) error {
 
 func printChairs(w io.Writer, s loop.Settings) {
 	var chairs []string
-	for _, role := range loop.ChairRoles {
+	for _, role := range loop.AllRoles() {
+		if role == "tester" && s.Chairs[role] == "" {
+			continue
+		}
 		chairs = append(chairs, role+"="+s.Chairs[role])
 	}
 	fmt.Fprintf(w, "chairs  %s gate_when=%s\n", strings.Join(chairs, " "), s.GateWhen)
@@ -409,7 +419,7 @@ func printEnsembles(w io.Writer, s loop.Settings) {
 		ensemble := s.Ensembles[name]
 		specs := ensemble.Chairs()
 		var chairs []string
-		for _, role := range loop.ChairRoles {
+		for _, role := range loop.AllRoles() {
 			if spec, ok := specs[role]; ok {
 				chairs = append(chairs, role+"="+spec)
 			}
@@ -450,9 +460,13 @@ func printPolicy(w io.Writer, p *loop.Policy) {
 }
 
 func stepChairs(s loop.Chairs) map[string][]loop.Chair {
-	return map[string][]loop.Chair{
+	steps := map[string][]loop.Chair{
 		"plan": {s.Planner}, "implement": {s.Implementer}, "review": s.Reviewers, "gate": {s.Gate}, "classify": {s.Classifier},
 	}
+	if s.Tester != nil {
+		steps["test"] = []loop.Chair{*s.Tester}
+	}
+	return steps
 }
 
 func defaultChairs(p *loop.Policy, s loop.Chairs) []loop.Chair {

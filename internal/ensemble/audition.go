@@ -28,7 +28,11 @@ func MembersOf(c loop.Chairs) []Member {
 	for i, r := range c.Reviewers {
 		members = append(members, Member{Section: "reviewer", Part: "reviewer", Name: loop.ReviewerName(i, len(c.Reviewers)), Chair: r})
 	}
-	return append(members, solo("gate", c.Gate), solo("classifier", c.Classifier))
+	members = append(members, solo("gate", c.Gate), solo("classifier", c.Classifier))
+	if c.Tester != nil {
+		members = append(members, solo("tester", *c.Tester))
+	}
+	return members
 }
 
 type Audition struct {
