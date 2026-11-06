@@ -2,24 +2,33 @@ package ensemble
 
 import (
 	"cmp"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/jystringfellow/kapellmeister/internal/cao"
+	"github.com/jystringfellow/kapellmeister/internal/loop"
 )
 
 type StandingChair struct {
-	Address    string `json:"address"`
-	Section    string `json:"section"`
-	Part       string `json:"part"`
-	Chair      string `json:"chair"`
-	TerminalID string `json:"terminal_id"`
+	Name       string     `json:"name"`
+	Binding    loop.Chair `json:"binding"`
+	Address    string     `json:"address"`
+	Section    string     `json:"section"`
+	Part       string     `json:"part"`
+	Chair      string     `json:"chair"`
+	TerminalID string     `json:"terminal_id"`
+	Briefed    bool       `json:"briefed"`
 }
 
 type Standing struct {
+	GateWhen string          `json:"gate_when,omitempty"`
 	Ensemble string          `json:"ensemble"`
 	Session  string          `json:"session"`
 	Worktree string          `json:"worktree"`
@@ -74,4 +83,45 @@ func RemoveStanding(dir, session string) error {
 		return nil
 	}
 	return err
+}
+
+func (s Standing) RebuildChairs() (loop.Chairs, error) {
+	var members []Member
+	for _, c := range s.Chairs {
+		if c.Binding.Provider == "" {
+			return loop.Chairs{}, fmt.Errorf("session %s was rehearsed by an older km (no recorded binding); take it down and rehearse again", s.Session)
+		}
+		binding := c.Binding
+		binding.Address = c.Address
+		members = append(members, Member{Section: c.Section, Part: c.Part, Name: c.Name, Chair: binding})
+	}
+	chairs, err := ChairsOf(members)
+	if err != nil {
+		return loop.Chairs{}, fmt.Errorf("session %s: %w", s.Session, err)
+	}
+	return chairs, nil
+}
+
+func MissingOccupants(ctx context.Context, client *cao.Client, s Standing) ([]string, error) {
+	var missing []string
+	for _, c := range s.Chairs {
+		if _, err := client.Terminal(ctx, c.TerminalID); err != nil {
+			var httpErr *cao.HTTPError
+			if !errors.As(err, &httpErr) || httpErr.Status != http.StatusNotFound {
+				return nil, err
+			}
+			missing = append(missing, c.Address)
+		}
+	}
+	return missing, nil
+}
+
+func (s Standing) Unbriefed() []string {
+	var addresses []string
+	for _, c := range s.Chairs {
+		if !c.Briefed {
+			addresses = append(addresses, c.Address)
+		}
+	}
+	return addresses
 }

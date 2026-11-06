@@ -91,7 +91,7 @@ func rehearseCommand(args []string) error {
 	}
 	ensembleName := firstNonEmpty(*name, defaultEnsembleName)
 	fmt.Printf("→ rehearse %s: %d chair(s)\n", ensembleName, len(members))
-	report, err := (ensemble.Rehearsal{Client: client, Ensemble: ensembleName, Worktree: wt, Members: members, Timeout: *timeout, KM: km, Task: text, TaskFile: taskPath, StateDir: filepath.Join(loop.StateDir(), "ensembles")}).Run(ctx)
+	report, err := (ensemble.Rehearsal{Client: client, Ensemble: ensembleName, Worktree: wt, Members: members, Timeout: *timeout, KM: km, Task: text, TaskFile: taskPath, GateWhen: s.GateWhen, StateDir: filepath.Join(loop.StateDir(), "ensembles")}).Run(ctx)
 	if err != nil {
 		return err
 	}

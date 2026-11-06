@@ -72,3 +72,13 @@ are ensemble, section, chair, occupant, part, score, cue, send, audition, rehear
 list lives in `AGENTS.md`, so every chair of a km run sees it. Evidence: the first km-built change
 (PR #10) named its shared seat-and-cue code `crew`, because no chair had been told the vocabulary;
 the planner chose it and neither the reviewer nor the gate flagged it.
+
+## 2026-11-05: Play keeps each part in its chair's occupant and runs without sizing
+
+`km play` reuses each chair's recorded occupant through CAO's `reuse_terminal_id`. Sizing and tier
+escalation are off, and the stepper rejects any binding mismatch. Steps sharing an occupant run
+one at a time, and play never deletes an occupant. Evidence:
+`TestEachPartAndEachReviewerIsRoutedToItsOwnStandingOccupant`,
+`TestClassifyStepsSharingOneOccupantNeverOverlap`,
+`TestAStepWhoseBindingDiffersFromItsOccupantFailsNamingTheAddressAndBothBindings` and
+`TestPlayKeepsEachChairsRecordedBindingEvenWhenSizingAndEscalationAreConfigured`.

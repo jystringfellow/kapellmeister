@@ -147,6 +147,10 @@ func TestARehearsalRecordsTheStandingEnsembleForKmPlayBeforeBriefing(t *testing.
 		t.Run(map[bool]string{false: "text", true: "file"}[taskFile], func(t *testing.T) {
 			fake, client := newFakeCAO(t, map[string]behaviour{"km-claude": {bootFails: true}})
 			a := rehearsal(t, client, t.TempDir())
+			a.GateWhen = "all"
+			a.Members[1].Chair.Model = "sized-model"
+			a.Members[1].Chair.Tier = "large"
+			a.Members[1].Chair.Timeout = time.Minute
 			if taskFile {
 				a.TaskFile = filepath.Join(t.TempDir(), "task.md")
 			}
@@ -165,7 +169,7 @@ func TestARehearsalRecordsTheStandingEnsembleForKmPlayBeforeBriefing(t *testing.
 				t.Fatalf("records = %+v, %v", records, err)
 			}
 			s := records[0]
-			if s.Ensemble != a.Ensemble || s.Session != report.Session || s.Worktree != a.Worktree || s.Queue != report.Queue {
+			if s.Ensemble != a.Ensemble || s.Session != report.Session || s.Worktree != a.Worktree || s.Queue != report.Queue || s.GateWhen != a.GateWhen {
 				t.Errorf("record = %+v", s)
 			}
 			if taskFile {
@@ -175,14 +179,22 @@ func TestARehearsalRecordsTheStandingEnsembleForKmPlayBeforeBriefing(t *testing.
 			} else if s.Task != a.Task || s.TaskFile != "" {
 				t.Errorf("task text record = %+v", s)
 			}
-			if len(s.Chairs) != 3 {
+			if len(s.Chairs) != len(a.Members) {
 				t.Fatalf("recorded chairs = %+v", s.Chairs)
 			}
 			for i, c := range s.Chairs {
-				m := a.Members[i+1]
-				term := fake.byProfile(m.Chair.Profile)
-				if c.Address != m.Address(a.Ensemble) || c.Section != m.Section || c.Part != m.Part || c.Chair != m.Chair.String() || c.TerminalID != term.id {
+				m := a.Members[i]
+				terminalID := ""
+				if i > 0 {
+					terminalID = fake.byProfile(m.Chair.Profile).id
+				}
+				if c.Address != m.Address(a.Ensemble) || c.Section != m.Section || c.Part != m.Part || c.Chair != m.Chair.String() || c.TerminalID != terminalID || c.Name != m.Name || c.Briefed != (i > 0) {
 					t.Errorf("standing chair = %+v, member = %+v", c, m)
+				}
+				binding := m.Chair
+				binding.Address = m.Address(a.Ensemble)
+				if c.Binding != binding {
+					t.Errorf("binding = %+v, want %+v", c.Binding, binding)
 				}
 			}
 		})
@@ -244,5 +256,26 @@ func TestAnInterruptedRehearsalKeepsItsSessionAndStandingRecord(t *testing.T) {
 	}
 	if len(fake.deleted) != 0 {
 		t.Errorf("deleted session on interruption: %v", fake.deleted)
+	}
+}
+
+func TestAChairThatNeverClosesItsBriefingIsRecordedAsNotBriefed(t *testing.T) {
+	_, client := newFakeCAO(t, map[string]behaviour{"km-codex": {ignores: true}})
+	a := rehearsal(t, client, t.TempDir())
+	a.Timeout = 300 * time.Millisecond
+	if _, err := a.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	records, err := ListStanding(a.StateDir)
+	if err != nil || len(records) != 1 {
+		t.Fatalf("records = %+v, %v", records, err)
+	}
+	for _, c := range records[0].Chairs {
+		if want := c.Binding.Profile != "km-codex"; c.Briefed != want || c.TerminalID == "" {
+			t.Errorf("chair %s briefed = %v, want %v (terminal %q)", c.Address, c.Briefed, want, c.TerminalID)
+		}
+	}
+	if got := records[0].Unbriefed(); len(got) != 1 || got[0] != "implementer.implementer@thorough" {
+		t.Errorf("unbriefed = %v", got)
 	}
 }

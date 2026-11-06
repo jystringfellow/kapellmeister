@@ -9,6 +9,7 @@ works in a throwaway detached worktree and leaves its change uncommitted for you
 km run -repo ~/Code/app -task-file task.md [-ensemble thorough]  # one ensemble
 km audition -worktree DIR [-ensemble thorough]   # can this ensemble play? no real work
 km rehearse -worktree DIR -task-file task.md [-ensemble thorough]  # brief and leave standing
+km play SESSION [-max-rounds N] [-verify CMD] [-timeout D] [-cao URL]  # run the score
 km ensemble list                                # list standing ensembles
 km ensemble down SESSION                        # take one down
 km preflight -worktree DIR [-tier large]          # check each agent starts and answers
@@ -54,10 +55,27 @@ its cue with `km cue done`. `-timeout` defaults to `[run] preflight_timeout`. Th
 queue live under `.kapellmeister/runs/rehearse-*/` in the worktree.
 
 The session stays up even when a chair fails. km records the standing ensemble in
-`<state>/ensembles/<session>.json` for `km play` to use later; `km play` is not available yet.
+`<state>/ensembles/<session>.json` for `km play` to use later.
 Use `km ensemble list` to see recorded sessions and `km ensemble down SESSION` to delete one and
 remove its record. `down` also accepts `-cao URL` before the session name and removes the record
 when CAO says the session is already gone.
+
+## Play
+
+`km play SESSION [-max-rounds N] [-verify CMD] [-timeout D] [-cao URL]` runs the score on a
+standing ensemble. It uses the recorded worktree, task and chairs, rereading the task file when
+one was recorded. Every step runs in its chair's standing occupant, including each reviewer in
+its own chair. Steps sharing an occupant run one at a time.
+
+Sizing and tier escalation are off: each occupant keeps its recorded provider, profile and model.
+Before planning, km refuses an ensemble with any chair that did not close its rehearsal briefing,
+naming those chairs, and then checks every occupant with CAO; if any is missing, it names the chairs and asks
+you to take the session down and rehearse again. Records from an older km without bindings also
+need a new rehearsal. Verify, check, progress and run records work as with `km run -worktree`.
+
+The session and its record stay standing on success, failure and interrupt. Take it down with
+`km ensemble down SESSION`. If a step times out or is interrupted, CAO may leave its occupant
+mid-turn; play does not reset it.
 
 ## Ensemble files
 

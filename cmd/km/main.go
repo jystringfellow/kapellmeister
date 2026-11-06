@@ -26,6 +26,7 @@ const usage = `usage:
   km run -repo DIR (-task TEXT | -task-file FILE) [-ensemble NAME] [flags]   one ensemble
   km audition -worktree DIR [-ensemble NAME] [-keep]       boot the ensemble, cue every chair once, tear down
   km rehearse -worktree DIR (-task TEXT | -task-file FILE) [-ensemble NAME]  brief the ensemble and leave it standing
+  km play SESSION [-max-rounds N] [-verify CMD] [-timeout D] [-cao URL]  run the score on a standing ensemble
   km ensemble list                                         list standing ensembles
   km ensemble down [-cao URL] SESSION                       take down a standing ensemble
   km cue done -queue FILE CUE [NOTE]                         close a cue (chairs run this)
@@ -45,6 +46,8 @@ func main() {
 		err = auditionCommand(os.Args[2:])
 	case "rehearse":
 		err = rehearseCommand(os.Args[2:])
+	case "play":
+		err = playCommand(os.Args[2:])
 	case "ensemble":
 		err = ensembleCommand(os.Args[2:], os.Stdout)
 	case "cue":
@@ -300,7 +303,7 @@ func runCommand(args []string) error {
 			RunID: runID, Task: text, Worktree: wt, Chairs: chairs, GateWhen: s.GateWhen,
 			MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, CheckCommand: checkCmd, Policy: &policy,
 		},
-		Client: client, Verify: loop.Retrying(loop.CommandVerifier(verifyCmd), s.VerifyRetries), Progress: os.Stdout,
+		Stepper: loop.CAOStepper{Client: client}, Verify: loop.Retrying(loop.CommandVerifier(verifyCmd), s.VerifyRetries), Progress: os.Stdout,
 	})
 	if err != nil {
 		return err
@@ -559,10 +562,11 @@ func firstNonEmpty(values ...string) string {
 }
 
 type ensembleRun struct {
+	Command  string
 	RunID    string
 	StateDir string
 	Config   loop.Config
-	Client   *cao.Client
+	Stepper  loop.Stepper
 	Verify   loop.Verifier
 	Progress io.Writer
 }
@@ -585,8 +589,8 @@ func runEnsemble(ctx context.Context, p ensembleRun) (ensembleSummary, error) {
 	if err := writeJSON(filepath.Join(p.StateDir, "config.json"), p.Config); err != nil {
 		return ensembleSummary{}, err
 	}
-	fmt.Fprintf(p.Progress, "km run %s\n  worktree  %s\n  state     %s\n", p.RunID, p.Config.Worktree, p.StateDir)
-	eng := &loop.Engine{Config: p.Config, Stepper: loop.CAOStepper{Client: p.Client}, Verify: p.Verify, Records: telemetry, Progress: p.Progress}
+	fmt.Fprintf(p.Progress, "km %s %s\n  worktree  %s\n  state     %s\n", firstNonEmpty(p.Command, "run"), p.RunID, p.Config.Worktree, p.StateDir)
+	eng := &loop.Engine{Config: p.Config, Stepper: p.Stepper, Verify: p.Verify, Records: telemetry, Progress: p.Progress}
 	start := time.Now()
 	res, err := eng.Run(ctx)
 	if err != nil {

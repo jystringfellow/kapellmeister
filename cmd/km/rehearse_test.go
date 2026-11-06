@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/jystringfellow/kapellmeister/internal/ensemble"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +12,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/jystringfellow/kapellmeister/internal/ensemble"
 	"github.com/jystringfellow/kapellmeister/internal/loop"
 )
 
@@ -188,6 +188,14 @@ func TestRehearseWritesTheReportAndStandingTaskFileAndNamesFailedChairs(t *testi
 			}
 			if standing.Session != "cao-standing" || standing.Ensemble != "default" || standing.Worktree != resolvedWT || standing.TaskFile != taskPath || standing.Task != "" || len(standing.Chairs) != 5 {
 				t.Errorf("standing = %+v", standing)
+			}
+			if standing.GateWhen != loop.GateWhenAny {
+				t.Errorf("recorded gate_when = %q", standing.GateWhen)
+			}
+			for _, c := range standing.Chairs {
+				if c.Name == "" || c.Binding.Address != c.Address || c.Binding.String() != "other:chair:explicit-model" {
+					t.Errorf("standing binding = %+v", c)
+				}
 			}
 			data, err := os.ReadFile(filepath.Join(filepath.Dir(standing.Queue), "report.json"))
 			if err != nil {
