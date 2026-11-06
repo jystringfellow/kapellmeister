@@ -249,10 +249,16 @@ func TestAFailedReviewerIsRecordedAsFailedNamedToTheGateAndTheRoundContinues(t *
 			for _, s := range fake.steps {
 				if s.Name == "classify-review" {
 					n++
+					if s.ChairName != "reviewer-1" {
+						t.Fatalf("failed review was classified: %+v", s)
+					}
 				}
 			}
 			if n != 1 {
 				t.Fatalf("classifiers=%d", n)
+			}
+			if _, err := os.Stat(filepath.Join(fake.dir, eng.rel("review-1-2.verdict"))); !os.IsNotExist(err) {
+				t.Fatalf("failed review's verdict file: %v", err)
 			}
 		})
 	}
@@ -308,11 +314,13 @@ func TestAReviewerThatModifiesTheWorktreeFailsTheRunAndTheErrorNamesTheGroup(t *
 			t.Fatal(res)
 		}
 	}
-	if len(recordsOf(t, records, "verdict-review")) != 0 {
-		t.Fatal(records.String())
+	for _, r := range recordsOf(t, records, "verdict-review") {
+		if r.Verdict == VerdictFailed {
+			t.Fatal(records.String())
+		}
 	}
 	for _, s := range fake.steps {
-		if s.Name == "classify-review" {
+		if s.Name == "gate" || (s.Name == "classify-review" && s.ChairName == "reviewer-2") {
 			t.Fatal(fake.names())
 		}
 	}
@@ -427,5 +435,287 @@ func TestImplementationFeedbackUsesOnlyThePreviousRoundsGateDecision(t *testing.
 	third := stepNamed(t, fake, "implement", 3).Prompt
 	if !strings.Contains(third, "review-2.md") || !strings.Contains(third, "verify-2.txt") || !strings.Contains(third, "address every required change") || strings.Contains(third, "authoritative") || strings.Contains(third, "gate-1.md") {
 		t.Errorf("stale gate authority after ungated round: %s", third)
+	}
+}
+
+func TestAReviewIsClassifiedAsSoonAsItLandsWhileAnotherReviewerIsStillRunning(t *testing.T) {
+	eng, fake, records := newEngine(t, passing)
+	twoReviewers(eng)
+	secondStarted, classified := make(chan struct{}), make(chan struct{})
+	order := make(chan string, 2)
+	fake.actions["review"] = func(s Step) {
+		if s.ChairName == "reviewer-2" {
+			close(secondStarted)
+			select {
+			case <-classified:
+			case <-time.After(2 * time.Second):
+				t.Error("reviewer-1 was not classified while reviewer-2 was running")
+			}
+		}
+		fake.write(s.ReplyPath, "looks good")
+	}
+	fake.actions["classify-review"] = func(s Step) {
+		if s.ChairName == "reviewer-1" {
+			<-secondStarted
+		}
+		fake.write(s.ReplyPath, "APPROVE")
+		order <- s.ChairName
+		if s.ChairName == "reviewer-1" {
+			close(classified)
+		}
+	}
+	if res := run(t, eng); res.Outcome != Approved {
+		t.Fatal(res)
+	}
+	recs := recordsOf(t, records, "classify-review")
+	if len(recs) != 2 {
+		t.Fatalf("classifications: %+v", recs)
+	}
+	if first, second := <-order, <-order; first != "reviewer-1" || second != "reviewer-2" {
+		t.Fatalf("classification order: %s, %s", first, second)
+	}
+}
+
+func TestAReviewerThatChangesTheTreeFailsTheRoundNamingItEvenAfterAnotherReviewWasClassified(t *testing.T) {
+	eng, fake, records := newEngine(t, passing)
+	twoReviewers(eng)
+	classified := make(chan struct{})
+	fake.actions["review"] = func(s Step) {
+		if s.ChairName == "reviewer-2" {
+			select {
+			case <-classified:
+			case <-time.After(2 * time.Second):
+				t.Error("reviewer-1 was not classified before the tree changed")
+			}
+			fake.write("main.go", "package main\n")
+		}
+		fake.write(s.ReplyPath, "looks good")
+	}
+	fake.actions["classify-review"] = func(s Step) {
+		fake.write(s.ReplyPath, "APPROVE")
+		if s.ChairName == "reviewer-1" {
+			close(classified)
+		}
+	}
+	res := run(t, eng)
+	if res.Outcome != Failed || !strings.Contains(res.Reason, "reviewer-2") || !strings.Contains(res.Reason, "modified the worktree") {
+		t.Fatal(res)
+	}
+	if recs := recordsOf(t, records, "verdict-review"); len(recs) != 2 {
+		t.Fatalf("completed verdicts: %+v", recs)
+	}
+	changed := false
+	for _, r := range recordsOf(t, records, "review") {
+		changed = changed || r.TreeChanged
+	}
+	if !changed {
+		t.Fatal("tree change was not recorded")
+	}
+	for _, s := range fake.steps {
+		if s.Name == "gate" {
+			t.Fatal("gate ran after a tree change")
+		}
+	}
+}
+
+func TestCancellingTheContextMidRoundCancelsReviewsAndClassificationsAndLeavesNoStepRunning(t *testing.T) {
+	eng, fake, _ := newEngine(t, passing)
+	twoReviewers(eng)
+	reviewing, classifying := make(chan struct{}), make(chan struct{})
+	fake.contextActions = map[string]func(context.Context, Step) error{
+		"review": func(ctx context.Context, s Step) error {
+			if s.ChairName == "reviewer-1" {
+				fake.write(s.ReplyPath, "looks good")
+				return nil
+			}
+			close(reviewing)
+			<-ctx.Done()
+			return ctx.Err()
+		},
+		"classify-review": func(ctx context.Context, s Step) error {
+			close(classifying)
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan Result, 1)
+	go func() {
+		res, err := eng.Run(ctx)
+		if err != nil {
+			t.Error(err)
+		}
+		done <- res
+	}()
+	for _, started := range []chan struct{}{reviewing, classifying} {
+		select {
+		case <-started:
+		case <-time.After(2 * time.Second):
+			t.Error("review and classification did not both start before cancellation")
+		}
+	}
+	cancel()
+	select {
+	case res := <-done:
+		if res.Outcome != Failed || !strings.Contains(res.Reason, "context canceled") {
+			t.Fatal(res)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("round did not join its cancelled steps")
+	}
+	if n := fake.inFlight(); n != 0 {
+		t.Fatalf("%d steps still running", n)
+	}
+}
+
+func checkVerdictRecord(t *testing.T, records *bytes.Buffer, subject, chair, verdict, path, source string) {
+	t.Helper()
+	for _, r := range recordsOf(t, records, "verdict-"+subject) {
+		if r.ChairName == chair && r.Reply == path {
+			if r.Verdict != verdict || r.VerdictSource != source {
+				t.Fatalf("verdict: %+v", r)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing verdict-%s for %s at %s: %s", subject, chair, path, records)
+}
+
+func TestABareVerdictLastLineOnAReviewSkipsTheClassifierAndRecordsTheSource(t *testing.T) {
+	for _, verdict := range []string{"APPROVE", "CHANGES"} {
+		t.Run(verdict, func(t *testing.T) {
+			eng, fake, records := newEngine(t, passing)
+			twoReviewers(eng)
+			eng.Config.MaxRounds = 1
+			var progress bytes.Buffer
+			eng.Progress = &progress
+			fake.actions["review"] = func(s Step) {
+				fake.write(s.ReplyPath, "Findings above.\n  "+verdict+"  \n\n \n")
+			}
+			want := Approved
+			if verdict == "CHANGES" {
+				want = RoundsExhausted
+			}
+			if res := run(t, eng); res.Outcome != want {
+				t.Fatal(res)
+			}
+			for i := 1; i <= 2; i++ {
+				chair := fmt.Sprintf("reviewer-%d", i)
+				path := eng.rel(fmt.Sprintf("review-1-%d.md", i))
+				checkVerdictRecord(t, records, "review", chair, verdict, path, "reply")
+				line := chair + " verdict: " + verdict + " (from the review's last line)"
+				if !strings.Contains(progress.String(), line) {
+					t.Errorf("progress lacks %q: %s", line, &progress)
+				}
+			}
+			for _, s := range fake.steps {
+				if s.Name == "classify-review" {
+					t.Fatal("bare verdict was classified")
+				}
+			}
+		})
+	}
+}
+
+func TestABareVerdictLastLineOnTheGateSkipsTheClassifierAndRecordsTheSource(t *testing.T) {
+	for _, verdict := range []string{"APPROVE", "CHANGES"} {
+		t.Run(verdict, func(t *testing.T) {
+			eng, fake, records := newEngine(t, passing)
+			eng.Config.MaxRounds = 2
+			var progress bytes.Buffer
+			eng.Progress = &progress
+			fake.actions["gate"] = func(s Step) {
+				v := verdict
+				if s.Round == 2 {
+					v = "APPROVE"
+				}
+				fake.write(s.ReplyPath, "Findings above.\n  "+v+"  \n\n \n")
+			}
+			res := run(t, eng)
+			wantRounds := 1
+			if verdict == "CHANGES" {
+				wantRounds = 2
+				if p := stepNamed(t, fake, "implement", 2).Prompt; !strings.Contains(p, "gate-1.md") || !strings.Contains(p, "blocking findings") {
+					t.Fatal(p)
+				}
+			}
+			if res.Outcome != Approved || res.Rounds != wantRounds {
+				t.Fatal(res)
+			}
+			checkVerdictRecord(t, records, "gate", "", verdict, eng.rel("gate-1.md"), "reply")
+			if !strings.Contains(progress.String(), "gate verdict: "+verdict+" (from the gate's last line)") {
+				t.Fatal(progress.String())
+			}
+			for _, s := range fake.steps {
+				if s.Name == "classify-gate" {
+					t.Fatal("bare verdict was classified")
+				}
+			}
+		})
+	}
+}
+
+func TestAReplyWithoutABareVerdictLastLineIsStillClassified(t *testing.T) {
+	for _, reply := range []string{"I APPROVE.", "APPROVE\nFindings below.", "approve", "UNCLEAR", "CHANGES required"} {
+		t.Run(reply, func(t *testing.T) {
+			eng, fake, records := newEngine(t, passing)
+			for _, subject := range []string{"review", "gate"} {
+				fake.actions[subject] = func(s Step) { fake.write(s.ReplyPath, reply) }
+			}
+			if res := run(t, eng); res.Outcome != Approved {
+				t.Fatal(res)
+			}
+			for _, subject := range []string{"review", "gate"} {
+				stepNamed(t, fake, "classify-"+subject, 1)
+				checkVerdictRecord(t, records, subject, "", "APPROVE", eng.rel(subject+"-1.md"), "")
+			}
+		})
+	}
+}
+
+func TestTheReviewAndGatePromptsAskForTheVerdictAloneOnTheLastLine(t *testing.T) {
+	eng, fake, _ := newEngine(t, passing)
+	run(t, eng)
+	for _, subject := range []string{"review", "gate"} {
+		prompt := stepNamed(t, fake, subject, 1).Prompt
+		if !strings.Contains(prompt, "Put APPROVE or CHANGES alone on the last line of") {
+			t.Errorf("%s prompt lacks the bare last line request: %s", subject, prompt)
+		}
+	}
+}
+
+func TestASingleReviewerBehavesAsBeforeExceptForTheBareLineShortcut(t *testing.T) {
+	for _, bare := range []bool{false, true} {
+		t.Run(fmt.Sprint(bare), func(t *testing.T) {
+			eng, fake, records := newEngine(t, passing)
+			var progress bytes.Buffer
+			eng.Progress = &progress
+			if bare {
+				fake.actions["review"] = func(s Step) { fake.write(s.ReplyPath, "APPROVE\n") }
+			}
+			if res := run(t, eng); res.Outcome != Approved {
+				t.Fatal(res)
+			}
+			s := stepNamed(t, fake, "review", 1)
+			if s.ChairName != "" || s.Label != "km r1 · reviewer" || s.ReplyPath != eng.rel("review-1.md") {
+				t.Fatal(s)
+			}
+			source := ""
+			if bare {
+				source = "reply"
+				if !strings.Contains(progress.String(), "review verdict: APPROVE (from the review's last line)") {
+					t.Fatal(progress.String())
+				}
+			}
+			checkVerdictRecord(t, records, "review", "", "APPROVE", s.ReplyPath, source)
+			classified := len(recordsOf(t, records, "classify-review"))
+			if (bare && classified != 0) || (!bare && classified != 1) {
+				t.Fatalf("bare=%t, classifications=%d", bare, classified)
+			}
+			if bytes.Contains(records.Bytes(), []byte(`"chair_name"`)) {
+				t.Fatal(records.String())
+			}
+		})
 	}
 }

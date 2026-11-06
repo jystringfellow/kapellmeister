@@ -282,6 +282,13 @@ round back to the implementer. With one reviewer, `any` and `all` both require i
 The gate reads every available review, checks the diff itself, and sorts each finding into
 **blocking** or **nit**, with a reason. It approves when the task is done, verification passed,
 and nothing blocks. Its gate file lists nits without sending them back for another round.
+
+Each successful review is classified as soon as it lands, while other reviewers may still be
+running. km waits for every review and classification before deciding whether to run the gate.
+Review and gate prompts ask for `APPROVE` or `CHANGES` alone on the reply file's last line.
+A bare verdict on the last non-blank line of a review, gate decision or test report is taken as is;
+otherwise the classifier reads the reply.
+
 If approval is withheld, the implementer gets the gate file when present, every available review
 file, and the verification output. When the gate ran, its blocking findings supersede reviewer
 requests; findings it classifies as nits need no change. Each round without approval still counts
@@ -313,13 +320,15 @@ A reviewer whose step errors or leaves no reply after its one nudge is recorded 
 It counts as not approving for `gate_when`; surviving reviews continue through the round, and
 the gate is told which reviewers failed so it can weigh the missing review. If every reviewer
 fails, the run fails. Reviewers share the worktree: a snapshot before they start and another
-after they all finish enforce read-only access as a group. A worktree change fails the run and
-names the whole group, including when a reviewer's step also errors.
+after all reviews and their classifications finish enforce read-only access as a group across
+that whole window. A worktree change fails the run and names the whole group, including when a
+reviewer's step also errors or another review has already been classified.
 
 With one reviewer, replies remain `review-<round>.md` and the terminal label remains
 `km <run> · reviewer`. Multiple reviewers are numbered in config order as `reviewer-1`,
 `reviewer-2`, and so on, with replies `review-<round>-<n>.md` and labels
-`km <run> · reviewer-<n>`. Each review has a sibling `.verdict` file. Replies live under
+`km <run> · reviewer-<n>`. A classified review has a sibling `.verdict` file; a bare verdict skips
+that file and the classifier step. Replies live under
 `.kapellmeister/runs/<run>/` in the worktree.
 
 ## Repository configuration
@@ -412,6 +421,10 @@ and `escalate` records for each decision. A seated tester adds `test-plan`, `tes
 `classify-test`, `verdict-test` and any `left-running` records; both tester steps use the `test` tier. With several reviewers,
 their review, nudge, classification and verdict records include `chair_name` (`reviewer-1`, `reviewer-2`, etc.).
 A failed review has verdict `FAILED` and its error; single-reviewer records omit `chair_name`.
+`verdict-review`, `verdict-gate` and `verdict-test` records include `verdict_source: "reply"` when a
+bare last line supplies the verdict; these replies produce no corresponding `classify-*` record.
+Classified verdicts omit `verdict_source`. A review's `classify-review` and verdict records can
+interleave with other reviewers' progress and telemetry while their reviews are still running.
 
 Beside the telemetry, `result.json` records the worktree's starting commit as `base`. Its `diff_stat`
 compares the final tree against that base, including untracked non-ignored files and changes committed

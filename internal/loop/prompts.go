@@ -84,6 +84,7 @@ The plan is in %s and the implementer's summary is in %s.
 %s
 `+verifiedNote+`Judge whether the change does what the task asks, follows the repository's rules, is correct, and is safe to merge. Look for bugs, missing tests, and scope creep.
 Write your review to %s: state plainly whether you approve the change as it stands, then list every required change with file and line.
+Put APPROVE or CHANGES alone on the last line of the review file.
 Do not modify any file other than %s. When done, reply with one short sentence.
 `, plan, summary, verifyLine(command, v, verifyPath), out, out)
 }
@@ -103,6 +104,7 @@ Read the plan in %s, the implementer's summary in %s, and %s.
 %s%s
 `+verifiedNote+`Check the diff yourself with `+"`git diff HEAD`"+`. Sort every point the reviews raised into **blocking** (the change must not merge until it is fixed) or **nit** (it can merge as is), each with a reason, and add any blocking point you find yourself. Approve when the task is done, the verification passed, and nothing is blocking. List the nits in your decision; they do not stop approval.
 Write to %s: your decision first, then the blocking points and the nits, each with its reason.
+Put APPROVE or CHANGES alone on the last line of the decision file.
 Do not modify any file other than %s. When done, reply with one short sentence.
 `, plan, summary, reviewNote, failedNote, verifyLine(command, v, verifyPath), out, out)
 }

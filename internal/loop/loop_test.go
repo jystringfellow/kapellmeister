@@ -17,23 +17,35 @@ import (
 )
 
 type fakeStepper struct {
-	mu       sync.Mutex
-	t        *testing.T
-	dir      string
-	verdicts map[string][]string
-	actions  map[string]func(Step)
-	errFor   func(Step) error
-	screens  map[string]string
-	steps    []Step
-	released []string
-	next     int
+	mu             sync.Mutex
+	t              *testing.T
+	dir            string
+	verdicts       map[string][]string
+	actions        map[string]func(Step)
+	errFor         func(Step) error
+	screens        map[string]string
+	steps          []Step
+	released       []string
+	next           int
+	active         int
+	contextActions map[string]func(context.Context, Step) error
 }
 
-func (f *fakeStepper) Run(_ context.Context, s Step) (StepResult, error) {
+func (f *fakeStepper) Run(ctx context.Context, s Step) (StepResult, error) {
 	f.mu.Lock()
 	f.steps = append(f.steps, s)
+	f.active++
 	f.mu.Unlock()
-	if act, ok := f.actions[s.Name]; ok {
+	defer func() {
+		f.mu.Lock()
+		f.active--
+		f.mu.Unlock()
+	}()
+	if act, ok := f.contextActions[s.Name]; ok {
+		if err := act(ctx, s); err != nil {
+			return StepResult{}, err
+		}
+	} else if act, ok := f.actions[s.Name]; ok {
 		act(s)
 	} else if strings.HasPrefix(s.Name, "classify-") {
 		f.write(s.ReplyPath, f.pop(strings.TrimPrefix(s.Name, "classify-")))
@@ -53,6 +65,12 @@ func (f *fakeStepper) Run(_ context.Context, s Step) (StepResult, error) {
 		}
 	}
 	return StepResult{TerminalID: id, Status: "completed"}, nil
+}
+
+func (f *fakeStepper) inFlight() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.active
 }
 
 func (f *fakeStepper) Screen(_ context.Context, id string) (string, string, error) {
