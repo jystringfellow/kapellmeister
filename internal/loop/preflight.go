@@ -114,6 +114,31 @@ func awaitFile(ctx context.Context, path string, grace time.Duration) {
 	}
 }
 
+var (
+	permissionQuestionRE = regexp.MustCompile(`(?i)requires confirmation|do you want to|do you trust`)
+	permissionFooterRE   = regexp.MustCompile(`(?i)esc to cancel`)
+)
+
+func FindPermissionDialog(screen string) string {
+	var lines []string
+	for _, line := range strings.Split(screen, "\n") {
+		if strings.TrimSpace(line) != "" {
+			lines = append(lines, strings.TrimSpace(line))
+		}
+	}
+	lines = lines[max(0, len(lines)-blockerLines):]
+	question := -1
+	for i, line := range lines {
+		if question < 0 && permissionQuestionRE.MatchString(line) {
+			question = i
+		}
+		if question >= 0 && i > question && permissionFooterRE.MatchString(line) {
+			return lines[question]
+		}
+	}
+	return ""
+}
+
 func FindBlocker(screen string) string {
 	var lines []string
 	for _, line := range strings.Split(screen, "\n") {

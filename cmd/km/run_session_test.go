@@ -71,7 +71,7 @@ func (f *runCAO) serve(t *testing.T) *httptest.Server {
 			}
 			return
 		case strings.HasSuffix(r.URL.Path, "/output"):
-			json.NewEncoder(w).Encode(map[string]string{"output": "Permission requires confirmation"})
+			json.NewEncoder(w).Encode(map[string]string{"output": "Permission rule Bash(cp*) requires confirmation for this command.\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\nEsc to cancel · Tab to amend"})
 			return
 		case r.Method == "POST" && r.URL.Path == "/terminals/run-step":
 			if f.interrupt {
@@ -209,7 +209,7 @@ func TestPlayPollsTheStandingSessionAndNeverDeletesIt(t *testing.T) {
 	if f.polled == 0 || len(f.created) != 0 || len(f.deleted) != 0 || len(f.terminalDeletes) != 0 {
 		t.Fatalf("polls=%d creates=%v deletes=%v", f.polled, f.created, f.deleted)
 	}
-	if !strings.Contains(out, "  blocked: permission chair — Permission requires confirmation — attach with tmux attach -t cao-standing") {
+	if !strings.Contains(out, "  blocked: permission chair — Permission rule Bash(cp*) requires confirmation for this command. — attach with tmux attach -t cao-standing") {
 		t.Fatalf("progress = %s", out)
 	}
 	requirePlayStillStanding(t, s, &f.fake, out)
