@@ -67,11 +67,14 @@ capabilities:
           description: Install CAO with pip, since uv aborts on the sandbox's 16 KB pages
       startup:
         - command: |
+            set -eu
             mkdir -p "$HOME/.cache"
-            pgrep -x cao-server >/dev/null || exec "$HOME/.local/bin/cao-server" >"$HOME/.cache/cao-server.log" 2>&1
+            export TERM=xterm-256color SHELL=/bin/bash LANG=C.UTF-8
+            tmux has-session -t cao-server 2>/dev/null ||
+              tmux new-session -d -s cao-server -c "$HOME" \
+                "$HOME/.local/bin/cao-server >>$HOME/.cache/cao-server.log 2>&1"
           user: "1000"
-          background: true
-          description: Start cao-server on 127.0.0.1:9889
+          description: Start cao-server on 127.0.0.1:9889 in tmux, whose server gives CAO's sessions a full terminal environment
         - command: |
             set -eu
             cd "$WORKSPACE_DIR"
