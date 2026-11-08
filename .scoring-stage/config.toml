@@ -1,2 +1,2 @@
-agents = ["claude", "codex", "copilot"]
+agents = ["agy", "claude", "codex", "copilot"]
 kits = ["./.scoring-stage/kits/kapellmeister"]
