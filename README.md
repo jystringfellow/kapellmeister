@@ -450,3 +450,7 @@ value wins. Progress reports a new or changed blocker once:
 Use the attachment command to inspect and answer the prompt. km only reports it. Telemetry records
 `blocked` and `unblocked` with the step, round, chair, terminal and blocker line. A forced kill or crash
 can leave the session running.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).
