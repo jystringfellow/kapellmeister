@@ -68,7 +68,7 @@ capabilities:
       startup:
         - command: |
             mkdir -p "$HOME/.cache"
-            pgrep -f cao-server >/dev/null || exec "$HOME/.local/bin/cao-server" >"$HOME/.cache/cao-server.log" 2>&1
+            pgrep -x cao-server >/dev/null || exec "$HOME/.local/bin/cao-server" >"$HOME/.cache/cao-server.log" 2>&1
           user: "1000"
           background: true
           description: Start cao-server on 127.0.0.1:9889
