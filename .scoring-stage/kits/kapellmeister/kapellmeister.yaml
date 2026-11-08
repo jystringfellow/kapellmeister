@@ -24,6 +24,7 @@ capabilities:
       install:
         allow:
           - deb.debian.org
+          - dhi.io
           - security.debian.org
           - go.dev
           - dl.google.com
@@ -58,23 +59,31 @@ capabilities:
           description: Install the Go toolchain
         - command: |
             set -eu
-            uv tool install "cli-agent-orchestrator==${{ kit.args.cao }}"
+            python3 -m venv "$HOME/.local/share/cao"
+            "$HOME/.local/share/cao/bin/pip" install --quiet "cli-agent-orchestrator==${{ kit.args.cao }}"
+            mkdir -p "$HOME/.local/bin"
+            ln -sf "$HOME/.local/share/cao/bin/cao" "$HOME/.local/share/cao/bin/cao-server" "$HOME/.local/bin/"
           user: "1000"
-          description: Install CAO
+          description: Install CAO with pip, since uv aborts on the sandbox's 16 KB pages
+      startup:
+        - command: |
+            mkdir -p "$HOME/.cache"
+            pgrep -f cao-server >/dev/null || exec "$HOME/.local/bin/cao-server" >"$HOME/.cache/cao-server.log" 2>&1
+          user: "1000"
+          background: true
+          description: Start cao-server on 127.0.0.1:9889
         - command: |
             set -eu
             cd "$WORKSPACE_DIR"
             GOBIN="$HOME/.local/bin" go install ./cmd/km
-            for agent in claude codex copilot; do
-              "$HOME/.local/bin/cao" install "profiles/km-$agent.md"
+            for _ in $(seq 1 60); do
+              curl -s -o /dev/null --noproxy '*' --max-time 1 http://127.0.0.1:9889/ && break
+              sleep 1
+            done
+            for profile in profiles/km-*.md; do
+              provider="$(awk '/^provider:/ { print $2; exit }' "$profile")"
+              "$HOME/.local/bin/cao" install "$profile" --provider "$provider"
             done
           user: "1000"
           env: [WORKSPACE_DIR]
-          description: Build km from the workspace and install its base chair profiles
-      startup:
-        - command: |
-            mkdir -p "$HOME/.cache"
-            pgrep -x cao-server >/dev/null || exec "$HOME/.local/bin/cao-server" >"$HOME/.cache/cao-server.log" 2>&1
-          user: "1000"
-          background: true
-          description: Start cao-server on 127.0.0.1:9889
+          description: Build km from the workspace and install its chair profiles in CAO
