@@ -331,6 +331,25 @@ repo. Chairs: `km-claude` (Haiku 5.5), `km-codex` (GPT-6 Luna), `km-copilot` (Ha
     default Codex as `yolo` and counts all five default chairs in one closing note. No live
     session or profile was created or modified.
 
+23. **km's watcher loses a standing permission dialog after about six minutes; pausing the step
+    timeout belongs in CAO.** Probed 2026-11-06 against CAO 2.5.4 with a throwaway repository, a
+    `km-claude` chair whose scratch settings asked for `Bash(chmod*)`, and a 10-minute window
+    polled every 5 s. Each poll compared km's `FindPermissionDialog` over the rendered full output
+    with the same check over tmux `capture-pane` of the chair's window. The dialog appeared at
+    15:54:43 and both agreed until 16:00:41. From 16:00:47 to the end of the window, 44 polls
+    disagreed: the pane still showed `Permission rule Bash(chmod*) requires confirmation for this
+    command.`, but km found nothing. Claude redraws only a small blinking update (about 90 B/s)
+    while the dialog stands, so the dialog's own bytes rolled out of the 32 KB rolling buffer
+    (`state_buffer_max`, settable with `CAO_STATE_BUFFER_MAX`) and the rendered screen came back
+    blank. km would have reported `unblocked`. CAO reported `processing` throughout (finding 16).
+    `GET /terminals/{id}/output/range` reads the on-disk log instead, but no route returns the
+    rendered viewport. km keeps its screen reads unchanged until a release carries #1107
+    (finding 20). A larger `CAO_STATE_BUFFER_MAX` delays the loss in the meantime, and chairs run
+    with prompts off never show the dialog. The session was taken down and no prompt was
+    answered. A step blocked on a prompt also spends its run-step `timeout`, which killed a tester
+    step at 2,415 s on 2026-11-06. Upstream request: awslabs/cli-agent-orchestrator#1249, an
+    opt-in `timeout_excludes_waiting` plus a cap on total waiting time.
+
 ## Implications for the team layer
 
 - km owns the queue of obligations, as decided: a cue is done only when its reply lands in the km
