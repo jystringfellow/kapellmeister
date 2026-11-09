@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -540,20 +541,67 @@ func TestPreflightRetriesAChairOnceWhenNothingNeedsTheUser(t *testing.T) {
 
 func TestPreflightWaitsBrieflyForAReplyWrittenAfterCAOReportsCompleted(t *testing.T) {
 	dir := newRepo(t)
-	fake := &fakeStepper{t: t, dir: dir, verdicts: map[string][]string{}, actions: map[string]func(Step){}}
-	fake.actions["preflight"] = func(s Step) {
+	synctest.Test(t, func(t *testing.T) {
+		fake := &fakeStepper{t: t, dir: dir, actions: map[string]func(Step){}}
+		replyPath := make(chan string, 1)
+		fake.actions["preflight"] = func(s Step) {
+			replyPath <- s.ReplyPath
+		}
+		var results []PreflightResult
+		var err error
+		done := make(chan struct{})
 		go func() {
-			time.Sleep(1500 * time.Millisecond)
-			_ = os.WriteFile(filepath.Join(dir, s.ReplyPath), []byte("ready\n"), 0o644)
+			defer close(done)
+			results, err = Preflight(context.Background(), fake, dir, []Chair{{Provider: "late", Profile: "x"}}, time.Minute)
 		}()
-	}
-	results, err := Preflight(context.Background(), fake, dir, []Chair{{Provider: "late", Profile: "x"}}, time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !results[0].OK || results[0].Retried {
-		t.Fatalf("results = %+v", results)
-	}
+		path := <-replyPath
+		synctest.Wait()
+		fake.write(path, "ready\n")
+		<-done
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(results) != 1 || !results[0].OK || results[0].Retried {
+			t.Fatalf("results = %+v", results)
+		}
+		equal(t, fake.names(), []string{"preflight"})
+	})
+}
+
+func TestPreflightAcceptsAReplyThatExistsBeforeItHasContent(t *testing.T) {
+	dir := newRepo(t)
+	synctest.Test(t, func(t *testing.T) {
+		fake := &fakeStepper{t: t, dir: dir, actions: map[string]func(Step){}}
+		replyPath := make(chan string, 1)
+		calls := 0
+		fake.actions["preflight"] = func(s Step) {
+			calls++
+			if calls == 1 {
+				fake.write(s.ReplyPath, "")
+				replyPath <- s.ReplyPath
+			} else {
+				fake.write(s.ReplyPath, "ready\n")
+			}
+		}
+		var results []PreflightResult
+		var err error
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			results, err = Preflight(context.Background(), fake, dir, []Chair{{Provider: "late", Profile: "x"}}, time.Minute)
+		}()
+		path := <-replyPath
+		synctest.Wait()
+		fake.write(path, "ready\n")
+		<-done
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(results) != 1 || !results[0].OK || results[0].Retried {
+			t.Fatalf("results = %+v", results)
+		}
+		equal(t, fake.names(), []string{"preflight"})
+	})
 }
 
 func TestBlockersAreReadOnlyFromTheBottomOfTheScreen(t *testing.T) {

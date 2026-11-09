@@ -74,9 +74,7 @@ func preflightChair(ctx context.Context, stepper Stepper, worktree string, i int
 	res.TerminalID = out.TerminalID
 	res.Model, res.Honored = out.ReportedModel, out.ModelHonored
 	if err == nil {
-		awaitFile(ctx, abs, preflightReplyGrace)
-		data, rerr := os.ReadFile(abs)
-		if rerr == nil && strings.Contains(strings.ToLower(string(data)), "ready") {
+		if awaitPreflightReply(ctx, abs, preflightReplyGrace) {
 			res.OK = true
 			if out.TerminalID != "" {
 				_ = stepper.Release(context.WithoutCancel(ctx), out.TerminalID)
@@ -100,16 +98,20 @@ const blockerLines = 12
 
 var preflightReplyGrace = 30 * time.Second
 
-func awaitFile(ctx context.Context, path string, grace time.Duration) {
+func awaitPreflightReply(ctx context.Context, path string, grace time.Duration) bool {
 	deadline := time.Now().Add(grace)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(path); err == nil {
-			return
+	for {
+		if data, err := os.ReadFile(path); err == nil && strings.Contains(strings.ToLower(string(data)), "ready") {
+			return true
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return false
 		}
 		select {
 		case <-ctx.Done():
-			return
-		case <-time.After(500 * time.Millisecond):
+			return false
+		case <-time.After(min(500*time.Millisecond, remaining)):
 		}
 	}
 }
