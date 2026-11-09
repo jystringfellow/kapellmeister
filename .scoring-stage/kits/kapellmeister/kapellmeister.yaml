@@ -1,0 +1,92 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+kind: mixin
+displayName: kapellmeister
+description: >-
+  What km needs to conduct its chairs inside the sandbox: Go, tmux, CAO with
+  cao-server started on every boot, km built from the workspace, and km's
+  base chair profiles installed in CAO. CAO's defaults launch these chairs
+  with permission prompts off; the sandbox is the boundary.
+
+args:
+  go:
+    default: "1.27.3"
+    pattern: '^[0-9]+\.[0-9]+(\.[0-9]+)?$'
+    description: Go toolchain version
+  cao:
+    default: "2.5.4"
+    pattern: '^[0-9]+\.[0-9]+\.[0-9]+$'
+    description: cli-agent-orchestrator version from PyPI
+
+capabilities:
+  - type: com.docker.sandbox/network-policy@2
+    config:
+      install:
+        allow:
+          - deb.debian.org
+          - dhi.io
+          - security.debian.org
+          - go.dev
+          - dl.google.com
+          - proxy.golang.org
+          - sum.golang.org
+          - pypi.org
+          - files.pythonhosted.org
+          - github.com
+          - objects.githubusercontent.com
+          - release-assets.githubusercontent.com
+      runtime:
+        allow:
+          - proxy.golang.org
+          - sum.golang.org
+
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      install:
+        - command: |
+            set -eu
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y --no-install-recommends tmux
+          user: "0"
+          description: Install tmux for CAO's terminals
+        - command: |
+            set -eu
+            arch="$(dpkg --print-architecture)"
+            curl -fsSL "https://go.dev/dl/go${{ kit.args.go }}.linux-${arch}.tar.gz" | tar -C /usr/local -xz
+            ln -sf /usr/local/go/bin/go /usr/local/go/bin/gofmt /usr/local/bin/
+          user: "0"
+          description: Install the Go toolchain
+        - command: |
+            set -eu
+            python3 -m venv "$HOME/.local/share/cao"
+            "$HOME/.local/share/cao/bin/pip" install --quiet "cli-agent-orchestrator==${{ kit.args.cao }}"
+            mkdir -p "$HOME/.local/bin"
+            ln -sf "$HOME/.local/share/cao/bin/cao" "$HOME/.local/share/cao/bin/cao-server" "$HOME/.local/bin/"
+          user: "1000"
+          description: Install CAO with pip, since uv aborts on the sandbox's 16 KB pages
+      startup:
+        - command: |
+            set -eu
+            mkdir -p "$HOME/.cache"
+            export TERM=xterm-256color SHELL=/bin/bash LANG=C.UTF-8
+            tmux has-session -t cao-server 2>/dev/null ||
+              tmux new-session -d -s cao-server -c "$HOME" \
+                "$HOME/.local/bin/cao-server >>$HOME/.cache/cao-server.log 2>&1"
+          user: "1000"
+          description: Start cao-server on 127.0.0.1:9889 in tmux, whose server gives CAO's sessions a full terminal environment
+        - command: |
+            set -eu
+            cd "$WORKSPACE_DIR"
+            GOBIN="$HOME/.local/bin" go install ./cmd/km
+            for _ in $(seq 1 60); do
+              curl -s -o /dev/null --noproxy '*' --max-time 1 http://127.0.0.1:9889/ && break
+              sleep 1
+            done
+            for profile in profiles/km-*.md; do
+              provider="$(awk '/^provider:/ { print $2; exit }' "$profile")"
+              "$HOME/.local/bin/cao" install "$profile" --provider "$provider"
+            done
+          user: "1000"
+          env: [WORKSPACE_DIR]
+          description: Build km from the workspace and install its chair profiles in CAO
