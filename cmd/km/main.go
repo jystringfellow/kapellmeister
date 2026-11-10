@@ -9,10 +9,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -291,7 +293,11 @@ func runCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	s, chairs, _, err := lineUp(s, wt, *ensemble, roles)
+	s, chairs, members, err := lineUp(s, wt, *ensemble, roles)
+	if err != nil {
+		return err
+	}
+	seated, err := addressedChairs(wt, *ensemble, chairs, members)
 	if err != nil {
 		return err
 	}
@@ -333,9 +339,9 @@ func runCommand(args []string) error {
 		}
 	}()
 	sum, err := runEnsemble(ctx, ensembleRun{
-		RunID: runID, StateDir: runDir,
+		RunID: runID, StateDir: runDir, Ensemble: *ensemble,
 		Config: loop.Config{
-			ScratchDir: scratch, RunID: runID, Task: text, Worktree: wt, Chairs: chairs, GateWhen: s.GateWhen,
+			ScratchDir: scratch, RunID: runID, Task: text, Worktree: wt, Chairs: seated, GateWhen: s.GateWhen,
 			BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, CheckCommand: checkCmd, Policy: &policy,
 		},
 		Watcher: loop.CAOWatcher{Client: client, Session: podium.SessionName},
@@ -650,6 +656,7 @@ func firstNonEmpty(values ...string) string {
 }
 
 type ensembleRun struct {
+	Ensemble string
 	Watcher  loop.Watcher
 	Command  string
 	RunID    string
@@ -664,6 +671,8 @@ type ensembleSummary struct {
 	loop.Result
 	DurationMS int64  `json:"duration_ms"`
 	DiffStat   string `json:"diff_stat"`
+	Ensemble   string `json:"ensemble,omitempty"`
+	Repository string `json:"repository,omitempty"`
 	Base       string `json:"base"`
 	Head       string `json:"head,omitempty"`
 	HeadMoved  bool   `json:"head_moved,omitempty"`
@@ -703,7 +712,8 @@ func runEnsemble(ctx context.Context, p ensembleRun) (ensembleSummary, error) {
 	if err != nil {
 		return ensembleSummary{}, err
 	}
-	sum := ensembleSummary{Result: res, DurationMS: time.Since(start).Milliseconds(), DiffStat: stat, Base: base}
+	origin, _ := gitOutput(p.Config.Worktree, "config", "--get", "remote.origin.url")
+	sum := ensembleSummary{Result: res, DurationMS: time.Since(start).Milliseconds(), DiffStat: stat, Ensemble: p.Ensemble, Repository: repositoryOf(origin), Base: base}
 	if head != base {
 		sum.Head, sum.HeadMoved = head, true
 	}
@@ -711,6 +721,22 @@ func runEnsemble(ctx context.Context, p ensembleRun) (ensembleSummary, error) {
 		return sum, err
 	}
 	return sum, nil
+}
+
+var scpRemote = regexp.MustCompile(`^(?:[^@/]+@)?([^:/@]+):([^@]+)$`)
+
+func repositoryOf(remote string) string {
+	var host, path string
+	if u, err := url.Parse(remote); err == nil && u.Host != "" {
+		host, path = u.Hostname(), u.Path
+	} else if m := scpRemote.FindStringSubmatch(remote); m != nil && !strings.Contains(remote, "://") {
+		host, path = m[1], m[2]
+	}
+	path = strings.TrimSuffix(strings.Trim(path, "/"), ".git")
+	if host == "" || path == "" {
+		return ""
+	}
+	return strings.ToLower(host) + "/" + path
 }
 
 func gitDiffStat(worktree, base string) (string, error) {
