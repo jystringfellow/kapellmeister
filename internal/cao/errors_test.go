@@ -3,6 +3,7 @@ package cao
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -149,6 +150,44 @@ func TestErrorPathsPreserveEscapedQuestionMarksAndOmitEmptyQueries(t *testing.T)
 			want := "POST /sessions/s%3F/terminals: HTTP 500: boom"
 			if err == nil || err.Error() != want {
 				t.Fatalf("error = %v, want %q", err, want)
+			}
+		})
+	}
+}
+
+func TestOnlyAStructuredRunStepTimeoutMatchesDeadlineExceeded(t *testing.T) {
+	for _, tc := range []struct {
+		name, method, path, body string
+		status                   int
+		timeout                  bool
+	}{
+		{"step timeout", "POST", "/terminals/run-step", `{"detail":{"message":"step did not complete within 3s","kind":"timeout","terminal_id":"t7"}}`, 504, true},
+		{"long timeout message", "POST", "/terminals/run-step", `{"detail":{"message":"` + strings.Repeat("x", 700) + `","kind":"timeout","terminal_id":"t7"}}`, 504, true},
+		{"provider error", "POST", "/terminals/run-step", `{"detail":{"kind":"provider_error","terminal_id":"t7"}}`, 502, false},
+		{"step error", "POST", "/terminals/run-step", `{"detail":{"kind":"error","terminal_id":"t7"}}`, 502, false},
+		{"unknown gateway timeout", "POST", "/terminals/run-step", `{"detail":{"kind":"error","terminal_id":"t7"}}`, 504, false},
+		{"unstructured gateway timeout", "POST", "/terminals/run-step", `{"detail":"timeout"}`, 504, false},
+		{"malformed body", "POST", "/terminals/run-step", `{"detail":{"kind":"timeout"`, 504, false},
+		{"other status", "POST", "/terminals/run-step", `{"detail":{"kind":"timeout","terminal_id":"t7"}}`, 500, false},
+		{"other endpoint", "POST", "/sessions", `{"detail":{"kind":"timeout","terminal_id":"t7"}}`, 504, false},
+		{"other method", "GET", "/terminals/run-step", `{"detail":{"kind":"timeout","terminal_id":"t7"}}`, 504, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer srv.Close()
+			err := NewClient(srv.URL).call(context.Background(), time.Second, tc.method, tc.path, nil, nil)
+			if got := errors.Is(fmt.Errorf("step failed: %w", err), context.DeadlineExceeded); got != tc.timeout {
+				t.Errorf("matches deadline = %t, want %t: %v", got, tc.timeout, err)
+			}
+			var herr *HTTPError
+			if !errors.As(err, &herr) || herr.Status != tc.status || herr.Method != tc.method || herr.Path != tc.path || herr.Body != truncate(tc.body, 600) {
+				t.Fatalf("HTTP error was lost: %+v", err)
+			}
+			if strings.Contains(tc.body, `"terminal_id":"t7"`) && herr.TerminalID != "t7" {
+				t.Errorf("terminal ID = %q, want t7", herr.TerminalID)
 			}
 		})
 	}

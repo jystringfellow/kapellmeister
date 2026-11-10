@@ -19,7 +19,7 @@ func playCommand(args []string) error {
 	fs := flag.NewFlagSet("play", flag.ContinueOnError)
 	rounds := fs.Int("max-rounds", 0, "maximum implement/review/gate rounds (default [run] rounds, else 3)")
 	verify := fs.String("verify", "", "verify command (default [test] verify, then an executable .kapellmeister/verify)")
-	timeout := fs.Duration("timeout", 0, "how long each step gets (default [run] timeout, else 40m)")
+	timeout := fs.Duration("timeout", 0, "how long each step gets (default [run] timeout, else 60m)")
 	caoURL := fs.String("cao", "", "cao-server URL (default $CAO_API_BASE_URL, then [cao] url, else http://127.0.0.1:9889)")
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		args = append(append([]string{}, args[1:]...), args[0])

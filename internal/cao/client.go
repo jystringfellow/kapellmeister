@@ -189,10 +189,12 @@ func (c *Client) call(ctx context.Context, limit time.Duration, method, path str
 		var detail struct {
 			Detail struct {
 				TerminalID string `json:"terminal_id"`
+				Kind       string `json:"kind"`
 			} `json:"detail"`
 		}
 		if json.Unmarshal(data, &detail) == nil {
 			herr.TerminalID = detail.Detail.TerminalID
+			herr.Kind = detail.Detail.Kind
 		}
 		return herr
 	}
@@ -214,6 +216,12 @@ type HTTPError struct {
 	Status       int
 	Body         string
 	TerminalID   string
+	Kind         string
+}
+
+func (e *HTTPError) Is(target error) bool {
+	return target == context.DeadlineExceeded && e.Method == http.MethodPost &&
+		e.Path == "/terminals/run-step" && e.Status == http.StatusGatewayTimeout && e.Kind == "timeout"
 }
 
 func (e *HTTPError) Error() string {

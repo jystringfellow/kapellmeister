@@ -184,7 +184,7 @@ func DefaultSettings() Settings {
 		CAOURL:           "http://127.0.0.1:9889",
 		Rounds:           3,
 		VerifyRetries:    1,
-		Timeout:          40 * time.Minute,
+		Timeout:          60 * time.Minute,
 		ReplyGrace:       15 * time.Minute,
 		PreflightTimeout: 4 * time.Minute,
 		Chairs: map[string]string{

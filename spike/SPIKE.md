@@ -363,6 +363,16 @@ repo. Chairs: `km-claude` (Haiku 5.5), `km-codex` (GPT-6 Luna), `km-copilot` (Ha
     explicit teardown. After cleanup, all seven created terminals returned HTTP 404 and all seven
     tmux sessions were absent. No standing ensemble or profile was modified.
 
+25. **CAO reports a run-step timeout as a structured HTTP 504 before km's client deadline.**
+    The 2026-11-10 tester checked `cli_agent_orchestrator/api/main.py`'s
+    `POST /terminals/run-step` handler: `StepExecutionError(kind="timeout")` returns HTTP 504
+    with `detail.kind = "timeout"`, `detail.message` and `detail.terminal_id`. A scripted CAO
+    reproduced that response after the requested timeout. km's HTTP deadline includes a 90s
+    margin, so it does not identify this server-side timeout. The client preserves the HTTP error
+    and terminal ID while matching this method, route, status and kind to `context.DeadlineExceeded`.
+    `TestOnlyAStructuredRunStepTimeoutMatchesDeadlineExceeded` exercises the response shape,
+    including metadata after a long message; other statuses, kinds and endpoints do not match.
+
 ## Implications for the team layer
 
 - km owns the queue of obligations, as decided: a cue is done only when its reply lands in the km

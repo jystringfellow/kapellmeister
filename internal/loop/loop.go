@@ -177,6 +177,7 @@ type Record struct {
 
 const (
 	Approved        = "approved"
+	Untested        = "untested"
 	RoundsExhausted = "rounds_exhausted"
 	Failed          = "failed"
 	VerdictFailed   = "FAILED"
@@ -245,7 +246,7 @@ func (e *Engine) Run(ctx context.Context) (Result, error) {
 		go func() {
 			path := e.rel("test-plan.md")
 			_, err := e.step(testCtx, Step{Name: "test-plan", Chair: *cfg.Chairs.Tester,
-				Prompt: testPlanPrompt(cfg.Task, plan, path, cfg.ScratchDir), ReplyPath: path})
+				Prompt: testPlanPrompt(cfg.Task, plan, path, cfg.ScratchDir, e.testerTimeout()), ReplyPath: path})
 			testPlanDone <- err
 		}()
 		defer func() {
@@ -351,6 +352,15 @@ func (e *Engine) Run(ctx context.Context) (Result, error) {
 			testPath := e.relf("test-%d.md", round)
 			verdict, err := e.testRound(ctx, round, plan, summary, verify, verifyPath, testPath)
 			if err != nil {
+				var timeout *testTimeoutError
+				if errors.As(err, &timeout) {
+					res.Outcome = Untested
+					res.Reason = fmt.Sprintf("change approved by the gate but testing did not finish: test step timed out: %s", timeout.Err)
+					if info, err := os.Stat(filepath.Join(cfg.Worktree, timeout.Path)); err == nil && info.Mode().IsRegular() {
+						res.Reason += "; partial report: " + timeout.Path
+					}
+					return res, nil
+				}
 				return e.fail(res, err), nil
 			}
 			if verdict == "APPROVE" {
@@ -375,17 +385,35 @@ func (e *Engine) Run(ctx context.Context) (Result, error) {
 	return res, nil
 }
 
+type testTimeoutError struct {
+	Path string
+	Err  error
+}
+
+func (e *testTimeoutError) Error() string { return e.Err.Error() }
+func (e *testTimeoutError) Unwrap() error { return e.Err }
+
+func (e *Engine) testerTimeout() time.Duration {
+	if chair := e.Config.Chairs.Tester; chair != nil && chair.Timeout != 0 {
+		return chair.Timeout
+	}
+	return e.Config.StepTimeout
+}
+
 func (e *Engine) testRound(ctx context.Context, round int, plan, summary string, verify VerifyResult, verifyPath, path string) (string, error) {
 	defer e.reportLeftRunning(round)
 	errs, err := e.readOnlySteps(ctx, []Step{{
 		Name: "test", Round: round, Chair: *e.Config.Chairs.Tester,
-		Prompt:    testPrompt(e.Config.Task, plan, e.rel("test-plan.md"), summary, e.Config.VerifyCommand, verify, verifyPath, e.Config.ScratchDir, path),
+		Prompt:    testPrompt(e.Config.Task, plan, e.rel("test-plan.md"), summary, e.Config.VerifyCommand, verify, verifyPath, e.Config.ScratchDir, path, e.testerTimeout()),
 		ReplyPath: path,
 	}})
 	if err != nil {
 		return "", err
 	}
 	if errs[0] != nil {
+		if errors.Is(errs[0], context.DeadlineExceeded) && ctx.Err() == nil {
+			return "", &testTimeoutError{Path: path, Err: errs[0]}
+		}
 		return "", errs[0]
 	}
 	return e.verdict(ctx, round, "test", path, "")

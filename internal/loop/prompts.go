@@ -3,6 +3,7 @@ package loop
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 const ground = `You are the %s in a kapellmeister engineering loop, working in this git worktree.
@@ -109,28 +110,37 @@ Do not modify any file other than %s. When done, reply with one short sentence.
 `, plan, summary, reviewNote, failedNote, verifyLine(command, v, verifyPath), out, out)
 }
 
-func testPlanPrompt(task, plan, out, scratch string) string {
+func testPlanPrompt(task, plan, out, scratch string, timeout time.Duration) string {
+	limit := ""
+	if timeout > 0 {
+		limit = fmt.Sprintf("The test step has a time limit of %s. Plan scenarios ordered by risk (highest first) and sized to fit that limit.\n", timeout)
+	}
 	return preamble("tester") + taskBlock(task) + fmt.Sprintf(`
 Read the plan in %s. Plan how to exercise the change end to end in its real environment, the way a user would, including hostile conditions: missing, stale or concurrent state and external services misbehaving. Do not restate unit tests.
-Stay blind to the implementation: do not look at git diff or git status, or at the implementer's output or reviews.
+%sStay blind to the implementation: do not look at git diff or git status, or at the implementer's output or reviews.
 Use only %s for scratch files, build output, scratch repositories and server state.
 Write the test plan to %s and change no other file. When done, reply with one short sentence.
-`, plan, scratch, out)
+`, plan, limit, scratch, out)
 }
 
-func testPrompt(task, plan, testPlan, summary, command string, v VerifyResult, verifyPath, scratch, out string) string {
+func testPrompt(task, plan, testPlan, summary, command string, v VerifyResult, verifyPath, scratch, out string, timeout time.Duration) string {
+	limit := ""
+	if timeout > 0 {
+		limit = fmt.Sprintf("The test step has a time limit of %s. Stop starting new scenarios when about %s remains (the last tenth of the limit), leaving time to clean up and write your verdict.\n", timeout, timeout/10)
+	}
 	return preamble("tester") + taskBlock(task) + fmt.Sprintf(`
 Read the plan in %s, the test plan in %s and the implementation summary in %s.
 %s
-`+verifiedNote+`Execute the test plan against the real environment, the way a user would.
-Use only %s for scratch files, build output, scratch repositories and server state.
+`+verifiedNote+`Execute the test plan against the real environment, the way a user would. Run the highest-risk scenarios first.
+%sUse only %s for scratch files, build output, scratch repositories and server state.
 Never run a git command that writes (init, add, commit, checkout, reset, stash and so on) anywhere except a repository you created inside %s. Run each such command as `+"`git -C <that repository> ...`"+`.
 Append the PID of every long-running process you start to %s/pids, one per line, and stop them all before finishing.
 Before finishing, clean up anything you create outside the worktree, including processes and sessions. Touch nothing you did not create.
 Do not change any tracked or untracked non-ignored file in the worktree.
-Write to %s: each scenario, what you ran, and pass or fail with evidence. End with APPROVE if everything passed, or CHANGES with the failures.
+Append each scenario's result to %s as soon as that scenario finishes: what you ran, pass or fail, and evidence. Do not wait until the end to write the report.
+Write the verdict last: APPROVE if everything passed, or CHANGES if there were failures, alone on the last line of the report.
 When done, reply with one short sentence.
-`, plan, testPlan, summary, verifyLine(command, v, verifyPath), scratch, scratch, scratch, out)
+`, plan, testPlan, summary, verifyLine(command, v, verifyPath), limit, scratch, scratch, scratch, out)
 }
 
 func classifyPrompt(subject, path, out string) string {

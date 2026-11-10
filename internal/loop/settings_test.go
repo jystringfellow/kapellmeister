@@ -24,7 +24,7 @@ func TestWithoutConfigFilesSettingsAreTheBuiltInDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := DefaultSettings()
-	if len(s.Files) != 0 || s.CAOURL != want.CAOURL || s.Rounds != 3 || s.Timeout != 40*time.Minute || s.Chairs["implementer"] != "codex" {
+	if len(s.Files) != 0 || s.CAOURL != want.CAOURL || s.Rounds != 3 || s.Timeout != 60*time.Minute || s.Chairs["implementer"] != "codex" {
 		t.Fatalf("settings = %+v", s)
 	}
 }
@@ -407,5 +407,15 @@ func TestBlockerPollingDefaultsToTwentySecondsAndCanBeOverriddenOrDisabled(t *te
 				t.Fatalf("poll = %s", s.BlockerPoll)
 			}
 		})
+	}
+}
+
+func TestTheDefaultStepTimeoutIsSixtyMinutes(t *testing.T) {
+	if got := DefaultSettings().Timeout; got != 60*time.Minute {
+		t.Errorf("default timeout = %s, want 60m", got)
+	}
+	s, err := LoadSettings(writeUserConfig(t, "[run]\ntimeout = '10m'\n"), "")
+	if err != nil || s.Timeout != 10*time.Minute {
+		t.Fatalf("explicit timeout = %s, error = %v", s.Timeout, err)
 	}
 }

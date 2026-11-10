@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"flag"
 	"os"
 	"path/filepath"
@@ -414,5 +415,14 @@ func TestConfigShowsReviewerListsAndGateWhen(t *testing.T) {
 	printEnsembles(&out, s)
 	if !strings.Contains(out.String(), "reviewer=copilot,claude@large gate_when=always") {
 		t.Fatal(out.String())
+	}
+}
+
+func TestAnUntestedOutcomeExitsNonZeroAfterPrintingItsReason(t *testing.T) {
+	var out bytes.Buffer
+	reason := "change approved by the gate but testing did not finish: timeout"
+	err := finishRun(&out, ensembleSummary{Result: loop.Result{Outcome: loop.Untested, Rounds: 1, Reason: reason}})
+	if !errors.Is(err, errNotApproved) || !strings.Contains(out.String(), "untested after 1 round(s) in 0s: "+reason) {
+		t.Fatalf("error = %v, output = %q", err, out.String())
 	}
 }

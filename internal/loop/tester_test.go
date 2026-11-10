@@ -4,12 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jystringfellow/kapellmeister/internal/cao"
 )
 
 func testerEngine(t *testing.T) (*Engine, *fakeStepper) {
@@ -399,5 +404,245 @@ func TestATestReportWithoutABareVerdictLineIsStillClassified(t *testing.T) {
 	}
 	if n := len(testerSteps(f, "classify-test")); n != 1 {
 		t.Errorf("classify-test ran %d time(s)", n)
+	}
+}
+
+func TestTheTestPlanAndTestPromptsStateTheTestersEffectiveTimeLimit(t *testing.T) {
+	for _, chairTimeout := range []time.Duration{0, 25 * time.Minute} {
+		t.Run(chairTimeout.String(), func(t *testing.T) {
+			e, f := testerEngine(t)
+			e.Config.StepTimeout = 60 * time.Minute
+			e.Config.Chairs.Tester.Timeout = chairTimeout
+			want := e.Config.StepTimeout
+			if chairTimeout != 0 {
+				want = chairTimeout
+			}
+			if res := run(t, e); res.Outcome != Approved {
+				t.Fatal(res)
+			}
+			for _, name := range []string{"test-plan", "test"} {
+				s := testerSteps(f, name)[0]
+				if s.Timeout != want || !strings.Contains(s.Prompt, "The test step has a time limit of "+want.String()+".") {
+					t.Errorf("%s timeout = %s, want %s in prompt: %s", name, s.Timeout, want, s.Prompt)
+				}
+				if chairTimeout != 0 && strings.Contains(s.Prompt, e.Config.StepTimeout.String()) {
+					t.Errorf("%s prompt gives global timeout instead of chair override: %s", name, s.Prompt)
+				}
+			}
+		})
+	}
+}
+
+func TestTheTestPlanPromptAsksForScenariosOrderedByRiskAndSizedToTheLimit(t *testing.T) {
+	e, f := testerEngine(t)
+	e.Config.StepTimeout = 60 * time.Minute
+	run(t, e)
+	p := testerSteps(f, "test-plan")[0].Prompt
+	for _, want := range []string{"ordered by risk (highest first)", "sized to fit that limit"} {
+		if !strings.Contains(p, want) {
+			t.Errorf("test-plan prompt lacks %q: %s", want, p)
+		}
+	}
+}
+
+func TestTheTestPromptTellsTheTesterToRunHighestRiskFirstAndStopStartingScenariosInTheLastTenth(t *testing.T) {
+	for _, limit := range []time.Duration{60 * time.Minute, 25 * time.Minute} {
+		t.Run(limit.String(), func(t *testing.T) {
+			e, f := testerEngine(t)
+			e.Config.Chairs.Tester.Timeout = limit
+			run(t, e)
+			p := testerSteps(f, "test")[0].Prompt
+			for _, want := range []string{"Run the highest-risk scenarios first", "Stop starting new scenarios when about " + (limit / 10).String() + " remains (the last tenth of the limit)", "clean up and write your verdict"} {
+				if !strings.Contains(p, want) {
+					t.Errorf("test prompt lacks %q: %s", want, p)
+				}
+			}
+		})
+	}
+}
+
+func TestTheTestPromptTellsTheTesterToAppendEachScenarioResultAsItFinishesAndWriteTheVerdictLast(t *testing.T) {
+	e, f := testerEngine(t)
+	run(t, e)
+	s := testerSteps(f, "test")[0]
+	for _, want := range []string{"Append each scenario's result to " + s.ReplyPath + " as soon as that scenario finishes", "what you ran, pass or fail, and evidence", "Write the verdict last", "APPROVE if everything passed", "CHANGES", "alone on the last line"} {
+		if !strings.Contains(s.Prompt, want) {
+			t.Errorf("test prompt lacks %q: %s", want, s.Prompt)
+		}
+	}
+}
+
+func TestAZeroTimeoutOmitsTheTimeLimitSentences(t *testing.T) {
+	e, f := testerEngine(t)
+	run(t, e)
+	for _, name := range []string{"test-plan", "test"} {
+		p := testerSteps(f, name)[0].Prompt
+		for _, forbidden := range []string{"time limit", "0s", "last tenth"} {
+			if strings.Contains(p, forbidden) {
+				t.Errorf("%s prompt contains %q: %s", name, forbidden, p)
+			}
+		}
+	}
+}
+
+func TestATestTimeoutAfterAnApprovingGateEndsUntestedAndKeepsTheRunUsable(t *testing.T) {
+	serverTimeout := runStepHTTPError(t, 504, "timeout")
+	for _, timeout := range []error{context.DeadlineExceeded, &cao.TimeoutError{Method: "POST", Path: "/terminals/run-step", Limit: time.Hour}, serverTimeout} {
+		t.Run(timeout.Error(), func(t *testing.T) {
+			e, f := testerEngine(t)
+			f.verdicts["gate"] = []string{"CHANGES", "APPROVE"}
+			f.actions["implement"] = func(s Step) {
+				f.write("change.txt", "approved change")
+				f.write(s.ReplyPath, "implemented")
+			}
+			const partial = "scenario one: pass, evidence: exercised live\n"
+			f.actions["test"] = func(s Step) { f.write(s.ReplyPath, partial) }
+			f.errFor = func(s Step) error {
+				if s.Name == "test" {
+					return fmt.Errorf("test step: %w", timeout)
+				}
+				return nil
+			}
+			res := run(t, e)
+			if res.Outcome != Untested || res.Rounds != 2 || res.Worktree != f.dir || res.RunDir != filepath.Join(f.dir, RunDirRel(e.Config.RunID)) {
+				t.Fatalf("result: %+v", res)
+			}
+			path := e.rel("test-2.md")
+			for _, want := range []string{"approved", "gate", "testing did not finish", timeout.Error(), path} {
+				if !strings.Contains(res.Reason, want) {
+					t.Errorf("reason lacks %q: %s", want, res.Reason)
+				}
+			}
+			data, err := os.ReadFile(filepath.Join(f.dir, path))
+			if err != nil || string(data) != partial {
+				t.Fatalf("partial report = %q, error = %v", data, err)
+			}
+			data, err = os.ReadFile(filepath.Join(f.dir, "change.txt"))
+			if err != nil || string(data) != "approved change" {
+				t.Fatalf("change = %q, error = %v", data, err)
+			}
+			cmd := exec.Command("git", "-C", f.dir, "diff", "HEAD")
+			diff, err := cmd.Output()
+			if err != nil || !strings.Contains(string(diff), "+approved change") {
+				t.Fatalf("diff = %s, error = %v", diff, err)
+			}
+			if len(testerSteps(f, "classify-test")) != 0 {
+				t.Fatal(f.names())
+			}
+		})
+	}
+}
+
+func TestATestTimeoutWithoutAReportStillEndsUntestedWithoutNamingAReport(t *testing.T) {
+	e, f := testerEngine(t)
+	f.actions["test"] = func(Step) {}
+	f.errFor = func(s Step) error {
+		if s.Name == "test" {
+			return context.DeadlineExceeded
+		}
+		return nil
+	}
+	res := run(t, e)
+	if res.Outcome != Untested || !strings.Contains(res.Reason, "testing did not finish") || strings.Contains(res.Reason, e.rel("test-1.md")) {
+		t.Fatalf("result: %+v", res)
+	}
+}
+
+func TestOtherTestStepFailuresAndTimeoutsInOtherStepsStillFail(t *testing.T) {
+	for _, step := range []string{"plan", "implement", "test-plan", "gate", "classify-test", "test"} {
+		t.Run(step, func(t *testing.T) {
+			e, f := testerEngine(t)
+			var failure error = context.DeadlineExceeded
+			if step == "test" {
+				failure = errors.New("live execution failed")
+			}
+			f.errFor = func(s Step) error {
+				if s.Name == step {
+					return failure
+				}
+				return nil
+			}
+			if res := run(t, e); res.Outcome != Failed || !strings.Contains(res.Reason, failure.Error()) {
+				t.Fatalf("result: %+v", res)
+			}
+		})
+	}
+}
+
+func TestAParentCancellationDuringTestingStillFailsTheRun(t *testing.T) {
+	e, f := testerEngine(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.contextActions = map[string]func(context.Context, Step) error{
+		"test": func(context.Context, Step) error {
+			cancel()
+			return context.DeadlineExceeded
+		},
+	}
+	res, err := e.Run(ctx)
+	if err != nil || res.Outcome != Failed {
+		t.Fatalf("result: %+v, error = %v", res, err)
+	}
+}
+
+func TestATimedOutTesterThatModifiesTheWorktreeStillFailsTheRun(t *testing.T) {
+	e, f := testerEngine(t)
+	f.actions["test"] = func(Step) { f.write("extra.txt", "tester change") }
+	f.errFor = func(s Step) error {
+		if s.Name == "test" {
+			return context.DeadlineExceeded
+		}
+		return nil
+	}
+	res := run(t, e)
+	if res.Outcome != Failed || !strings.Contains(res.Reason, "modified the worktree") {
+		t.Fatalf("result: %+v", res)
+	}
+}
+
+func runStepHTTPError(t *testing.T, status int, kind string) error {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(status)
+		_, _ = fmt.Fprintf(w, `{"detail":{"message":"step did not complete","kind":%q,"terminal_id":"t7"}}`, kind)
+	}))
+	t.Cleanup(srv.Close)
+	_, err := cao.NewClient(srv.URL).RunStep(context.Background(), cao.StepRequest{Timeout: 3})
+	if err == nil {
+		t.Fatal("expected run-step HTTP error")
+	}
+	return err
+}
+
+func TestServerFailuresOutsideATestTimeoutStillFail(t *testing.T) {
+	for _, tc := range []struct {
+		step, kind string
+		status     int
+	}{
+		{"plan", "timeout", 504},
+		{"implement", "timeout", 504},
+		{"test-plan", "timeout", 504},
+		{"review", "timeout", 504},
+		{"gate", "timeout", 504},
+		{"classify-test", "timeout", 504},
+		{"test", "error", 502},
+		{"test", "provider_error", 502},
+		{"test", "error", 504},
+		{"test", "", 504},
+		{"test", "timeout", 500},
+	} {
+		t.Run(fmt.Sprintf("%s/%d/%s", tc.step, tc.status, tc.kind), func(t *testing.T) {
+			e, f := testerEngine(t)
+			failure := runStepHTTPError(t, tc.status, tc.kind)
+			f.errFor = func(s Step) error {
+				if s.Name == tc.step {
+					return failure
+				}
+				return nil
+			}
+			if res := run(t, e); res.Outcome != Failed || !strings.Contains(res.Reason, failure.Error()) {
+				t.Fatalf("result: %+v", res)
+			}
+		})
 	}
 }
