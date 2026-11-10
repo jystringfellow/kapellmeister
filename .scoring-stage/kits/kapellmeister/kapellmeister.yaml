@@ -3,7 +3,8 @@ schemaVersion: "3"
 kind: mixin
 displayName: kapellmeister
 description: >-
-  What km needs to conduct its chairs inside the sandbox: Go, tmux, CAO with
+  What km needs to conduct its chairs inside the sandbox: Go with a C
+  toolchain for the race detector, tmux, CAO with
   cao-server started on every boot, km built from the workspace, and km's
   base chair profiles installed in CAO. CAO's defaults launch these chairs
   with permission prompts off; the sandbox is the boundary.
@@ -47,9 +48,9 @@ capabilities:
             set -eu
             export DEBIAN_FRONTEND=noninteractive
             apt-get update
-            apt-get install -y --no-install-recommends tmux
+            apt-get install -y --no-install-recommends tmux gcc libc6-dev
           user: "0"
-          description: Install tmux for CAO's terminals
+          description: Install tmux for CAO's terminals, and a C toolchain so go test -race runs
         - command: |
             set -eu
             arch="$(dpkg --print-architecture)"
