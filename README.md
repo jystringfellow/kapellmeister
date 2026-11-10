@@ -237,7 +237,7 @@ plus 90s for CAO’s readiness wait; hitting a bound reports the method, path an
 url = "http://127.0.0.1:9889"
 
 [run]
-timeout = "40m"                     # each agent step
+timeout = "60m"                     # each agent step
 reply_grace = "15m"
 preflight_timeout = "4m"
 blocker_poll = "20s"
@@ -299,14 +299,24 @@ toward escalation.
 
 When a tester is seated, it writes `test-plan.md` from the task and plan alone, blind to the
 implementation, while round 1 implements. The plan targets end to end use in the real environment,
-including missing, stale or concurrent state and misbehaving services. After the gate approves,
-km waits for the test plan, then runs `test` in the tester's chair and reads the verdict from
-`test-<round>.md`: a bare `APPROVE` or `CHANGES` last line is taken as is; otherwise the classifier reads the report. Only a test APPROVE finishes the run. Any other verdict sends the test
-report back as the leading feedback, with instructions to reproduce each failure in a failing
-regression test before fixing it. Later rounds reuse the same test plan.
-A failed test-plan or test step fails the run. The test step gets the same worktree check as the
-gate and reviewers. Both tester prompts restrict scratch files, build output, scratch repositories
-and server state to the absolute `<state dir>/runs/<run id>/scratch` directory, outside the worktree.
+including missing, stale or concurrent state and misbehaving services. Both tester prompts state the
+test step's effective time limit, including ensemble, section and chair overrides. The plan orders
+scenarios by risk and sizes them to fit that limit. The tester runs the highest-risk scenarios first
+and stops starting new ones with about the last tenth remaining, leaving time to clean up and write
+its verdict. It appends each scenario's result and evidence to the report as soon as the scenario
+finishes, and writes the verdict line last. After the gate approves, km waits for the test plan,
+then runs `test` in the tester's chair and reads the verdict from `test-<round>.md`: a bare `APPROVE`
+or `CHANGES` last line is taken as is; otherwise the classifier reads the report. Only a test
+APPROVE yields an `approved` outcome. Any other verdict sends the test report back as the leading
+feedback, with instructions to reproduce each failure in a failing regression test before fixing
+it. Later rounds reuse the same test plan.
+A test-step timeout after gate approval ends `untested`: the change was approved but testing did
+not finish. The outcome names the partial report if it exists and preserves the worktree and its
+uncommitted change as an approved run would. Other test-step failures, and a timeout or failure in
+any other step, still fail the run. The test step gets the same worktree check as the gate and
+reviewers; a tester that modifies the worktree still fails the run even if it also times out.
+Both tester prompts restrict scratch files, build output, scratch repositories and server state to
+the absolute `<state dir>/runs/<run id>/scratch` directory, outside the worktree.
 `km run` and `km play` create it before starting the score and refuse to start if it is inside a git
 work tree; set `KAPELLMEISTER_STATE_DIR` outside any repository. The test prompt permits git commands
 that write only in repositories the tester created inside scratch, always using `git -C <repository>`.
@@ -412,9 +422,9 @@ in the selected ensemble to turn escalation off for that run. `true` or an omitt
 `[sizing] escalate_after` in charge; an ensemble cannot enable escalation when the repository sets
 `escalate_after = 0`.
 
-`km run` and `km play` exit 0 only for an `approved` outcome. Every other outcome, including a failed,
-interrupted or rounds-exhausted run, exits 1 after printing the outcome and diff-stat. Missing or
-unknown subcommands exit 2.
+`km run` and `km play` exit 0 only for an `approved` outcome. Every other outcome, including `untested`
+(approved but testing timed out), a failed, interrupted or rounds-exhausted run, exits 1 after
+printing the outcome and diff-stat. Missing or unknown subcommands exit 2.
 
 ## Telemetry
 

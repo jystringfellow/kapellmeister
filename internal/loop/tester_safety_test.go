@@ -115,6 +115,9 @@ func TestLiveProcessesAreReportedAfterEveryTestStepIncludingFailureTimeoutInterr
 			if outcome == "passed" || outcome == "two rounds" {
 				wantOutcome = Approved
 			}
+			if outcome == "timeout" {
+				wantOutcome = Untested
+			}
 			if res.Outcome != wantOutcome {
 				t.Fatalf("result: %+v", res)
 			}
