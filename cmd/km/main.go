@@ -348,6 +348,8 @@ func runCommand(args []string) error {
 }
 
 func preflightCommand(args []string) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 	fs := flag.NewFlagSet("preflight", flag.ContinueOnError)
 	worktree := fs.String("worktree", "", "git worktree to start the chairs in")
 	agents := fs.String("agents", "", "agents to check (default "+strings.Join(loop.AgentNames(), ",")+")")
@@ -386,14 +388,14 @@ func preflightCommand(args []string) error {
 		if err := pinned.Validate(); err != nil {
 			return err
 		}
-		if err := ensureProfiles(context.Background(), client, &pinned, map[string][]loop.Chair{"plan": chairs}); err != nil {
+		if err := ensureProfiles(ctx, client, &pinned, map[string][]loop.Chair{"plan": chairs}); err != nil {
 			return err
 		}
 		for i, chair := range chairs {
 			chairs[i], _ = pinned.At(chair, *tier)
 		}
 	}
-	return preflight(context.Background(), client, wt, s.PreflightTimeout, chairs...)
+	return preflight(ctx, client, wt, s.PreflightTimeout, chairs...)
 }
 
 func configCommand(args []string) error {
@@ -591,6 +593,17 @@ func preflight(ctx context.Context, client *cao.Client, worktree string, timeout
 	unique := loop.UniqueChairs(chairs...)
 	fmt.Printf("→ preflight %d chair(s)\n", len(unique))
 	results, err := loop.Preflight(ctx, loop.CAOStepper{Client: client}, worktree, unique, timeout)
+	unseated := 0
+	for _, r := range results {
+		unseated += r.Unseated
+		for _, problem := range r.TeardownErrors {
+			fmt.Fprintf(os.Stderr, "preflight teardown failed for %s\n", problem)
+		}
+	}
+	if ctx.Err() != nil {
+		fmt.Printf("preflight interrupted; took down %d session(s)\n", unseated)
+		return ctx.Err()
+	}
 	if err != nil {
 		return err
 	}

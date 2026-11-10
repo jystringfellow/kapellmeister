@@ -101,6 +101,18 @@ type Stepper interface {
 	Release(ctx context.Context, terminalID string) error
 }
 
+type Seat struct {
+	TerminalID string
+	Session    string
+	Model      string
+	Honored    *bool
+}
+
+type Seater interface {
+	Seat(ctx context.Context, name string, chair Chair, dir string) (Seat, error)
+	Unseat(ctx context.Context, session string) error
+}
+
 type Screener interface {
 	Screen(ctx context.Context, terminalID string) (session, text string, err error)
 }

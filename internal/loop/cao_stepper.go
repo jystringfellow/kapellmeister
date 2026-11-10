@@ -3,6 +3,7 @@ package loop
 import (
 	"context"
 	"errors"
+	"net/http"
 	"os/exec"
 	"time"
 
@@ -68,4 +69,29 @@ func (c CAOStepper) Screen(ctx context.Context, terminalID string) (string, stri
 	}
 	out, err := exec.CommandContext(ctx, "tmux", "capture-pane", "-p", "-t", info.SessionName).Output()
 	return info.SessionName, string(out), err
+}
+
+func (c CAOStepper) Seat(ctx context.Context, name string, chair Chair, dir string) (Seat, error) {
+	t, err := c.Client.CreateSession(ctx, name, cao.Launch{Provider: chair.Provider, Profile: chair.Profile, Model: chair.Model, WorkingDirectory: dir})
+	var herr *cao.HTTPError
+	if errors.As(err, &herr) && herr.TerminalID != "" {
+		t.ID = herr.TerminalID
+		if info, lookupErr := c.Client.Terminal(ctx, t.ID); lookupErr == nil {
+			t = info
+		}
+	}
+	seat := Seat{TerminalID: t.ID, Session: t.SessionName, Honored: t.ModelHonored}
+	if t.Model != nil {
+		seat.Model = *t.Model
+	}
+	return seat, err
+}
+
+func (c CAOStepper) Unseat(ctx context.Context, session string) error {
+	err := c.Client.DeleteSession(ctx, session)
+	var herr *cao.HTTPError
+	if errors.As(err, &herr) && herr.Status == http.StatusNotFound {
+		return nil
+	}
+	return err
 }

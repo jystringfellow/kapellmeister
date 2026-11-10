@@ -27,6 +27,8 @@ type fakeStepper struct {
 	screens        map[string]string
 	steps          []Step
 	released       []string
+	seated         map[string]string
+	unseated       []string
 	next           int
 	active         int
 	contextActions map[string]func(context.Context, Step) error
@@ -66,6 +68,30 @@ func (f *fakeStepper) Run(ctx context.Context, s Step) (StepResult, error) {
 		}
 	}
 	return StepResult{TerminalID: id, Status: "completed"}, nil
+}
+
+func (f *fakeStepper) Seat(_ context.Context, name string, _ Chair, _ string) (Seat, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.next++
+	id := fmt.Sprintf("t%d", f.next)
+	if f.seated == nil {
+		f.seated = map[string]string{}
+	}
+	session := name
+	if !strings.HasPrefix(session, "cao-") {
+		session = "cao-" + session
+	}
+	f.seated[session] = id
+	return Seat{TerminalID: id, Session: session}, nil
+}
+
+func (f *fakeStepper) Unseat(_ context.Context, session string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.unseated = append(f.unseated, session)
+	f.released = append(f.released, f.seated[session])
+	return nil
 }
 
 func (f *fakeStepper) inFlight() int {
@@ -332,7 +358,10 @@ func TestPreflightPassesReadyChairsAndReportsBlockedOnes(t *testing.T) {
 	if len(results) != 2 || !results[0].OK || results[1].OK {
 		t.Fatalf("results = %+v", results)
 	}
-	if results[1].Blocker != "1 hook needs review before it can run." || results[1].Session == "" {
+	if results[0].Session != "" || results[0].TerminalID != "" || len(fake.unseated) != 1 {
+		t.Fatalf("passing chair was not unseated: %+v, unseated %v", results[0], fake.unseated)
+	}
+	if results[1].Blocker != "1 hook needs review before it can run." || fake.seated[results[1].Session] != results[1].TerminalID {
 		t.Fatalf("blocked result = %+v", results[1])
 	}
 	for _, id := range fake.released {
