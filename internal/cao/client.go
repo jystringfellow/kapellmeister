@@ -8,15 +8,19 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 )
 
 type Client struct {
-	BaseURL string
-	HTTP    *http.Client
+	BaseURL       string
+	HTTP          *http.Client
+	Timeout       time.Duration
+	LaunchTimeout time.Duration
+	StepMargin    time.Duration
 }
 
 func NewClient(baseURL string) *Client {
-	return &Client{BaseURL: baseURL, HTTP: &http.Client{}}
+	return &Client{BaseURL: baseURL, HTTP: &http.Client{}, Timeout: 30 * time.Second, LaunchTimeout: 90 * time.Second, StepMargin: 90 * time.Second}
 }
 
 type StepRequest struct {
@@ -52,13 +56,17 @@ type Terminal struct {
 
 func (c *Client) RunStep(ctx context.Context, req StepRequest) (StepResponse, error) {
 	var resp StepResponse
-	err := c.call(ctx, http.MethodPost, "/terminals/run-step", req, &resp)
+	var limit time.Duration
+	if req.Timeout > 0 {
+		limit = time.Duration(req.Timeout*float64(time.Second)) + c.StepMargin
+	}
+	err := c.call(ctx, limit, http.MethodPost, "/terminals/run-step", req, &resp)
 	return resp, err
 }
 
 func (c *Client) Terminal(ctx context.Context, id string) (Terminal, error) {
 	var t Terminal
-	err := c.call(ctx, http.MethodGet, "/terminals/"+id, nil, &t)
+	err := c.call(ctx, c.Timeout, http.MethodGet, "/terminals/"+id, nil, &t)
 	return t, err
 }
 
@@ -69,12 +77,12 @@ type Profile struct {
 
 func (c *Client) Profiles(ctx context.Context) ([]Profile, error) {
 	var out []Profile
-	err := c.call(ctx, http.MethodGet, "/agents/profiles", nil, &out)
+	err := c.call(ctx, c.Timeout, http.MethodGet, "/agents/profiles", nil, &out)
 	return out, err
 }
 
 func (c *Client) DeleteTerminal(ctx context.Context, id string) error {
-	return c.call(ctx, http.MethodDelete, "/terminals/"+id, nil, nil)
+	return c.call(ctx, c.Timeout, http.MethodDelete, "/terminals/"+id, nil, nil)
 }
 
 type Launch struct {
@@ -96,42 +104,57 @@ func (c *Client) CreateSession(ctx context.Context, name string, l Launch) (Term
 	q := l.query()
 	q.Set("session_name", name)
 	var t Terminal
-	err := c.call(ctx, http.MethodPost, "/sessions?"+q.Encode(), nil, &t)
+	err := c.call(ctx, c.LaunchTimeout, http.MethodPost, "/sessions?"+q.Encode(), nil, &t)
 	return t, err
 }
 
 func (c *Client) AddTerminal(ctx context.Context, session string, l Launch) (Terminal, error) {
 	var t Terminal
-	err := c.call(ctx, http.MethodPost, "/sessions/"+url.PathEscape(session)+"/terminals?"+l.query().Encode(), nil, &t)
+	err := c.call(ctx, c.LaunchTimeout, http.MethodPost, "/sessions/"+url.PathEscape(session)+"/terminals?"+l.query().Encode(), nil, &t)
 	return t, err
 }
 
 func (c *Client) DeleteSession(ctx context.Context, session string) error {
-	return c.call(ctx, http.MethodDelete, "/sessions/"+url.PathEscape(session), nil, nil)
+	return c.call(ctx, c.Timeout, http.MethodDelete, "/sessions/"+url.PathEscape(session), nil, nil)
 }
 
 func (c *Client) SetGroup(ctx context.Context, id string, group []string) error {
-	return c.call(ctx, http.MethodPatch, "/terminals/"+id+"/group", map[string]any{"group": group}, nil)
+	return c.call(ctx, c.Timeout, http.MethodPatch, "/terminals/"+id+"/group", map[string]any{"group": group}, nil)
 }
 
 func (c *Client) SetMetadata(ctx context.Context, id string, metadata map[string]any) error {
-	return c.call(ctx, http.MethodPatch, "/terminals/"+id+"/metadata", map[string]any{"metadata": metadata}, nil)
+	return c.call(ctx, c.Timeout, http.MethodPatch, "/terminals/"+id+"/metadata", map[string]any{"metadata": metadata}, nil)
 }
 
 func (c *Client) SendMessage(ctx context.Context, receiver, sender, message string) error {
 	q := url.Values{"sender_id": {sender}, "message": {message}}
-	return c.call(ctx, http.MethodPost, "/terminals/"+receiver+"/inbox/messages?"+q.Encode(), nil, nil)
+	return c.call(ctx, c.Timeout, http.MethodPost, "/terminals/"+receiver+"/inbox/messages?"+q.Encode(), nil, nil)
 }
 
 func (c *Client) Output(ctx context.Context, id string) (string, error) {
 	var out struct {
 		Output string `json:"output"`
 	}
-	err := c.call(ctx, http.MethodGet, "/terminals/"+id+"/output?mode=full", nil, &out)
+	err := c.call(ctx, c.Timeout, http.MethodGet, "/terminals/"+id+"/output?mode=full", nil, &out)
 	return out.Output, err
 }
 
-func (c *Client) call(ctx context.Context, method, path string, body, out any) error {
+func (c *Client) call(ctx context.Context, limit time.Duration, method, path string, body, out any) error {
+	parent := ctx
+	if limit > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, limit)
+		defer cancel()
+	}
+	requestError := func(err error) error {
+		if parent.Err() != nil {
+			return parent.Err()
+		}
+		if ctx.Err() == context.DeadlineExceeded {
+			return &TimeoutError{Method: method, Path: path, Limit: limit}
+		}
+		return fmt.Errorf("%s %s: %w", method, path, err)
+	}
 	var reader io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -147,10 +170,13 @@ func (c *Client) call(ctx context.Context, method, path string, body, out any) e
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return err
+		return requestError(err)
 	}
 	defer resp.Body.Close()
-	data, _ := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return requestError(err)
+	}
 	if resp.StatusCode >= 300 {
 		herr := &HTTPError{Method: method, Path: path, Status: resp.StatusCode, Body: truncate(string(data), 600)}
 		var detail struct {
@@ -191,12 +217,12 @@ func (c *Client) SessionTerminals(ctx context.Context, name string) ([]Terminal,
 	var out struct {
 		Terminals []Terminal `json:"terminals"`
 	}
-	err := c.call(ctx, http.MethodGet, "/sessions/"+url.PathEscape(name), nil, &out)
+	err := c.call(ctx, c.Timeout, http.MethodGet, "/sessions/"+url.PathEscape(name), nil, &out)
 	return out.Terminals, err
 }
 
 func (c *Client) SetDescription(ctx context.Context, id, description string) error {
-	return c.call(ctx, http.MethodPatch, "/terminals/"+url.PathEscape(id)+"/description", map[string]string{"description": description}, nil)
+	return c.call(ctx, c.Timeout, http.MethodPatch, "/terminals/"+url.PathEscape(id)+"/description", map[string]string{"description": description}, nil)
 }
 
 type ProfilePermissions struct {
@@ -207,6 +233,17 @@ type ProfilePermissions struct {
 
 func (c *Client) ProfilePermissions(ctx context.Context, name string) (ProfilePermissions, error) {
 	var out ProfilePermissions
-	err := c.call(ctx, http.MethodGet, "/agents/profiles/"+url.PathEscape(name), nil, &out)
+	err := c.call(ctx, c.Timeout, http.MethodGet, "/agents/profiles/"+url.PathEscape(name), nil, &out)
 	return out, err
 }
+
+type TimeoutError struct {
+	Method, Path string
+	Limit        time.Duration
+}
+
+func (e *TimeoutError) Error() string {
+	return fmt.Sprintf("%s %s: no response within %s", e.Method, e.Path, e.Limit)
+}
+
+func (e *TimeoutError) Unwrap() error { return context.DeadlineExceeded }

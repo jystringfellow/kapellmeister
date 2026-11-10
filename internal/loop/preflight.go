@@ -2,6 +2,7 @@ package loop
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jystringfellow/kapellmeister/internal/cao"
 )
 
 type PreflightResult struct {
@@ -48,12 +51,13 @@ func Preflight(ctx context.Context, stepper Stepper, worktree string, chairs []C
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			res := preflightChair(ctx, stepper, worktree, i, chair, timeout)
-			if !res.OK && res.Blocker == "" && ctx.Err() == nil {
+			res, err := preflightChair(ctx, stepper, worktree, i, chair, timeout)
+			var timeoutErr *cao.TimeoutError
+			if !res.OK && res.Blocker == "" && ctx.Err() == nil && !errors.As(err, &timeoutErr) {
 				if res.TerminalID != "" {
 					_ = stepper.Release(context.WithoutCancel(ctx), res.TerminalID)
 				}
-				res = preflightChair(ctx, stepper, worktree, i, chair, timeout)
+				res, _ = preflightChair(ctx, stepper, worktree, i, chair, timeout)
 				res.Retried = true
 			}
 			results[i] = res
@@ -63,7 +67,7 @@ func Preflight(ctx context.Context, stepper Stepper, worktree string, chairs []C
 	return results, nil
 }
 
-func preflightChair(ctx context.Context, stepper Stepper, worktree string, i int, chair Chair, timeout time.Duration) PreflightResult {
+func preflightChair(ctx context.Context, stepper Stepper, worktree string, i int, chair Chair, timeout time.Duration) (PreflightResult, error) {
 	rel := filepath.Join(RunDirRel("preflight"), fmt.Sprintf("%d-%s.txt", i, chair.Provider))
 	abs := filepath.Join(worktree, rel)
 	_ = os.Remove(abs)
@@ -80,7 +84,7 @@ func preflightChair(ctx context.Context, stepper Stepper, worktree string, i int
 				_ = stepper.Release(context.WithoutCancel(ctx), out.TerminalID)
 			}
 			res.TerminalID = ""
-			return res
+			return res, nil
 		}
 		err = fmt.Errorf("%w at %s", errNoReply, rel)
 	}
@@ -91,7 +95,7 @@ func preflightChair(ctx context.Context, stepper Stepper, worktree string, i int
 			res.Blocker = FindBlocker(screen)
 		}
 	}
-	return res
+	return res, err
 }
 
 const blockerLines = 12

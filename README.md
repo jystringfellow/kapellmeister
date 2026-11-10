@@ -228,6 +228,9 @@ for `[tiers]`, because only you know what your accounts can run. `[cao]`, `[chai
 `[ensembles]` are machine-only and `[test]` is repository-only; putting one in the wrong file is an error.
 `$CAO_API_BASE_URL` overrides `[cao] url`. State lives in `~/.kapellmeister/state` (`$KAPELLMEISTER_STATE_DIR`).
 
+km bounds each CAO call: short calls at 30s, launches at 90s, and run-step at the step’s own timeout
+plus 90s for CAO’s readiness wait; hitting a bound reports the method, path and limit.
+
 ```toml
 # ~/.kapellmeister/config.toml
 [cao]
