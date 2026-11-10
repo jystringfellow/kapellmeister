@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -140,6 +142,7 @@ func (c *Client) Output(ctx context.Context, id string) (string, error) {
 }
 
 func (c *Client) call(ctx context.Context, limit time.Duration, method, path string, body, out any) error {
+	route, _, _ := strings.Cut(path, "?")
 	parent := ctx
 	if limit > 0 {
 		var cancel context.CancelFunc
@@ -151,9 +154,13 @@ func (c *Client) call(ctx context.Context, limit time.Duration, method, path str
 			return parent.Err()
 		}
 		if ctx.Err() == context.DeadlineExceeded {
-			return &TimeoutError{Method: method, Path: path, Limit: limit}
+			return &TimeoutError{Method: method, Path: route, Limit: limit}
 		}
-		return fmt.Errorf("%s %s: %w", method, path, err)
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
+		return fmt.Errorf("%s %s: %w", method, route, err)
 	}
 	var reader io.Reader
 	if body != nil {
@@ -178,7 +185,7 @@ func (c *Client) call(ctx context.Context, limit time.Duration, method, path str
 		return requestError(err)
 	}
 	if resp.StatusCode >= 300 {
-		herr := &HTTPError{Method: method, Path: path, Status: resp.StatusCode, Body: truncate(string(data), 600)}
+		herr := &HTTPError{Method: method, Path: route, Status: resp.StatusCode, Body: truncate(string(data), 600)}
 		var detail struct {
 			Detail struct {
 				TerminalID string `json:"terminal_id"`

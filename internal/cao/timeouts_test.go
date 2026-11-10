@@ -61,12 +61,12 @@ func TestAShortCallAgainstAHungServerFailsWithAnErrorNamingMethodPathAndLimit(t 
 		call               func(context.Context, *Client) error
 	}{
 		{"terminal", "GET", "/terminals/t", func(ctx context.Context, c *Client) error { _, err := c.Terminal(ctx, "t"); return err }},
-		{"output", "GET", "/terminals/t/output?mode=full", func(ctx context.Context, c *Client) error { _, err := c.Output(ctx, "t"); return err }},
+		{"output", "GET", "/terminals/t/output", func(ctx context.Context, c *Client) error { _, err := c.Output(ctx, "t"); return err }},
 		{"profiles", "GET", "/agents/profiles", func(ctx context.Context, c *Client) error { _, err := c.Profiles(ctx); return err }},
 		{"permissions", "GET", "/agents/profiles/p", func(ctx context.Context, c *Client) error { _, err := c.ProfilePermissions(ctx, "p"); return err }},
 		{"delete terminal", "DELETE", "/terminals/t", func(ctx context.Context, c *Client) error { return c.DeleteTerminal(ctx, "t") }},
 		{"delete session", "DELETE", "/sessions/s", func(ctx context.Context, c *Client) error { return c.DeleteSession(ctx, "s") }},
-		{"send", "POST", "/terminals/t/inbox/messages?message=hi&sender_id=s", func(ctx context.Context, c *Client) error { return c.SendMessage(ctx, "t", "s", "hi") }},
+		{"send", "POST", "/terminals/t/inbox/messages", func(ctx context.Context, c *Client) error { return c.SendMessage(ctx, "t", "s", "hi") }},
 		{"session", "GET", "/sessions/s", func(ctx context.Context, c *Client) error { _, err := c.SessionTerminals(ctx, "s"); return err }},
 		{"group", "PATCH", "/terminals/t/group", func(ctx context.Context, c *Client) error { return c.SetGroup(ctx, "t", []string{"s"}) }},
 		{"metadata", "PATCH", "/terminals/t/metadata", func(ctx context.Context, c *Client) error {
@@ -120,9 +120,9 @@ func TestCreatingASessionOrTerminalIsBoundedByTheLaunchTimeoutNotTheShortOne(t *
 				ctx := requestWatchdog(t)
 				var terminal Terminal
 				var err error
-				path := "/sessions?agent_profile=p&session_name=s&working_directory="
+				path := "/sessions"
 				if add {
-					path = "/sessions/s/terminals?agent_profile=p&working_directory="
+					path = "/sessions/s/terminals"
 					terminal, err = c.AddTerminal(ctx, "s", Launch{Profile: "p"})
 				} else {
 					terminal, err = c.CreateSession(ctx, "s", Launch{Profile: "p"})
