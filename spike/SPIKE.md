@@ -350,6 +350,19 @@ repo. Chairs: `km-claude` (Haiku 5.5), `km-codex` (GPT-6 Luna), `km-copilot` (Ha
     step at 2,415 s on 2026-11-06. Upstream request: awslabs/cli-agent-orchestrator#1249, an
     opt-in `timeout_excludes_waiting` plus a cap on total waiting time.
 
+24. **Preflight can seat first and reuse a fresh terminal, then delete its entire session.**
+    Checked 2026-11-10 against the local CAO server with tmux, scratch repositories, isolated km
+    home/state directories, and HTTP request recording. `POST /sessions` returned the requested
+    `km-preflight-<nonce>-<chair>` name prefixed with `cao-`. Both `km-claude` and `km-codex`
+    accepted `run-step` with the just-returned `reuse_terminal_id`. SIGINT during two concurrent
+    launches waited for both responses and deleted both returned sessions; SIGINT during two
+    in-flight steps also deleted both. Every session present before these checks remained.
+    An uncancelled Claude chair wrote `ready` and its session was deleted. With a 1ms step timeout,
+    preflight retried once, deleted the first session, retained the second, and printed that
+    session's exact tmux attach target. Its terminal still existed and reported `processing` until
+    explicit teardown. After cleanup, all seven created terminals returned HTTP 404 and all seven
+    tmux sessions were absent. No standing ensemble or profile was modified.
+
 ## Implications for the team layer
 
 - km owns the queue of obligations, as decided: a cue is done only when its reply lands in the km

@@ -123,3 +123,17 @@ a variant otherwise silently drops the base's choice. Evidence:
 `TestEnsureProfilesKeepsAndSynchronizesTheBasesNamedCodexProfile` and
 `TestConfigShowsTheBasePermissionsThatTheNextRunWillSynchronize`; CAO 2.5.4 findings 21 and 22 in
 `spike/SPIKE.md`.
+
+## 2026-11-10: Seat preflight chairs before cueing them
+
+Preflight creates uniquely named CAO sessions before using `reuse_terminal_id`, so an interrupt
+cannot lose track of a chair still answering `run-step`. Seating waits for its bounded launch
+response, and cancellation deletes owned sessions on a fresh, bounded context. A failed launch
+without a returned identity is cleaned up by its exact km-chosen, already-prefixed CAO name,
+including on retry; a missing session is harmless. Ordinary blocked chairs keep their session
+for attaching. Evidence:
+`TestACancelledPreflightAgainstCAODeletesExactlyTheSessionsItCreated`,
+`TestACancelDuringSeatingStillTakesDownTheSessionCAOCreated`,
+`TestPreflightTeardownIsBoundedWhenCAOStopsAnswering`,
+`TestPreflightDeletesTheChosenNameWhenSeatingFailsWithoutASession` and
+`TestPreflightAgainstCAODeletesTheChosenNameWhenSeatingReturnsNoIdentity`.
