@@ -168,6 +168,7 @@ type Record struct {
 	Model         string         `json:"model,omitempty"`
 	ModelHonored  *bool          `json:"model_honored,omitempty"`
 	DurationMS    int64          `json:"duration_ms"`
+	QueueMS       int64          `json:"queue_ms,omitempty"`
 	Reply         string         `json:"reply,omitempty"`
 	ReplyChars    int            `json:"reply_chars,omitempty"`
 	ReplyWaitMS   int64          `json:"reply_wait_ms,omitempty"`
@@ -632,12 +633,20 @@ func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 	rec := Record{RunID: e.Config.RunID, Round: s.Round, Step: s.Name, ChairName: s.ChairName, Chair: &chair, Reply: s.ReplyPath,
 		Tier: s.Assignment.Tier, Effort: s.Assignment.Effort, TierSource: s.Assignment.Source}
 	e.progress("→ %s %s%s", strings.TrimSpace(label(s.Name, s.Round)+" "+s.ChairName), chair, tierNote(s.Assignment))
-	start := time.Now()
-	finishWatch := e.watchStep(s)
 	var closeUsage func() Usage
 	if e.Meter != nil {
-		closeUsage = e.Meter.Open(s)
+		queued := time.Now()
+		var err error
+		closeUsage, err = e.Meter.Open(ctx, s)
+		rec.QueueMS = time.Since(queued).Milliseconds()
+		if err != nil {
+			rec.Error = err.Error()
+			e.record(rec)
+			return StepResult{}, err
+		}
 	}
+	start := time.Now()
+	finishWatch := e.watchStep(s)
 	out, err := e.Stepper.Run(ctx, s)
 	finishWatch()
 	rec.DurationMS = time.Since(start).Milliseconds()

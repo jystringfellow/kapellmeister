@@ -2,7 +2,7 @@ package loop
 
 import "encoding/json"
 
-func claudeUsage(data []byte) Usage {
+func claudeUsage(data []byte, alreadyCounted map[string]struct{}) (Usage, []string, bool) {
 	type message struct {
 		ID    string `json:"id"`
 		Model string `json:"model"`
@@ -40,19 +40,61 @@ func claudeUsage(data []byte) Usage {
 		if id == "" {
 			return false
 		}
-		messages[id] = m
+		if _, counted := alreadyCounted[id]; !counted {
+			messages[id] = m
+		}
 		return true
 	})
-	if !valid || len(messages) == 0 {
-		return unknownUsage("no-usage")
+	if !valid {
+		return unknownUsage("no-usage"), nil, false
+	}
+	if len(messages) == 0 {
+		return unknownUsage("no-usage"), nil, true
 	}
 	var usage Usage
-	for _, m := range messages {
+	var ids []string
+	for id, m := range messages {
 		tokens := Tokens{*m.Usage.Input, *m.Usage.Output, m.Usage.CacheWrite, m.Usage.CacheRead}
 		if !tokens.valid() {
-			return unknownUsage("no-usage")
+			return unknownUsage("no-usage"), nil, false
 		}
 		usage.addModel(m.Model, tokens)
+		ids = append(ids, id)
 	}
-	return usage
+	return usage, ids, true
+}
+
+func (m *LogMeter) claudeWindow(grown []usageGrowth, parent string) Usage {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var total Usage
+	pending := make(map[string][]string)
+	for _, g := range grown {
+		if g.parent != parent {
+			continue
+		}
+		usage, ids, valid := claudeUsage(g.data, m.counted[g.path])
+		if !valid {
+			return unknownUsage("no-usage")
+		}
+		if usage.Known {
+			total.add(usage)
+		}
+		pending[g.path] = ids
+	}
+	if !total.Known {
+		return unknownUsage("no-usage")
+	}
+	if m.counted == nil {
+		m.counted = make(map[string]map[string]struct{})
+	}
+	for path, ids := range pending {
+		if m.counted[path] == nil {
+			m.counted[path] = make(map[string]struct{})
+		}
+		for _, id := range ids {
+			m.counted[path][id] = struct{}{}
+		}
+	}
+	return total
 }
