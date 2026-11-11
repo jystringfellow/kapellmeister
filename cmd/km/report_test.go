@@ -57,7 +57,7 @@ func reportRows(t *testing.T, args ...string) []any {
 }
 
 func TestReportPrintsOneRowPerRunOldestFirstThenTotalsByOutcomeRepositoryAndEnsemble(t *testing.T) {
-	root := t.TempDir()
+	root := recordRoot(t)
 	reportFixture(t, root, "a", "2026-11-10T14:00:00Z", "host/owner/app", "thorough", "failed")
 	reportFixture(t, root, "b", "2026-11-09T14:00:00Z", "host/owner/app", "thorough", "approved")
 	reportFixture(t, root, "c", "2026-11-11T14:00:00Z", "host/owner/other", "quick", "rounds_exhausted")
@@ -85,7 +85,7 @@ func TestReportPrintsOneRowPerRunOldestFirstThenTotalsByOutcomeRepositoryAndEnse
 }
 
 func TestReportCountsARunThatAppearsInTwoDirectoriesOnce(t *testing.T) {
-	a, b := t.TempDir(), t.TempDir()
+	a, b := recordRoot(t), recordRoot(t)
 	first := reportFixture(t, a, "same", "2026-11-09T14:00:00Z", "app", "first", "approved")
 	reportFixture(t, filepath.Join(b, "sandbox", "state", "runs"), "same", "2026-11-09T14:00:00Z", "app", "second", "failed")
 	rows := reportRows(t, a, b, a)
@@ -95,7 +95,7 @@ func TestReportCountsARunThatAppearsInTwoDirectoriesOnce(t *testing.T) {
 }
 
 func TestReportPrefersAFinishedCopyOverAnUnfinishedOneOfTheSameRun(t *testing.T) {
-	a, b := t.TempDir(), t.TempDir()
+	a, b := recordRoot(t), recordRoot(t)
 	writeFile(t, filepath.Join(a, "same", "telemetry.jsonl"), "{\"at\":\"2026-11-09T14:00:00Z\"}\n")
 	reportFixture(t, b, "same", "2026-11-09T14:00:00Z", "app", "thorough", "approved")
 	for _, dirs := range [][]string{{a, b}, {b, a}} {
@@ -107,7 +107,7 @@ func TestReportPrefersAFinishedCopyOverAnUnfinishedOneOfTheSameRun(t *testing.T)
 }
 
 func TestReportCountsADirectoryWithTelemetryAndNoResultAsUnfinished(t *testing.T) {
-	root := t.TempDir()
+	root := recordRoot(t)
 	writeFile(t, filepath.Join(root, "unfinished", "telemetry.jsonl"), "{\"at\":\"2026-11-09T15:00:00+01:00\"}\nnot JSON\n")
 	out, diagnostics := captureReport(t, root)
 	if diagnostics != "" || !strings.Contains(strings.Join(strings.Fields(out), " "), "2026-11-09 14:00:00 unknown unknown unfinished unknown unknown") || !strings.Contains(out, "runs: 1") {
@@ -120,7 +120,7 @@ func TestReportCountsADirectoryWithTelemetryAndNoResultAsUnfinished(t *testing.T
 }
 
 func TestReportShowsUnknownForAnOlderRecordWithoutEnsembleOrRepositoryAndDoesNotFail(t *testing.T) {
-	root := t.TempDir()
+	root := recordRoot(t)
 	writeFile(t, filepath.Join(root, "old", "result.json"), `{"run_id":"old","outcome":"approved","rounds":0,"duration_ms":0}`)
 	out, diagnostics := captureReport(t, root)
 	if diagnostics != "" || !strings.Contains(strings.Join(strings.Fields(out), " "), "unknown unknown unknown approved 0 0s") {
@@ -135,7 +135,7 @@ func TestReportShowsUnknownForAnOlderRecordWithoutEnsembleOrRepositoryAndDoesNot
 }
 
 func TestReportReportsAMalformedRecordOnStderrWithItsPathCountsItUnreadableAndKeepsGoing(t *testing.T) {
-	root := t.TempDir()
+	root := recordRoot(t)
 	for name, body := range map[string]string{
 		"bad-json": "{", "wrong-type": `{"rounds":"two"}`, "oversized": strings.Repeat(" ", (1<<20)+1), "null": "null", "array": "[]",
 	} {
@@ -155,7 +155,7 @@ func TestReportReportsAMalformedRecordOnStderrWithItsPathCountsItUnreadableAndKe
 }
 
 func TestReportJSONPrintsTheSameRunsAndTotalsAsTheTable(t *testing.T) {
-	root := t.TempDir()
+	root := recordRoot(t)
 	dir := reportFixture(t, root, "a", "2026-11-09T14:00:00Z", "app", "thorough", "approved")
 	writeFile(t, filepath.Join(root, "b", "result.json"), `{"run_id":"b","outcome":"failed","reason":"chair stopped"}`)
 	got := reportJSON(t, root)
@@ -172,7 +172,7 @@ func TestReportJSONPrintsTheSameRunsAndTotalsAsTheTable(t *testing.T) {
 }
 
 func TestReportSinceKeepsOnlyRunsStartedOnOrAfterTheDate(t *testing.T) {
-	root := t.TempDir()
+	root := recordRoot(t)
 	reportFixture(t, root, "before", "2026-11-08T23:59:59Z", "app", "thorough", "approved")
 	reportFixture(t, root, "at", "2026-11-09T00:00:00Z", "app", "thorough", "approved")
 	reportFixture(t, root, "after", "2026-11-09T01:00:00Z", "other", "thorough", "approved")
@@ -190,7 +190,7 @@ func TestReportSinceKeepsOnlyRunsStartedOnOrAfterTheDate(t *testing.T) {
 }
 
 func TestReportRepositoryKeepsOnlyRunsOfThatRepositoryAndCombinesWithSince(t *testing.T) {
-	root := t.TempDir()
+	root := recordRoot(t)
 	reportFixture(t, root, "before", "2026-11-08T23:59:59Z", "app", "thorough", "approved")
 	reportFixture(t, root, "after", "2026-11-09T00:00:00Z", "app", "thorough", "approved")
 	reportFixture(t, root, "other", "2026-11-09T01:00:00Z", "app-extra", "thorough", "approved")
@@ -210,7 +210,7 @@ func TestReportRepositoryKeepsOnlyRunsOfThatRepositoryAndCombinesWithSince(t *te
 }
 
 func TestReportEscapesControlCharactersInEveryValueItPrints(t *testing.T) {
-	root := t.TempDir()
+	root := recordRoot(t)
 	value := "bad\x1b[31m\n\t\u202e\u2028\x7f\u0085"
 	reportFixture(t, root, "good", "2026-11-09T14:00:00Z", value, value, value)
 	writeFile(t, filepath.Join(root, value, "result.json"), "{")
@@ -240,7 +240,7 @@ func TestReportEscapesControlCharactersInEveryValueItPrints(t *testing.T) {
 }
 
 func TestReportNeverFollowsASymbolicLinkWhileSearching(t *testing.T) {
-	root, outside := t.TempDir(), t.TempDir()
+	root, outside := recordRoot(t), recordRoot(t)
 	dir := reportFixture(t, outside, "outside", "", "outside", "outside", "approved")
 	for link, target := range map[string]string{
 		"directory": outside, "loop": root, "linked-result/result.json": filepath.Join(dir, "result.json"), "linked-telemetry/telemetry.jsonl": filepath.Join(dir, "result.json"),
@@ -262,7 +262,7 @@ func TestReportNeverFollowsASymbolicLinkWhileSearching(t *testing.T) {
 			t.Fatal(rows)
 		}
 	}
-	alias := filepath.Join(t.TempDir(), "chosen-root")
+	alias := filepath.Join(recordRoot(t), "chosen-root")
 	if err := os.Symlink(outside, alias); err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +272,7 @@ func TestReportNeverFollowsASymbolicLinkWhileSearching(t *testing.T) {
 }
 
 func TestReportRejectsNonregularRecordsWithoutBlocking(t *testing.T) {
-	root := t.TempDir()
+	root := recordRoot(t)
 	if err := os.MkdirAll(filepath.Join(root, "directory", "result.json"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +294,7 @@ func TestReportRejectsNonregularRecordsWithoutBlocking(t *testing.T) {
 }
 
 func TestReportReadsTheStateDirectoryRunsWhenGivenNoDirectory(t *testing.T) {
-	state := t.TempDir()
+	state := recordRoot(t)
 	t.Setenv(loop.StateEnv, state)
 	if out, _ := captureReport(t); out != "no runs found\n" {
 		t.Fatal(out)
@@ -309,7 +309,7 @@ func TestReportReadsTheStateDirectoryRunsWhenGivenNoDirectory(t *testing.T) {
 }
 
 func TestReportOnlyReadsAndNeverWritesToTheDirectoriesItIsGiven(t *testing.T) {
-	root := t.TempDir()
+	root := recordRoot(t)
 	reportFixture(t, root, "read-only", "2026-11-09T14:00:00Z", "app", "thorough", "approved")
 	type entry struct {
 		Size     int64
@@ -357,7 +357,7 @@ func TestReportOnlyReadsAndNeverWritesToTheDirectoriesItIsGiven(t *testing.T) {
 }
 
 func TestReportRejectsAMissingExplicitDirectoryBeforePrinting(t *testing.T) {
-	root := t.TempDir()
+	root := recordRoot(t)
 	reportFixture(t, root, "good", "", "app", "thorough", "approved")
 	for _, path := range []string{filepath.Join(root, "missing"), filepath.Join(root, "good", "result.json")} {
 		var out, diagnostics bytes.Buffer
@@ -368,7 +368,7 @@ func TestReportRejectsAMissingExplicitDirectoryBeforePrinting(t *testing.T) {
 }
 
 func TestReportSearchesEachDirectoryAtAnyDepthAndDoesNotDescendIntoARunDirectory(t *testing.T) {
-	root := t.TempDir()
+	root := recordRoot(t)
 	dir := reportFixture(t, filepath.Join(root, "copies", "sandbox-a", "state", "runs"), "real", "", "app", "thorough", "approved")
 	reportFixture(t, filepath.Join(dir, "replies"), "phantom", "", "app", "thorough", "failed")
 	rows := reportRows(t, root)
@@ -389,7 +389,7 @@ func TestKmUsageListsTheReportCommandAndDispatchesIt(t *testing.T) {
 }
 
 func TestReportReadsOnlyRecordedResultFieldsAndTakesItsStartFromTelemetry(t *testing.T) {
-	root := t.TempDir()
+	root := recordRoot(t)
 	dir := filepath.Join(root, "20261101-120000-local")
 	writeFile(t, filepath.Join(dir, "result.json"), `{"outcome":"approved","started":[],"path":false}`)
 	writeFile(t, filepath.Join(dir, "telemetry.jsonl"), "{\"at\":\"2026-11-09T14:00:00Z\"}\n{\"at\":\"2026-11-10T14:00:00Z\"}\n")
@@ -403,7 +403,7 @@ func TestReportReadsOnlyRecordedResultFieldsAndTakesItsStartFromTelemetry(t *tes
 func TestReportKeepsAFinishedResultWhenItsTelemetryIsUnusable(t *testing.T) {
 	for _, body := range []string{"{", "", "{}", `{"at":"yesterday"}`, strings.Repeat("x", (1<<20)+1)} {
 		t.Run(fmt.Sprint(len(body), body[:min(8, len(body))]), func(t *testing.T) {
-			root := t.TempDir()
+			root := recordRoot(t)
 			dir := reportFixture(t, root, "finished", "", "app", "thorough", "approved")
 			writeFile(t, filepath.Join(dir, "telemetry.jsonl"), body)
 			row := reportRows(t, root)[0].(map[string]any)
@@ -418,7 +418,7 @@ func TestReportKeepsAFinishedResultWhenItsTelemetryIsUnusable(t *testing.T) {
 }
 
 func TestReportPrefersAnUnfinishedOrFinishedCopyOverAnUnreadableOneAndStillDiagnosesIt(t *testing.T) {
-	a, b := t.TempDir(), t.TempDir()
+	a, b := recordRoot(t), recordRoot(t)
 	writeFile(t, filepath.Join(a, "same", "result.json"), "{")
 	writeFile(t, filepath.Join(b, "same", "telemetry.jsonl"), "{\"at\":\"2026-11-09T14:00:00Z\"}\n")
 	for _, outcome := range []string{"unfinished", "approved"} {
@@ -439,7 +439,7 @@ func TestReportPrefersAnUnfinishedOrFinishedCopyOverAnUnreadableOneAndStillDiagn
 }
 
 func TestReportOrdersTiedAndUnknownStartsByRunIDAndTotalsByCountThenName(t *testing.T) {
-	root := t.TempDir()
+	root := recordRoot(t)
 	for _, id := range []string{"b", "a"} {
 		reportFixture(t, root, id, "2026-11-09T14:00:00Z", "z", "z", "failed")
 	}
@@ -463,7 +463,7 @@ func TestReportOrdersTiedAndUnknownStartsByRunIDAndTotalsByCountThenName(t *test
 }
 
 func TestReportStopsAtAnUnfinishedRunAndLimitsOnlyTheFirstTelemetryLine(t *testing.T) {
-	root := t.TempDir()
+	root := recordRoot(t)
 	dir := filepath.Join(root, "unfinished")
 	writeFile(t, filepath.Join(dir, "telemetry.jsonl"), "{\"at\":\"2026-11-09T14:00:00Z\"}\n"+strings.Repeat("x", (1<<20)+1))
 	reportFixture(t, filepath.Join(dir, "scratch"), "phantom", "", "app", "thorough", "approved")
@@ -474,7 +474,7 @@ func TestReportStopsAtAnUnfinishedRunAndLimitsOnlyTheFirstTelemetryLine(t *testi
 }
 
 func TestReportJSONEscapesEveryNonprintingRuneWithoutChangingTheDecodedValues(t *testing.T) {
-	root := t.TempDir()
+	root := recordRoot(t)
 	value := "quoted\"\\\x00\x07\x1b\x7f\u0085\u009b\u202e\u2028\u2029\u2066\U000e0001"
 	dir := reportFixture(t, root, strings.ReplaceAll(value, "\x00", ""), "", value, value, value)
 	data, err := json.Marshal(map[string]any{"run_id": value, "repository": value, "ensemble": value, "outcome": value, "reason": value})
@@ -516,7 +516,7 @@ func TestReportDiagnosesAnUnreadableSubdirectoryAndContinuesWithOtherRuns(t *tes
 	if os.Geteuid() == 0 {
 		t.Skip("directory permissions require an unprivileged user")
 	}
-	root := t.TempDir()
+	root := recordRoot(t)
 	denied := filepath.Join(root, "deny\x1b\u202e")
 	if err := os.Mkdir(denied, 0o700); err != nil {
 		t.Fatal(err)
@@ -547,7 +547,7 @@ func TestReportDiagnosesAnUnreadableSubdirectoryAndContinuesWithOtherRuns(t *tes
 }
 
 func TestReportContinuesWhenSubdirectoriesDisappearDuringTheSearch(t *testing.T) {
-	root := t.TempDir()
+	root := recordRoot(t)
 	reportFixture(t, root, "good", "", "app", "thorough", "approved")
 	for i := 0; i < 200; i++ {
 		if err := os.Mkdir(filepath.Join(root, fmt.Sprintf("churn-%03d", i)), 0o700); err != nil {
@@ -582,10 +582,10 @@ func TestReportContinuesWhenSubdirectoriesDisappearDuringTheSearch(t *testing.T)
 }
 
 func TestReportNeverReadsOutsideRunsWhileADirectoryIsSwappedForASymlink(t *testing.T) {
-	root, outside := t.TempDir(), t.TempDir()
+	root, outside := recordRoot(t), recordRoot(t)
 	reportFixture(t, root, "good", "", "app", "thorough", "approved")
 	writeFile(t, filepath.Join(outside, "result.json"), `{"run_id":"outside-sentinel","outcome":"outside-sentinel"}`)
-	changing, held := filepath.Join(root, "changing"), filepath.Join(t.TempDir(), "held")
+	changing, held := filepath.Join(root, "changing"), filepath.Join(recordRoot(t), "held")
 	writeFile(t, filepath.Join(changing, "result.json"), `{"run_id":"changing","outcome":"approved"}`)
 	stop := make(chan struct{})
 	var workers sync.WaitGroup
@@ -616,4 +616,13 @@ func TestReportNeverReadsOutsideRunsWhileADirectoryIsSwappedForASymlink(t *testi
 			t.Fatalf("report lost stable run: %s", out)
 		}
 	}
+}
+
+func recordRoot(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
 }
