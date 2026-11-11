@@ -317,7 +317,7 @@ uncommitted change as an approved run would. Other test-step failures, and a tim
 any other step, still fail the run. The test step gets the same worktree check as the gate and
 reviewers; a tester that modifies the worktree still fails the run even if it also times out.
 Both tester prompts restrict scratch files, build output, scratch repositories and server state to
-the absolute `<state dir>/runs/<run id>/scratch` directory, outside the worktree.
+the absolute `<state dir>/scratch/<run id>` directory, outside the worktree.
 `km run` and `km play` create it before starting the score and refuse to start if it is inside a git
 work tree; set `KAPELLMEISTER_STATE_DIR` outside any repository. The test prompt permits git commands
 that write only in repositories the tester created inside scratch, always using `git -C <repository>`.
@@ -477,6 +477,10 @@ by ensemble
 ```
 
 ## Telemetry
+
+Run records (`config.json`, `telemetry.jsonl`, `result.json` and `replies/`) live in
+`<state dir>/runs/<run id>/`. Tester scratch lives separately in `<state dir>/scratch/<run id>/`
+and is left in place after the run.
 
 Each run writes `telemetry.jsonl` under `~/.kapellmeister/state/runs/<run>/`: one record per step with its chair, tier, effort, tier source (`default`,
 `pinned`, `sized`, `escalated` or `explicit`), the model CAO reported, durations and verdicts, plus `size`

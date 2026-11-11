@@ -311,7 +311,7 @@ func runCommand(args []string) error {
 	policy := s.Policy
 	runID := newRunID()
 	runDir := filepath.Join(loop.StateDir(), "runs", runID)
-	scratch, err := prepareScratch(runDir)
+	scratch, err := prepareScratch(loop.StateDir(), runID)
 	if err != nil {
 		return err
 	}
@@ -803,8 +803,8 @@ func gitOutput(worktree string, args ...string) (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
-func prepareScratch(runDir string) (string, error) {
-	scratch, err := filepath.Abs(filepath.Join(runDir, "scratch"))
+func prepareScratch(stateDir, runID string) (string, error) {
+	scratch, err := filepath.Abs(filepath.Join(stateDir, "scratch", runID))
 	if err != nil {
 		return "", err
 	}
@@ -814,7 +814,7 @@ func prepareScratch(runDir string) (string, error) {
 	inside, err := gitOutput(scratch, "rev-parse", "--is-inside-work-tree")
 	if err == nil && inside == "true" {
 		top, err := gitOutput(scratch, "rev-parse", "--show-toplevel")
-		_ = os.RemoveAll(runDir)
+		_ = os.RemoveAll(scratch)
 		if err != nil {
 			return "", err
 		}
