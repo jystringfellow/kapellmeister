@@ -37,9 +37,12 @@ func findRuns(dirs []string, defaultDir bool, maxDepth, maxEntries int, refuseLi
 	scan := &reportScan{maxDepth: maxDepth, maxEntries: maxEntries, visited: map[string]bool{}, skipped: map[string]bool{}, notSearched: []reportNotSearched{}}
 	roots := map[string]bool{}
 	for _, dir := range dirs {
-		root, err := filepath.EvalSymlinks(dir)
-		if err == nil && refuseLinkedRoots {
+		var root string
+		var err error
+		if refuseLinkedRoots {
 			root, err = unlinkedRoot(dir)
+		} else {
+			root, err = filepath.EvalSymlinks(dir)
 		}
 		if defaultDir && errors.Is(err, fs.ErrNotExist) {
 			continue
@@ -211,7 +214,7 @@ func (scan *reportScan) directory(dir *os.File, depth int) error {
 
 func reportDisagreements(a, b reportRun) []string {
 	var fields []string
-	if a.Started != nil && b.Started != nil && !a.Started.Equal(*b.Started) {
+	if a.Started != nil && b.Started != nil && !a.roughStart && !b.roughStart && !a.Started.Equal(*b.Started) {
 		fields = append(fields, "started "+a.Started.String()+" vs "+b.Started.String())
 	}
 	if a.Repository != "" && b.Repository != "" && a.Repository != b.Repository {
@@ -231,6 +234,12 @@ func resolveReportCopies(copies []reportRun) ([]reportRun, []string) {
 		}
 		if a.quality != b.quality {
 			return a.quality > b.quality
+		}
+		if (a.state != nil) != (b.state != nil) {
+			return a.state != nil
+		}
+		if a.state != nil && !a.state.Updated.Equal(b.state.Updated) {
+			return a.state.Updated.After(b.state.Updated)
 		}
 		return a.Path < b.Path
 	})

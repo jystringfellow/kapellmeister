@@ -34,7 +34,7 @@ const usage = `usage:
   km ensemble list                                         list standing ensembles
   km ensemble down [-cao URL] SESSION                       take down a standing ensemble
   km report [-json] [-since DATE] [-repository NAME] [-max-depth N] [-max-entries N] [DIR...]   summarize run records
-  km status [-json] [DIR...]                               show the runs in progress
+  km status [-json] [-max-depth N] [-max-entries N] [DIR...]   show the runs in progress
   km cue done -queue FILE CUE [NOTE]                         close a cue (chairs run this)
   km preflight -worktree DIR [-agents LIST] [-tier T]       check each agent starts and answers
   km config [-worktree DIR]                                  show the effective settings and the files they come from`

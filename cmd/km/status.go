@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -43,20 +44,25 @@ func statusAt(args []string, stdout, stderr io.Writer, now time.Time) error {
 	flags := flag.NewFlagSet("status", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	asJSON := flags.Bool("json", false, "print runs in progress as JSON")
-	options, dirs := splitRecordArgs(args)
+	maxDepth := flags.Int("max-depth", 64, "maximum directory levels below each root")
+	maxEntries := flags.Int("max-entries", 1000000, "maximum directory entries read (at most 16777216)")
+	options, dirs := splitRecordArgs(args, "max-depth", "max-entries")
 	if err := flags.Parse(options); err != nil {
 		return err
+	}
+	if *maxDepth < 1 || *maxEntries < 1 || *maxEntries > 1<<24 {
+		return errors.New("status: -max-depth must be at least 1; -max-entries must be between 1 and 16777216")
 	}
 	defaultDir := len(dirs) == 0
 	if defaultDir {
 		dirs = []string{filepath.Join(loop.StateDir(), "runs")}
 	}
-	found, scan, err := findRuns(dirs, defaultDir, 64, 1000000, true)
+	found, scan, err := findRuns(dirs, defaultDir, *maxDepth, *maxEntries, true)
 	if err != nil {
 		return fmt.Errorf("status: %s", plain(err.Error()))
 	}
 	for _, diagnostic := range scan.diagnostics {
-		fmt.Fprintln(stderr, diagnostic)
+		fmt.Fprintln(stderr, strings.Replace(diagnostic, "km: report:", "km: status:", 1))
 	}
 	finished := map[string]bool{}
 	for _, recorded := range found {
@@ -98,6 +104,10 @@ func statusAt(args []string, stdout, stderr io.Writer, now time.Time) error {
 		return printReportJSON(stdout, struct {
 			Runs []statusRun `json:"runs"`
 		}{runs})
+	}
+	if len(runs) == 0 && scan.notSearchedTotal > 0 {
+		_, err := fmt.Fprintf(stdout, "no runs in progress found; %d directories were not searched\n", scan.notSearchedTotal)
+		return err
 	}
 	return printStatus(stdout, runs, now)
 }

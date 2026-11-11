@@ -38,6 +38,7 @@ type reportRun struct {
 	Conflict   bool        `json:"conflict,omitempty"`
 	quality    int
 	state      *runState
+	roughStart bool
 	hasResult  bool
 	hasStarted bool
 }
@@ -227,7 +228,7 @@ func readReportRun(dir *os.File, hasResult, hasTelemetry, hasCurrent, hasConfig 
 			run.state = state
 			run.Repository, run.Ensemble = state.Repository, state.Ensemble
 			started := state.Started.UTC()
-			run.Started = &started
+			run.Started, run.roughStart = &started, true
 			if state.RunID != "" {
 				run.RunID = state.RunID
 				hasRecordedID = true
@@ -274,7 +275,7 @@ func readReportRun(dir *os.File, hasResult, hasTelemetry, hasCurrent, hasConfig 
 		}
 	}
 	if emptyTelemetry && run.Started == nil {
-		run.Started = startFromRunID(run.RunID)
+		run.Started, run.roughStart = startFromRunID(run.RunID), true
 	}
 	return run, diagnostics
 }

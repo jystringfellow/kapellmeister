@@ -640,8 +640,6 @@ func TerminalLabel(runID, stepName string) string {
 var errNoReply = errors.New("no reply file")
 
 func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
-	finish := e.beginStep(s.Round, ActiveStep{Step: s.Name, ChairName: s.ChairName, Chair: s.Chair.Address})
-	defer finish()
 	chair := s.Chair
 	rec := Record{RunID: e.Config.RunID, Round: s.Round, Step: s.Name, ChairName: s.ChairName, Chair: &chair, Reply: s.ReplyPath,
 		Tier: s.Assignment.Tier, Effort: s.Assignment.Effort, TierSource: s.Assignment.Source}
@@ -658,6 +656,8 @@ func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 			return StepResult{}, err
 		}
 	}
+	finish := e.beginStep(s.Round, ActiveStep{Step: s.Name, ChairName: s.ChairName, Chair: s.Chair.Address})
+	defer finish()
 	start := time.Now()
 	finishWatch := e.watchStep(s)
 	out, err := e.Stepper.Run(ctx, s)

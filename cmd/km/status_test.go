@@ -428,3 +428,60 @@ func TestStatusListsARunWithEmptyTelemetryAsInProgressWithNothingOnStderr(t *tes
 		})
 	}
 }
+
+func TestReportCountsAnUnfinishedCopyWhoseStartIsOnlyApproximateAsTheSameRunAsItsFinishedCopy(t *testing.T) {
+	early, current, finished := t.TempDir(), t.TempDir(), t.TempDir()
+	id := "20261110-143005-a1b2c3"
+	writeFile(t, filepath.Join(early, id, "telemetry.jsonl"), "")
+	s := statusFixture(t, current, id)
+	s.Started, s.Repository = time.Date(2026, 11, 10, 14, 30, 5, 0, time.UTC), "app"
+	saveStatusFixture(t, current, id, s)
+	reportFixture(t, finished, id, "2026-11-10T14:33:00.731Z", "app", "thorough", "approved")
+
+	out, diagnostics := captureReport(t, early, current, finished)
+
+	if !strings.Contains(out, "runs: 1\n") || strings.Contains(out, "unfinished") || diagnostics != "" {
+		t.Fatalf("out:\n%s\nstderr:\n%s", out, diagnostics)
+	}
+}
+
+func TestStatusShowsTheCopyOfARunThatKnowsWhatIsPlaying(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "a-stale", "same", "telemetry.jsonl"), `{"at":"2026-11-11T05:00:00Z","run_id":"same","step":"start"}`+"\n")
+	statusFixture(t, filepath.Join(root, "z-live"), "same")
+
+	rows := statusRows(t, root)
+
+	if len(rows) != 1 || rows[0].Liveness != "alive" || rows[0].Round != 2 {
+		t.Fatalf("%+v", rows)
+	}
+}
+
+func TestStatusSaysWhenItsSearchWasCutShortAndNamesItsOwnLimit(t *testing.T) {
+	root := t.TempDir()
+	statusFixture(t, filepath.Join(root, "one", "two"), "deep")
+
+	out, diagnostics := captureStatus(t, "-max-depth", "2", root)
+
+	if !strings.Contains(out, "not searched") || strings.Contains(out, "no runs in progress\n") {
+		t.Errorf("out: %s", out)
+	}
+	if !strings.Contains(diagnostics, "km: status:") || strings.Contains(diagnostics, "km: report:") {
+		t.Errorf("stderr: %s", diagnostics)
+	}
+	if rows := statusRows(t, "-max-depth", "4", root); len(rows) != 1 {
+		t.Errorf("%+v", rows)
+	}
+}
+
+func TestStatusRefusesADefaultRunsDirectoryThatIsADanglingLink(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv(loop.StateEnv, state)
+	if err := os.Symlink(filepath.Join(state, "gone"), filepath.Join(loop.StateDir(), "runs")); err != nil {
+		t.Skip(err)
+	}
+	var out, diagnostics bytes.Buffer
+	if err := statusAt(nil, &out, &diagnostics, statusNow); err == nil {
+		t.Fatalf("out: %s", out.String())
+	}
+}

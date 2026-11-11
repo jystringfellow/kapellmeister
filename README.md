@@ -15,7 +15,7 @@ km reseat SESSION ADDRESS [-agent SPEC] [-timeout D] [-cao URL]  # replace one o
 km ensemble list                                # list standing ensembles
 km ensemble down SESSION                        # take one down
 km report [-json] [-since DATE] [-repository NAME] [-max-depth N] [-max-entries N] [DIR...]  # summarize run records
-km status [-json] [DIR...]                                 # show runs in progress
+km status [-json] [-max-depth N] [-max-entries N] [DIR...]  # show runs in progress
 km preflight -worktree DIR [-tier large]          # check each agent starts and answers
 km config [-worktree DIR] [-cao URL]              # show the effective settings and their files
 ```
@@ -520,7 +520,8 @@ a symlink. Agreeing copies of the same run id count once, preferring a finished 
 unfinished or unreadable one, then the first path in lexical order. Copies that disagree on a known
 start, repository or finished outcome are listed separately; stderr names both paths and the
 differing fields. JSON marks their rows `conflict: true`, and the table counts conflicting rows.
-Missing values cannot hide disagreement in other copies.
+Missing values cannot hide disagreement in other copies. A start taken from `current.json` or from
+the run id is approximate and never counts as a disagreement.
 
 Searches are bounded because kept sandbox copies are untrusted. `-max-depth N` defaults to 64;
 the root is level 0, and directories at the limit are not opened. `-max-entries N` defaults to
@@ -596,11 +597,15 @@ by ensemble
 ## Status
 
 `km status [DIR...]` lists runs that have started and have no `result.json`. With no directory
-it reads `<state>/runs`; explicit directories are searched with report's default limits, sharing
-its search, handling of copies and safe record reading. Status rejects a supplied root that is itself a symlink,
-though the path above it may pass through one,
-escapes control characters and only reads. With no runs in progress it says so and exits 0.
-Runs with empty or blank-only telemetry are listed like other runs in progress, without diagnostics.
+it reads `<state>/runs`. It shares report's search, limits (`-max-depth`, `-max-entries`, same
+defaults), handling of copies and safe record reading. A run is not listed when any copy of it has
+a result, even one that disagrees with the copy in progress. Among copies still in progress, status
+shows the one that records what is playing, most recently updated first. Status rejects a root,
+given or default, that is itself a symlink, though the path above it may pass through one. It
+escapes control characters and only reads. With no runs in progress it says so and exits 0; when a
+limit cut the search short it says how many directories were not searched instead. Diagnostics go
+to stderr. Runs with empty or blank-only telemetry are listed like other runs in progress, without
+diagnostics.
 `-json` emits `{"runs":[...]}`, including every playing step and its elapsed milliseconds;
 an empty result is `{"runs":[]}`.
 
@@ -620,7 +625,7 @@ RUN                     STARTED              REPOSITORY             ENSEMBLE  RO
 
 ## Telemetry
 
-Run records (`config.json`, `telemetry.jsonl`, `result.json` and `replies/`) live in
+Run records (`config.json`, `telemetry.jsonl`, `current.json`, `result.json` and `replies/`) live in
 `<state dir>/runs/<run id>/`. Tester scratch lives separately in `<state dir>/scratch/<run id>/`
 and is left in place after the run. Once `telemetry.jsonl` is created, `km run` and `km play`
 write a start record and leave `result.json` on normal completion, failure or interruption, including
