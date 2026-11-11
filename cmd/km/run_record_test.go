@@ -150,7 +150,7 @@ func chairsFromEnsembleFile(t *testing.T, worktree string) loop.Chairs {
 
 var recordedAddresses = map[string][]string{
 	"plan": {"leads.planner@thorough"}, "implement": {"leads.implementer@thorough"},
-	"review": {"review.security@thorough", "review.style@thorough"}, "gate": {"leads.gate@thorough"},
+	"review": {"review.security@thorough", "review.style@thorough"}, "gate": {"leads.gate@thorough"}, "lessons": {"leads.gate@thorough"},
 	"classify-review": {"leads.classifier@thorough"}, "classify-gate": {"leads.classifier@thorough"},
 }
 
@@ -169,7 +169,7 @@ func requireRecordedAddresses(t *testing.T, dir string, want map[string][]string
 }
 
 func standingAddresses(s ensemble.Standing) map[string][]string {
-	steps := map[string][]string{"planner": {"plan"}, "implementer": {"implement"}, "reviewer": {"review"}, "gate": {"gate"}, "classifier": {"classify-review", "classify-gate"}}
+	steps := map[string][]string{"planner": {"plan"}, "implementer": {"implement"}, "reviewer": {"review"}, "gate": {"gate", "lessons"}, "classifier": {"classify-review", "classify-gate"}}
 	want := map[string][]string{}
 	for _, c := range s.Chairs {
 		for _, step := range steps[c.Part] {
@@ -357,7 +357,8 @@ func TestARunRecordsItsEnsembleRepositoryAndProcessBeforeAnyStepEnds(t *testing.
 				if step.Name == "plan" {
 					observed = true
 					data, err := os.ReadFile(filepath.Join(dir, "telemetry.jsonl"))
-					if err != nil || len(data) != 0 {
+					lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+					if err != nil || len(lines) != 1 || !strings.Contains(lines[0], `"step":"start"`) {
 						t.Errorf("first step already ended: %s %v", data, err)
 					}
 				}

@@ -7,18 +7,29 @@ until the gate and any tester approve or the rounds run out. Every run works in 
 worktree and leaves its change uncommitted for you to ship.
 
 ```sh
-km run -repo ~/Code/app -task-file task.md [-ensemble thorough]  # one ensemble
+km run -repo ~/Code/app [-base BRANCH] -task-file task.md [-ensemble thorough]  # one ensemble
 km audition -worktree DIR [-ensemble thorough]   # can this ensemble play? no real work
 km rehearse -worktree DIR -task-file task.md [-ensemble thorough]  # brief and leave standing
 km play SESSION [-max-rounds N] [-verify CMD] [-timeout D] [-cao URL]  # run the score
 km reseat SESSION ADDRESS [-agent SPEC] [-timeout D] [-cao URL]  # replace one occupant
 km ensemble list                                # list standing ensembles
 km ensemble down SESSION                        # take one down
-km report [-json] [-since DATE] [-repository NAME] [DIR...]  # summarize run records
+km report [-json] [-since DATE] [-repository NAME] [-max-depth N] [-max-entries N] [DIR...]  # summarize run records
 km status [-json] [DIR...]                                 # show runs in progress
 km preflight -worktree DIR [-tier large]          # check each agent starts and answers
 km config [-worktree DIR] [-cao URL]              # show the effective settings and their files
 ```
+
+`km run -repo` starts a fresh worktree from `origin/main` by default. To stack work on an
+unmerged branch, name that branch with `-base`:
+
+```sh
+km run -repo ~/Code/app -base feature/parser -task-file next.md
+```
+
+The branch is fetched from `origin`; a missing branch fails before any chair starts.
+`-base` takes a branch name such as `feature/parser`, and cannot be combined with `-worktree`,
+which plays on the checkout it is given. `km play` uses its standing ensemble's recorded checkout.
 
 Chairs default to claude plans, codex implements, copilot reviews, claude gates and classifies.
 Override any chair with `-planner`, `-implementer`, `-reviewer`, `-gate`, `-classifier` or the optional
@@ -223,9 +234,9 @@ optional, and unknown keys are an error.
 - **`~/.kapellmeister/config.toml`** (`$KAPELLMEISTER_HOME` moves it) holds what depends on your machine and accounts:
   `[cao]`, `[chairs]`, `[agents]`, `[ensembles]`, timeouts, and the model each tier means for you.
 - **`.kapellmeister/config.toml`** in the repository holds the contract everyone working in it shares:
-  `[test]`, step tiers and floors, rounds and sizing.
+  `[test]`, step tiers and floors, rounds, learned budget and sizing.
 
-The repository's values win for `[run]` rounds and retries, `[steps]` and `[sizing]`; yours win
+The repository's values win for `[run]` rounds, retries, `lessons`, `lessons_timeout` and `learned_budget`, `[steps]` and `[sizing]`; yours win
 for `[tiers]`, because only you know what your accounts can run. `[cao]`, `[chairs]`, `[agents]` and
 `[ensembles]` are machine-only and `[test]` is repository-only; putting one in the wrong file is an error.
 `$CAO_API_BASE_URL` overrides `[cao] url`. State lives in `~/.kapellmeister/state` (`$KAPELLMEISTER_STATE_DIR`).
@@ -243,6 +254,9 @@ timeout = "60m"                     # each agent step
 reply_grace = "15m"
 preflight_timeout = "4m"
 blocker_poll = "20s"
+lessons = true
+lessons_timeout = "5m"
+learned_budget = 4000              # bytes of lesson text per chair; at least 1
 
 [chairs]                            # agent or provider:profile; optional @tier, or :model
 implementer = "claude"
@@ -315,10 +329,10 @@ it. Later rounds reuse the same test plan.
 A test-step timeout after gate approval ends `untested`: the change was approved but testing did
 not finish. The outcome names the partial report if it exists and preserves the worktree and its
 uncommitted change as an approved run would. Other test-step failures, and a timeout or failure in
-any other step, still fail the run. The test step gets the same worktree check as the gate and
+any other score step, still fail the run. The test step gets the same worktree check as the gate and
 reviewers; a tester that modifies the worktree still fails the run even if it also times out.
 Both tester prompts restrict scratch files, build output, scratch repositories and server state to
-the absolute `<state dir>/runs/<run id>/scratch` directory, outside the worktree.
+the absolute `<state dir>/scratch/<run id>` directory, outside the worktree.
 `km run` and `km play` create it before starting the score and refuse to start if it is inside a git
 work tree; set `KAPELLMEISTER_STATE_DIR` outside any repository. The test prompt permits git commands
 that write only in repositories the tester created inside scratch, always using `git -C <repository>`.
@@ -330,6 +344,39 @@ km never signals these processes. It silently skips non-regular `pids` files (in
 files larger than 1 MiB. The concurrent test-plan step
 relies on its prompt to forbid file changes because implementation is editing at the same time.
 Without a tester, gate approval finishes the run as usual.
+
+After the score ends, km asks the gate for lessons when it has given a verdict, whether or not
+it approved the run. The question is: from this run's plan, reviews and verdicts, what would have
+saved a round if a chair had known it at the start? Zero lessons is a good answer. Each candidate
+names its part (`planner`, `implementer`, `reviewer`, `gate`, `classifier` or `tester`), states a lesson
+in one or two sentences, and cites the step and finding that support it. The gate returns a JSON
+array of objects with `part`, `lesson` and `evidence` fields.
+
+This is shadow mode: km never reads `lessons.json` back and never puts a lesson in a briefing.
+The lessons step always plays in a fresh terminal that is released afterwards, so under `km play`
+the standing gate never sees what was proposed and cannot carry it into the next play.
+It writes `lessons.json` only in the run's state directory, beside `result.json`, with km-stamped
+`run_id`, `repository` and `ensemble` on each lesson. It never writes that file into the repository's
+worktree. The gate's reply uses the ignored `.kapellmeister/runs/<run>/lessons-reply.json` record,
+like other step replies; a regular reply within the size limit is copied to the state's `replies/`
+for audit, including malformed answers. Non-regular and oversized replies are not copied.
+
+Collection is on by default. Set `[run] lessons = false` in either config layer to turn it off;
+`lessons_timeout = "5m"` sets its own positive time limit, covering the question, reply wait
+and nudge. Terminal inspection, diagnostic screening and release still run after a timeout with
+independent limits of 15s, 15s and 30s respectively, so cleanup can extend beyond the lessons deadline.
+Lessons use the gate's chair and tier policy. At most five lessons are kept,
+with 400 characters per lesson, 300 per evidence field, and 4096 bytes across stored fields.
+Replies are capped at 32 KiB. Control and invisible formatting characters are removed and whitespace
+is collapsed. Unknown parts, empty or oversized fields and lessons beyond the count or total size
+limit are dropped; malformed JSON, extra fields or trailing data reject the answer.
+
+`result.json` records `lessons.proposed` and, when needed, `lessons.reason`; zero proposals writes
+an empty `lessons.json` array. A timeout, step error, unreadable or oversized reply, invalid answer,
+interrupt or missing gate verdict records zero with a reason. A lessons step that changes the
+worktree discards its proposals and prints a warning. A failed lessons-file write also records
+zero and warns. Lessons never change the run's outcome or exit code. With collection disabled,
+there is no lessons step, file or result key.
 
 A reviewer whose step errors or leaves no reply after its one nudge is recorded as `FAILED`.
 It counts as not approving for `gate_when`; surviving reviews continue through the round, and
@@ -428,18 +475,60 @@ in the selected ensemble to turn escalation off for that run. `true` or an omitt
 (approved but testing timed out), a failed, interrupted or rounds-exhausted run, exits 1 after
 printing the outcome and diff-stat. Missing or unknown subcommands exit 2.
 
+## Checked-in lessons
+
+A person can give chairs guidance from earlier runs by editing Markdown files under
+`.kapellmeister/learned/` and opening a pull request for review. km only reads these files; it never
+creates or updates them, and never copies proposed lessons or agent memory into them.
+
+A part file (`planner.md`, `implementer.md`, `reviewer.md`, `gate.md`, `classifier.md` or `tester.md`)
+reaches every chair playing that part. When playing an ensemble file, a chair also receives
+`<section>.<chair>.md`, using its existing section and chair names: for example,
+`review.security.md` for `review.security@thorough`. The part file comes first. Plain `[chairs]`
+and `[ensembles.NAME]` tables receive only part files. Both `km run` and `km play` add the lessons
+to each step's briefing as guidance from earlier runs reviewed by a person; the task and the
+repository's agent instruction files take precedence. No files means no added section.
+
+km reads lessons once from the committed tree at the run's base commit, before verification or
+any chair starts. Lesson content comes from git's stdout only; warnings on stderr never become
+lesson text. Working files, including edits or new lessons made during the run, cannot
+change that run's briefings. Merge the lesson pull request before starting a run that needs it.
+
+`[run] learned_budget` limits lesson text to 4,000 bytes per chair by default, shared between the
+part and chair files. Set it in your user config or the repository config; the repository wins.
+km keeps whole lines from the top, counting a newline for each line, and stops at the first line
+that does not fit. It reports a cut in the output, briefing and telemetry without failing the run.
+If the first line exceeds the budget, no lesson section is added, but the cut is still recorded.
+Symbolic links, non-regular files and files containing control characters other than newline and
+tab are skipped with a warning naming the file. This includes CRLF files. Invalid UTF-8, invisible
+or direction-changing Unicode characters (format characters and line or paragraph separators),
+and files containing the `<lessons` or `</lessons` section markers (case-insensitive) are skipped
+with the same warning and recorded reason. The old `[run] lessons_budget` key is an error naming
+`learned_budget`; `lessons` and `lessons_timeout` still control gate-proposed lessons.
+
 ## Report
 
 `km report [DIR...]` summarizes run records, oldest first, followed by totals by outcome,
-repository and ensemble. With no directory it reads `<state>/runs`. Each directory is searched
-at any depth, so `km report ~/kept-sandboxes` works across kept sandbox copies. A directory
-holding `result.json`, `telemetry.jsonl` or `current.json` is a run. Without a result, a run
-with empty or blank-only telemetry counts as unfinished, with nothing printed on stderr.
-`config.json`, when present, can supply the run id; it records no start, repository or ensemble.
-A directory holding only `config.json` is not counted as a run.
-The search stops inside each run directory, ignores directory symlinks and never follows record-file
-symlinks. An explicitly chosen root directory may itself be a symlink. Copies with the same run
-id count once, preferring a finished copy over an unfinished or unreadable one.
+repository and ensemble. With no directory it reads `<state>/runs`. `km report ~/kept-sandboxes`
+searches across kept sandbox copies. A directory holding `result.json`, `telemetry.jsonl` or
+`current.json` is a run. Without a result, a run with empty or blank-only telemetry counts as
+unfinished, with nothing printed on stderr. `config.json`, when present, can supply the run id; it
+records no start, repository or ensemble. A directory holding only `config.json` is searched for
+runs rather than counted as one. The search stops inside each run directory, ignores directory
+symlinks and never follows record-file symlinks. An explicitly chosen root directory may itself be
+a symlink. Agreeing copies of the same run id count once, preferring a finished copy over an
+unfinished or unreadable one, then the first path in lexical order. Copies that disagree on a known
+start, repository or finished outcome are listed separately; stderr names both paths and the
+differing fields. JSON marks their rows `conflict: true`, and the table counts conflicting rows.
+Missing values cannot hide disagreement in other copies.
+
+Searches are bounded because kept sandbox copies are untrusted. `-max-depth N` defaults to 64;
+the root is level 0, and directories at the limit are not opened. `-max-entries N` defaults to
+1,000,000 files and directories across the search, read in batches; it accepts 1 through 16,777,216.
+Depth must be at least 1. Descent sorts the entries read by name. When a budget is exhausted, the
+report continues with what it found, exits successfully and names the unsearched directories on
+stderr. Depth diagnostics show at most 20 paths, then a count; entry diagnostics name the first
+unsearched directory and count the rest. The table also prints the number of unsearched directories.
 
 Started comes from the first non-blank telemetry record's timestamp, shown in UTC. For unfinished
 runs, `current.json` supplies the start, repository and ensemble when available. When telemetry
@@ -459,40 +548,56 @@ other directories are still searched. Directory handles keep searches and record
 following a symlink even if a directory is renamed during the report.
 The command only reads the supplied directories.
 
+`TOKENS` shows recorded input/output usage in compact form (`1.2M/340k`); input excludes cache.
+Long table cells are shortened with `…`; JSON keeps their full values. Usage comes only from
+`result.json`, and is `unknown` for older or unfinished runs, unmeasured usage, missing counters,
+wrong types or counters outside 0 through 2^36. Measured zero usage remains zero. A partly measured
+run (`unknown_steps > 0`, for example one with chairs whose tool keeps no usage log) shows what was
+measured as a lower bound, `≥1.2M/340k`, and JSON carries its `unknown_steps`. Overall, ensemble and
+repository totals sum measured usage, mark the sum `≥` when any run in it is partly measured, and
+say how many runs were partly measured and how many had no usage; a group with none measured shows
+`unknown`.
+
 `-since 2026-11-09` keeps runs started at or after midnight UTC on that date; RFC3339 timestamps
 are also accepted. Runs without a known start are excluded by this filter.
 `-repository github.com/acme/app` matches the recorded repository exactly and excludes unknown
 repositories. Both filters can be combined, before or after directories. `-json` emits the same
 ordered runs and totals as a JSON document, omitting unrecorded fields from individual runs.
+Every run has `usage`: either `{"known": false}` or `known: true` with `input_tokens`, `output_tokens`,
+`cache_read_tokens` and `cache_write_tokens`. Totals add `usage`, `ensemble_usage` and
+`repository_usage`, each with all four counters plus `known_runs` and `unknown_runs`. Zero totals
+with no known runs mean no measured usage, not a measured zero. `not_searched` holds up to 100
+`{path, reason}` entries (`depth` or `entries`); `not_searched_total` counts all skipped directories.
 Nonprinting characters are escaped in JSON too, preserving their values when decoded.
 With no matches the table says `no runs found`; JSON contains an empty runs array and zero totals.
 
 For example, `km report ~/kept-sandboxes` can print:
 
 ```text
-STARTED              REPOSITORY           ENSEMBLE  OUTCOME     ROUNDS   TOOK
-2026-11-09 14:02:11  github.com/acme/app  thorough  approved    2        18m31s
-2026-11-10 09:40:52  github.com/acme/app  unknown   failed      1        4m2s
-2026-11-10 16:15:03  unknown              unknown   unfinished  unknown  unknown
+STARTED              REPOSITORY           ENSEMBLE  OUTCOME     ROUNDS   TOOK     TOKENS
+2026-11-09 14:02:11  github.com/acme/app  thorough  approved    2        18m31s   1.2M/340k
+2026-11-10 09:40:52  github.com/acme/app  unknown   failed      1        4m2s     unknown
+2026-11-10 16:15:03  unknown              unknown   unfinished  unknown  unknown  unknown
 
 runs: 3
+usage: in 1.2M out 340k (2 without usage)
 by outcome
   approved    1
   failed      1
   unfinished  1
 by repository
-  github.com/acme/app  2
-  unknown              1
+  github.com/acme/app  2  in 1.2M out 340k (1 without usage)
+  unknown              1  unknown (1 without usage)
 by ensemble
-  unknown   2
-  thorough  1
+  unknown   2  unknown (2 without usage)
+  thorough  1  in 1.2M out 340k
 ```
 
 ## Status
 
 `km status [DIR...]` lists runs that have started and have no `result.json`. With no directory
-it reads `<state>/runs`; explicit directories are searched at any depth, sharing report's search,
-deduplication and safe record reading. Status rejects a supplied root that is itself a symlink,
+it reads `<state>/runs`; explicit directories are searched with report's default limits, sharing
+its search, handling of copies and safe record reading. Status rejects a supplied root that is itself a symlink,
 though the path above it may pass through one,
 escapes control characters and only reads. With no runs in progress it says so and exits 0.
 Runs with empty or blank-only telemetry are listed like other runs in progress, without diagnostics.
@@ -515,9 +620,18 @@ RUN                     STARTED              REPOSITORY             ENSEMBLE  RO
 
 ## Telemetry
 
+Run records (`config.json`, `telemetry.jsonl`, `result.json` and `replies/`) live in
+`<state dir>/runs/<run id>/`. Tester scratch lives separately in `<state dir>/scratch/<run id>/`
+and is left in place after the run. Once `telemetry.jsonl` is created, `km run` and `km play`
+write a start record and leave `result.json` on normal completion, failure or interruption, including
+errors recording configuration, engine setup or the final git summary. Failures record their reason;
+a panic records a failed result and is raised again. If writing the result itself fails, stderr
+reports it. A process killed outright cannot finalize its record and remains unfinished.
+
 Each run writes `telemetry.jsonl` under `~/.kapellmeister/state/runs/<run>/`: one record per step with its chair, tier, effort, tier source (`default`,
 `pinned`, `sized`, `escalated` or `explicit`), the model CAO reported, durations and verdicts, plus `size`
-and `escalate` records for each decision. A seated tester adds `test-plan`, `test`,
+and `escalate` records for each decision. Lessons add a `lessons` step record and a
+`lessons-proposed` summary (also recorded when collection is skipped); the step uses the `gate` tier. A seated tester adds `test-plan`, `test`,
 `classify-test`, `verdict-test` and any `left-running` records; both tester steps use the `test` tier. With several reviewers,
 their review, nudge, classification and verdict records include `chair_name` (`reviewer-1`, `reviewer-2`, etc.).
 A failed review has verdict `FAILED` and its error; single-reviewer records omit `chair_name`.
@@ -525,6 +639,53 @@ A failed review has verdict `FAILED` and its error; single-reviewer records omit
 bare last line supplies the verdict; these replies produce no corresponding `classify-*` record.
 Classified verdicts omit `verdict_source`. A review's `classify-review` and verdict records can
 interleave with other reviewers' progress and telemetry while their reviews are still running.
+
+`duration_ms` measures the step's own run time. `queue_ms`, when nonzero, records time spent opening
+its usage window, including waiting for an earlier step on the same chair. Queued steps are not
+watched as running, and the wait stops when the run is cancelled. A step cancelled while queued
+records its error and queue time with zero duration and no usage. `reply_wait_ms` remains separate.
+
+Steps also record `usage` from Claude Code and Codex session logs when readable. A known usage has
+`known: true`, separate `input_tokens`, `output_tokens`, `cache_write_tokens` and `cache_read_tokens`,
+and a `models` map with the same counters for each model named in the log. Claude input excludes
+cache reads and writes. Codex input has cached reads subtracted; its reported cache writes are kept
+separate without subtracting them from input (the real logs inspected reported zero cache writes).
+Output includes reasoning tokens. km records tokens, without converting them to money.
+
+Usage covers complete log lines appended during one step attempt, including the reply wait. Earlier
+steps on a reused occupant are excluded, and each nudge has its own usage. Windows for steps sharing
+a chair or an explicitly reused terminal are serialized. Each Claude message id is counted once per
+terminal or subagent log across windows, attributed to the first window with known usage that saw it. Within
+that window, its last usage wins; later streamed lines of that message are excluded from subsequent
+windows. Codex cumulative counts are differenced for the attempt. Claude
+logs are found under `CLAUDE_CONFIG_DIR` (default `~/.claude`); Codex logs under `CODEX_HOME` (default
+`~/.codex`), in today's and yesterday's session directories, matched to the worktree. Exactly one
+growing session log must name the step's reply path in its appended lines, even when only one grows.
+Claude usage also includes growth in `<session-id>/subagents/**/agent-*.jsonl` beside that session's
+`<session-id>.jsonl`. Subagent transcripts are attributed through the matching parent session;
+they need no reply-path match themselves. Existing subagent content is excluded, and new transcripts
+start at byte zero. Metadata files are ignored. Parent and subagent message ids are remembered only
+when the whole window has known usage; malformed subagent usage makes the window unknown.
+
+Unavailable usage has `known: false` and a `reason`: `unsupported-provider` (Copilot CLI and
+Antigravity), `no-log`, `ambiguous-log` (no unique growing session log names the reply path, including a single
+log without a match), `unreadable-log` or `no-usage`. Unknown usage omits token
+counters; it never means zero. Missing, unreadable, truncated, malformed or oversized logs never
+fail the step. Reads are limited to 64 MiB of growth per log and 4 MiB per line; partial last lines
+and writes arriving after the attempt closes are excluded. km reads log metadata, counts and model
+names, and checks reply paths in memory; it never stores prompts, replies or file contents from
+these logs. Non-step records omit usage, and older records without usage remain readable.
+
+`result.json` includes `usage` summed over known steps, with per-model counters and `unknown_steps`
+when any steps have unknown usage. Its `known` is true when at least one step has known usage; totals
+can therefore be incomplete when `unknown_steps` is nonzero. Without a configured usage meter,
+records and results omit usage.
+
+A `lessons` record identifies each briefed chair by `part` and `address` (or `chair_name` for
+unaddressed reviewers), and records the lesson `base` commit, ordered `files` with their `path`,
+`sha256` of the entire committed content and original `bytes`, any `skipped` paths and reasons,
+the number of kept `bytes` and whether text was `cut`. Hashes cover the whole file even when its
+text was cut. Chairs with no lesson files or skipped candidates add no record.
 
 A step record's `chair` carries its `address`, `section.chair@ensemble`, when the run plays an ensemble
 file or `km play` plays a standing ensemble; with plain `[chairs]` or an `[ensembles.NAME]` table the
@@ -536,7 +697,10 @@ standing ensemble's for `km play`; omitted for plain `[chairs]`) and the `reposi
 `origin` remote as `host/owner/name`, without scheme, credentials, port or `.git`. It is omitted when
 there is no `origin` or it names no host, such as a local path.
 
-`result.json` also records the worktree's starting commit as `base`. Its `diff_stat`
+`result.json` also records the worktree's starting commit as `base`. For `km run -repo`,
+`base_branch` names the branch fetched from `origin` (`main` by default), and `base` is the commit
+it resolved to; the opening output names both. `base_branch` is omitted for `-worktree` runs and
+`km play`. Older records without `base_branch` remain readable. Its `diff_stat`
 compares the final tree against that base, including untracked non-ignored files and changes committed
 during the run. Generating this report uses a temporary index and leaves the worktree's index unchanged.
 If HEAD moves, the result also records `head` and `head_moved: true`, and km prints

@@ -124,6 +124,16 @@ func runSessionArgs(t *testing.T, f *runCAO) (string, []string) {
 	writeFile(t, filepath.Join(s.Worktree, loop.ConfigFile), "[test]\nverify = 'true'\n[run]\npreflight_timeout = '0'\nreply_grace = '1ms'\nrounds = 2\n[sizing]\nmode = 'off'\n")
 	srv := f.serve(t)
 	args := []string{"-task", "probe", "-worktree", s.Worktree, "-cao", srv.URL}
+	args = append(args, runRoleArgs()...)
+	wt, err := worktreeDir(s.Worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return wt, args
+}
+
+func runRoleArgs() []string {
+	var args []string
 	for _, part := range loop.AllRoles() {
 		spec := "p:" + part + ":m"
 		if part == "reviewer" {
@@ -131,11 +141,7 @@ func runSessionArgs(t *testing.T, f *runCAO) (string, []string) {
 		}
 		args = append(args, "-"+part, spec)
 	}
-	wt, err := worktreeDir(s.Worktree)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return wt, args
+	return args
 }
 
 func TestRunCreatesOnePodiumSessionAndPassesItOnEveryNewRunStep(t *testing.T) {
@@ -190,6 +196,9 @@ func TestRunDeletesItsSessionOnSuccessFailureAndInterrupt(t *testing.T) {
 			if outcome == "failure" || outcome == "interrupt" {
 				want = loop.Failed
 			}
+			if outcome == "interrupt" && !strings.Contains(result.Reason, "interrupt") && !strings.Contains(result.Reason, "canceled") {
+				t.Fatalf("interrupt reason = %q", result.Reason)
+			}
 			if result.Outcome != want {
 				t.Fatalf("outcome = %s, want %s", result.Outcome, want)
 			}
@@ -206,8 +215,15 @@ func TestPlayPollsTheStandingSessionAndNeverDeletesIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.polled == 0 || len(f.created) != 0 || len(f.deleted) != 0 || len(f.terminalDeletes) != 0 {
+	if f.polled == 0 || len(f.created) != 0 || len(f.deleted) != 0 {
 		t.Fatalf("polls=%d creates=%v deletes=%v", f.polled, f.created, f.deleted)
+	}
+	for _, deleted := range f.terminalDeletes {
+		for _, chair := range s.Chairs {
+			if strings.HasSuffix(deleted, "/"+chair.TerminalID) {
+				t.Fatalf("deleted the standing occupant %s", deleted)
+			}
+		}
 	}
 	if !strings.Contains(out, "  blocked: permission chair — Permission rule Bash(cp*) requires confirmation for this command. — attach with tmux attach -t cao-standing") {
 		t.Fatalf("progress = %s", out)

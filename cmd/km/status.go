@@ -51,16 +51,20 @@ func statusAt(args []string, stdout, stderr io.Writer, now time.Time) error {
 	if defaultDir {
 		dirs = []string{filepath.Join(loop.StateDir(), "runs")}
 	}
-	found, diagnostics, err := findRuns(dirs, defaultDir, true)
+	found, scan, err := findRuns(dirs, defaultDir, 64, 1000000, true)
 	if err != nil {
 		return fmt.Errorf("status: %s", plain(err.Error()))
 	}
-	for _, diagnostic := range diagnostics {
+	for _, diagnostic := range scan.diagnostics {
 		fmt.Fprintln(stderr, diagnostic)
+	}
+	finished := map[string]bool{}
+	for _, recorded := range found {
+		finished[recorded.RunID] = finished[recorded.RunID] || recorded.hasResult
 	}
 	runs := []statusRun{}
 	for _, recorded := range found {
-		if recorded.hasResult || !recorded.hasStarted {
+		if finished[recorded.RunID] || !recorded.hasStarted {
 			continue
 		}
 		run := statusRun{RunID: recorded.RunID, Path: recorded.Path, Started: recorded.Started, Repository: recorded.Repository, Ensemble: recorded.Ensemble, Playing: []statusStep{}, Liveness: "unknown"}

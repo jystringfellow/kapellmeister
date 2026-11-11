@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -25,14 +26,14 @@ import (
 )
 
 const usage = `usage:
-  km run -repo DIR (-task TEXT | -task-file FILE) [-ensemble NAME] [flags]   one ensemble
+  km run -repo DIR [-base BRANCH] (-task TEXT | -task-file FILE) [-ensemble NAME] [flags]   one ensemble
   km audition -worktree DIR [-ensemble NAME] [-keep]       boot the ensemble, cue every chair once, tear down
   km rehearse -worktree DIR (-task TEXT | -task-file FILE) [-ensemble NAME]  brief the ensemble and leave it standing
   km play SESSION [-max-rounds N] [-verify CMD] [-timeout D] [-cao URL]  run the score on a standing ensemble
   km reseat SESSION ADDRESS [-agent SPEC] [-timeout D] [-cao URL]  replace one chair's occupant
   km ensemble list                                         list standing ensembles
   km ensemble down [-cao URL] SESSION                       take down a standing ensemble
-  km report [-json] [-since DATE] [-repository NAME] [DIR...]   summarize finished runs
+  km report [-json] [-since DATE] [-repository NAME] [-max-depth N] [-max-entries N] [DIR...]   summarize run records
   km status [-json] [DIR...]                               show the runs in progress
   km cue done -queue FILE CUE [NOTE]                         close a cue (chairs run this)
   km preflight -worktree DIR [-agents LIST] [-tier T]       check each agent starts and answers
@@ -96,7 +97,7 @@ func commonFlags(fs *flag.FlagSet) common {
 	return common{
 		fs:         fs,
 		repo:       fs.String("repo", "", "repository clone to branch worktrees from"),
-		base:       fs.String("base", "origin/main", "ref each detached worktree starts at"),
+		base:       fs.String("base", "", "branch on the remote to start the worktree from (default main); not with -worktree"),
 		task:       fs.String("task", "", "task text"),
 		taskFile:   fs.String("task-file", "", "file holding the task text"),
 		verify:     fs.String("verify", "", "command kapellmeister runs in the worktree before planning and after each implementation round; defaults to [test] verify in .kapellmeister/config.toml, then an executable .kapellmeister/verify"),
@@ -269,6 +270,15 @@ func runCommand(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	set := flagsSet(fs)
+	if set["base"] {
+		if set["worktree"] {
+			return errors.New("-base and -worktree do not go together: -worktree plays on the checkout it is given")
+		}
+		if err := validBaseBranch(*c.base); err != nil {
+			return err
+		}
+	}
 	text, err := taskText(*c.task, *c.taskFile)
 	if err != nil {
 		return err
@@ -281,6 +291,7 @@ func runCommand(args []string) error {
 		return err
 	}
 	wt := *worktree
+	baseBranch := ""
 	if wt == "" {
 		if *c.repo == "" {
 			return errors.New("-repo or -worktree is required")
@@ -288,7 +299,12 @@ func runCommand(args []string) error {
 		if err := fetchRepo(*c.repo); err != nil {
 			return err
 		}
-		if wt, err = addWorktree(*c.repo, *c.base); err != nil {
+		baseBranch = firstNonEmpty(*c.base, "main")
+		commit, err := resolveBase(*c.repo, baseBranch)
+		if err != nil {
+			return err
+		}
+		if wt, err = addWorktree(*c.repo, commit); err != nil {
 			return err
 		}
 	}
@@ -314,7 +330,7 @@ func runCommand(args []string) error {
 	policy := s.Policy
 	runID := newRunID()
 	runDir := filepath.Join(loop.StateDir(), "runs", runID)
-	scratch, err := prepareScratch(runDir)
+	scratch, err := prepareScratch(loop.StateDir(), runID)
 	if err != nil {
 		return err
 	}
@@ -345,10 +361,11 @@ func runCommand(args []string) error {
 		}
 	}()
 	sum, err := runEnsemble(ctx, ensembleRun{
-		RunID: runID, StateDir: runDir, Ensemble: *ensemble,
+		RunID: runID, StateDir: runDir, Ensemble: *ensemble, BaseBranch: baseBranch, Meter: loop.NewLogMeter(),
 		Config: loop.Config{
 			ScratchDir: scratch, RunID: runID, Task: text, Worktree: wt, Chairs: seated, GateWhen: s.GateWhen,
-			BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, CheckCommand: checkCmd, Policy: &policy,
+			Lessons: s.Lessons, LessonsTimeout: s.LessonsTimeout,
+			LearnedBudget: s.LearnedBudget, BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, CheckCommand: checkCmd, Policy: &policy,
 		},
 		Watcher: loop.CAOWatcher{Client: client, Session: podium.SessionName},
 		Stepper: loop.CAOStepper{Client: client, Session: podium.SessionName}, Verify: loop.Retrying(loop.CommandVerifier(verifyCmd), s.VerifyRetries), Progress: os.Stdout,
@@ -423,8 +440,8 @@ func configCommand(args []string) error {
 	}
 	s.CAOURL = firstNonEmpty(*caoURL, s.CAOURL)
 	printSources(os.Stdout, s)
-	fmt.Printf("cao    %s\nstate  %s\nrun    rounds %d, verify retries %d, step timeout %s, reply grace %s, preflight %s, blocker poll %s\n",
-		s.CAOURL, loop.StateDir(), s.Rounds, s.VerifyRetries, s.Timeout, s.ReplyGrace, s.PreflightTimeout, s.BlockerPoll)
+	fmt.Printf("cao    %s\nstate  %s\nrun    rounds %d, verify retries %d, step timeout %s, reply grace %s, preflight %s, blocker poll %s, lessons %s, learned budget %d bytes\n",
+		s.CAOURL, loop.StateDir(), s.Rounds, s.VerifyRetries, s.Timeout, s.ReplyGrace, s.PreflightTimeout, s.BlockerPoll, lessonsSetting(s), s.LearnedBudget)
 	printChairs(os.Stdout, s)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -451,6 +468,13 @@ func configCommand(args []string) error {
 	}
 	printPermissionNote(os.Stdout, unguarded)
 	return nil
+}
+
+func lessonsSetting(s loop.Settings) string {
+	if !s.Lessons {
+		return "off"
+	}
+	return "on, limit " + s.LessonsTimeout.String()
 }
 
 func printChairs(w io.Writer, s loop.Settings) {
@@ -662,15 +686,17 @@ func firstNonEmpty(values ...string) string {
 }
 
 type ensembleRun struct {
-	Ensemble string
-	Watcher  loop.Watcher
-	Command  string
-	RunID    string
-	StateDir string
-	Config   loop.Config
-	Stepper  loop.Stepper
-	Verify   loop.Verifier
-	Progress io.Writer
+	Meter      loop.UsageMeter
+	BaseBranch string
+	Ensemble   string
+	Watcher    loop.Watcher
+	Command    string
+	RunID      string
+	StateDir   string
+	Config     loop.Config
+	Stepper    loop.Stepper
+	Verify     loop.Verifier
+	Progress   io.Writer
 }
 
 type ensembleSummary struct {
@@ -679,12 +705,20 @@ type ensembleSummary struct {
 	DiffStat   string `json:"diff_stat"`
 	Ensemble   string `json:"ensemble,omitempty"`
 	Repository string `json:"repository,omitempty"`
+	BaseBranch string `json:"base_branch,omitempty"`
 	Base       string `json:"base"`
 	Head       string `json:"head,omitempty"`
 	HeadMoved  bool   `json:"head_moved,omitempty"`
 }
 
-func runEnsemble(ctx context.Context, p ensembleRun) (ensembleSummary, error) {
+type recordedLesson struct {
+	RunID      string `json:"run_id"`
+	Repository string `json:"repository"`
+	Ensemble   string `json:"ensemble"`
+	loop.Lesson
+}
+
+func runEnsemble(ctx context.Context, p ensembleRun) (sum ensembleSummary, runErr error) {
 	base, err := gitOutput(p.Config.Worktree, "rev-parse", "HEAD")
 	if err != nil {
 		return ensembleSummary{}, err
@@ -697,17 +731,54 @@ func runEnsemble(ctx context.Context, p ensembleRun) (ensembleSummary, error) {
 		return ensembleSummary{}, err
 	}
 	defer telemetry.Close()
+	start := time.Now()
+	origin, _ := gitOutput(p.Config.Worktree, "config", "--get", "remote.origin.url")
+	repository := repositoryOf(origin)
+	var res loop.Result
+	resultWritten := false
+	defer func() {
+		caught := recover()
+		if !resultWritten {
+			reason := "run ended without a result"
+			if runErr != nil {
+				reason = runErr.Error()
+			}
+			if ctx.Err() != nil {
+				reason = "interrupted: " + ctx.Err().Error() + ": " + reason
+			}
+			if caught != nil {
+				reason = fmt.Sprintf("panic: %v", caught)
+			}
+			res.RunID, res.Worktree = p.RunID, p.Config.Worktree
+			if res.RunDir == "" {
+				res.RunDir = filepath.Join(p.Config.Worktree, loop.RunDirRel(p.RunID))
+			}
+			res.Outcome, res.Reason = loop.Failed, reason
+			sum = ensembleSummary{Result: res, DurationMS: time.Since(start).Milliseconds(), Ensemble: p.Ensemble, Repository: repository, Base: base, BaseBranch: p.BaseBranch}
+			if err := writeJSON(filepath.Join(p.StateDir, "result.json"), sum); err != nil {
+				fmt.Fprintln(os.Stderr, "km: writing result.json:", err)
+			}
+		}
+		if caught != nil {
+			panic(caught)
+		}
+	}()
+	if err := json.NewEncoder(telemetry).Encode(loop.Record{At: start.UTC(), RunID: p.RunID, Step: "start"}); err != nil {
+		return ensembleSummary{}, err
+	}
 	if err := writeJSON(filepath.Join(p.StateDir, "config.json"), p.Config); err != nil {
 		return ensembleSummary{}, err
 	}
-	fmt.Fprintf(p.Progress, "km %s %s\n  worktree  %s\n  state     %s\n", firstNonEmpty(p.Command, "run"), p.RunID, p.Config.Worktree, p.StateDir)
-	eng := &loop.Engine{Watcher: p.Watcher, Config: p.Config, Stepper: p.Stepper, Verify: p.Verify, Records: telemetry, Progress: p.Progress}
-	origin, _ := gitOutput(p.Config.Worktree, "config", "--get", "remote.origin.url")
-	repository := repositoryOf(origin)
-	start := time.Now().UTC()
+	fmt.Fprintf(p.Progress, "km %s %s\n  worktree  %s\n", firstNonEmpty(p.Command, "run"), p.RunID, p.Config.Worktree)
+	if p.BaseBranch != "" {
+		fmt.Fprintf(p.Progress, "  base      %s @ %s\n", p.BaseBranch, base)
+	}
+	fmt.Fprintf(p.Progress, "  state     %s\n", p.StateDir)
+	eng := &loop.Engine{Meter: p.Meter, Watcher: p.Watcher, Config: p.Config, Stepper: p.Stepper, Verify: p.Verify, Records: telemetry, Progress: p.Progress}
 	host, _ := os.Hostname()
 	token, _ := processStart(os.Getpid())
-	state := runState{RunID: p.RunID, Command: firstNonEmpty(p.Command, "run"), Ensemble: p.Ensemble, Repository: repository, Started: start, Updated: start, MaxRounds: p.Config.MaxRounds, PID: os.Getpid(), Host: host, ProcessStart: token, Playing: []loop.ActiveStep{}}
+	began := start.UTC()
+	state := runState{RunID: p.RunID, Command: firstNonEmpty(p.Command, "run"), Ensemble: p.Ensemble, Repository: repository, Started: began, Updated: began, MaxRounds: p.Config.MaxRounds, PID: os.Getpid(), Host: host, ProcessStart: token, Playing: []loop.ActiveStep{}}
 	warned := false
 	publish := func() {
 		if err := writeRunState(p.StateDir, state); err != nil && !warned {
@@ -720,7 +791,7 @@ func runEnsemble(ctx context.Context, p ensembleRun) (ensembleSummary, error) {
 		state.Round, state.Playing, state.Updated = round, active, time.Now().UTC()
 		publish()
 	}
-	res, err := eng.Run(ctx)
+	res, err = eng.Run(ctx)
 	if err != nil {
 		return ensembleSummary{}, err
 	}
@@ -735,13 +806,24 @@ func runEnsemble(ctx context.Context, p ensembleRun) (ensembleSummary, error) {
 	if err != nil {
 		return ensembleSummary{}, err
 	}
-	sum := ensembleSummary{Result: res, DurationMS: time.Since(start).Milliseconds(), DiffStat: stat, Ensemble: p.Ensemble, Repository: repository, Base: base}
+	if res.Lessons != nil {
+		lessons := make([]recordedLesson, 0, len(res.Proposed))
+		for _, lesson := range res.Proposed {
+			lessons = append(lessons, recordedLesson{RunID: p.RunID, Repository: repository, Ensemble: p.Ensemble, Lesson: lesson})
+		}
+		if err := writeJSON(filepath.Join(p.StateDir, "lessons.json"), lessons); err != nil {
+			fmt.Fprintln(os.Stderr, "km: writing lessons.json:", err)
+			res.Lessons = &loop.LessonsReport{Reason: "writing lessons.json: " + err.Error()}
+		}
+	}
+	sum = ensembleSummary{Result: res, DurationMS: time.Since(start).Milliseconds(), DiffStat: stat, Ensemble: p.Ensemble, Repository: repository, Base: base, BaseBranch: p.BaseBranch}
 	if head != base {
 		sum.Head, sum.HeadMoved = head, true
 	}
 	if err := writeJSON(filepath.Join(p.StateDir, "result.json"), sum); err != nil {
 		return sum, err
 	}
+	resultWritten = true
 	return sum, nil
 }
 
@@ -815,15 +897,18 @@ func printHeadMoved(w io.Writer, sum ensembleSummary) {
 }
 
 func gitOutput(worktree string, args ...string) (string, error) {
-	output, err := exec.Command("git", append([]string{"-C", worktree}, args...)...).CombinedOutput()
+	cmd := exec.Command("git", append([]string{"-C", worktree}, args...)...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	output, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, output)
+		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, &stderr)
 	}
 	return strings.TrimSpace(string(output)), nil
 }
 
-func prepareScratch(runDir string) (string, error) {
-	scratch, err := filepath.Abs(filepath.Join(runDir, "scratch"))
+func prepareScratch(stateDir, runID string) (string, error) {
+	scratch, err := filepath.Abs(filepath.Join(stateDir, "scratch", runID))
 	if err != nil {
 		return "", err
 	}
@@ -833,7 +918,7 @@ func prepareScratch(runDir string) (string, error) {
 	inside, err := gitOutput(scratch, "rev-parse", "--is-inside-work-tree")
 	if err == nil && inside == "true" {
 		top, err := gitOutput(scratch, "rev-parse", "--show-toplevel")
-		_ = os.RemoveAll(runDir)
+		_ = os.RemoveAll(scratch)
 		if err != nil {
 			return "", err
 		}
@@ -877,10 +962,14 @@ func addWorktree(repo, base string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if wt, err = filepath.EvalSymlinks(wt); err != nil {
+	resolved, err := filepath.EvalSymlinks(wt)
+	if err != nil {
+		os.RemoveAll(wt)
 		return "", err
 	}
-	if out, err := exec.Command("git", "-C", repo, "worktree", "add", "--detach", wt, base).CombinedOutput(); err != nil {
+	wt = resolved
+	if out, err := exec.Command("git", "-C", repo, "worktree", "add", "--detach", "--", wt, base).CombinedOutput(); err != nil {
+		os.RemoveAll(wt)
 		return "", fmt.Errorf("git worktree add: %w: %s", err, out)
 	}
 	return wt, nil
@@ -912,9 +1001,18 @@ func copyDir(src, dst string) error {
 		if e.IsDir() {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(src, e.Name()))
-		if err != nil {
-			return err
+		var data []byte
+		if e.Name() == "lessons-reply.json" {
+			text, err := loop.ReadLessonsReply(filepath.Join(src, e.Name()))
+			if err != nil {
+				continue
+			}
+			data = []byte(text)
+		} else {
+			data, err = os.ReadFile(filepath.Join(src, e.Name()))
+			if err != nil {
+				return err
+			}
 		}
 		if err := os.WriteFile(filepath.Join(dst, e.Name()), data, 0o644); err != nil {
 			return err

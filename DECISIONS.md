@@ -137,3 +137,102 @@ for attaching. Evidence:
 `TestPreflightTeardownIsBoundedWhenCAOStopsAnswering`,
 `TestPreflightDeletesTheChosenNameWhenSeatingFailsWithoutASession` and
 `TestPreflightAgainstCAODeletesTheChosenNameWhenSeatingReturnsNoIdentity`.
+
+## 2026-11-11: Collect lessons in shadow before reading them back
+
+The gate proposes candidate lessons after the score ends; km records them in state without feeding
+them into later runs. Collection may never change a run's outcome or exit code, including on timeout,
+invalid replies or a failed write. Evidence:
+`TestARunHasTheSameOutcomeRoundsAndReasonWithAndWithoutTheLessonsStep`,
+`TestARunCommandKeepsItsExitCodeWhenTheLessonsStepFailsOrIsOff`,
+`TestAFailedLessonsWriteDoesNotFailTheRun` and `TestKmNeverReadsLessonsJSONBack`.
+
+## 2026-11-11: Read token usage behind a per-step window
+
+km reads vendor session logs because CAO 2.5.4 exposes no usage. The meter seam opens and closes a
+usage window around one run-step attempt, so CAO can replace log reading with a per-terminal usage
+field or endpoint on run-step; propose that primitive upstream. Windows use log growth and serialize
+steps sharing a chair or an explicitly reused terminal. Opening uses the run context; queue time is
+recorded apart from duration and is excluded from the running-step watcher.
+Evidence: `TestTwoStepsOnOneReusedTerminalEachGetOnlyTheirOwnUsage`,
+`TestConcurrentStepsInOneWorktreeAreAttributedByTheirReplyPath`,
+`TestStepsQueuedForOneChairDoNotCountEachOthersUsage`,
+`TestAStepQueuedBehindAnotherOnItsChairRecordsTheWaitAsQueueMSAndNotAsDuration`,
+`TestAStepStillQueuedForItsChairIsNotWatchedAsRunning` and
+`TestCancellingTheRunWhileAStepWaitsForItsChairEndsTheWaitWithoutRunningTheStep`.
+
+## 2026-11-11: Wrong usage is worse than unknown
+
+Exactly one growing log must name the reply path, even when only one grew. Claude message ids are
+counted once per transcript across windows; unknown windows commit no ids. Claude subagent logs
+under `<session-id>/subagents/` share their parent session's window and need no reply-path match.
+A real Claude log had 489 parent output tokens and 502 separate subagent output tokens, so omitting
+subagents would under-count usage. Parent and subagent ids commit together only for known windows.
+Evidence:
+`TestOneGrownLogThatDoesNotNameTheReplyPathIsUnknownAsAmbiguous`,
+`TestAStepWithoutAReplyPathNeverGetsUsageFromAGrownLog`,
+`TestAClaudeMessageStraddlingTwoWindowsOnOneTerminalIsCountedOnlyOnce` and
+`TestAClaudeMessageIsCountedAgainWhenTheEarlierWindowWasUnknown`,
+`TestAClaudeStepsUsageIncludesItsSubagentTranscripts`,
+`TestClaudeSubagentUsageIsAttributedOnlyThroughItsParentReplyPath` and
+`TestAnUnknownClaudeSubagentWindowCommitsNoMessageIDs`.
+
+## 2026-11-11: Lessons reach chairs only through checked-in, reviewed files
+
+Lessons come only from files committed under `.kapellmeister/learned/`, read once at the run's
+base commit. A person reviews them through the same pull request process as code; km never writes
+there or reads lessons from agent-written memory. This prevents a bad run from teaching later
+steps or runs without review. Evidence: `TestLessonsAreReadFromTheBaseCommitNotTheWorkingFiles`,
+`TestALessonWrittenByAStepIsNotSeenByALaterStepOfTheSameRun` and
+`TestKmNeverWritesUnderTheLearnedDirectory`.
+
+## 2026-11-11: Chairs receive exactly the reviewed lesson bytes
+
+Read committed lessons from git's stdout only. Refuse invalid UTF-8, invisible or direction-changing
+characters and section markers rather than escaping: skipped files remain visible in warnings and
+records, while escaping would give chairs text that differs from what was reviewed. Name the
+checked-in budget `learned_budget` to distinguish it from gate collection's `lessons` and
+`lessons_timeout`. Evidence:
+`TestAWarningGitPrintsToStderrWhileSucceedingNeverReachesLessonsOrTheirHash`,
+`TestUnsafeLessonFilesAreSkippedWithAWarning`,
+`TestALessonFileContainingAMarkerCannotEndTheSectionEarly` and
+`TestTheOldLessonsBudgetKeyIsAnErrorNamingLearnedBudget`.
+
+
+## 2026-11-11: Report never shows unmeasured usage as zero
+
+Report uses only usage recorded in result.json. A partly measured run, such as one with chairs whose
+tool keeps no usage log, shows what was measured as a lower bound marked `≥`, because treating it as
+unknown hid the usage of every run that seats such a chair; invalid or missing counters are unknown. Ensemble and repository totals exclude unknown runs and
+count them explicitly. Search depth and entry budgets bound work on untrusted kept sandbox copies;
+skipped paths remain visible. Evidence:
+`TestReportShowsUnknownUsageForARunWithoutUsageOrWithUnknownUsageNeverZero`,
+`TestReportShowsPartlyMeasuredUsageAsALowerBoundAndSaysHowManyRunsArePartlyMeasured`,
+`TestReportTotalsByEnsembleAndRepositorySumOnlyKnownUsageAndCountRunsLeftOut`,
+`TestReportStopsBelowTheDepthLimitSaysWhatItSkippedAndCarriesOn`,
+`TestReportStopsAtTheEntryLimitSaysWhatItSkippedAndCarriesOn` and
+`TestReportDefaultLimitsReachThousandsOfKeptSandboxesAndTwentyLevelsOfDepth`.
+
+## 2026-11-11: Disagreeing run records are listed, not merged
+
+A shared run id does not prove records agree: known starts, repositories and finished outcomes must
+match. Prefer the most complete agreeing copy, then lexical path, independently of directory order.
+List conflicting versions separately and diagnose both paths. Incomplete copies must not hide a
+conflict between other copies. Evidence:
+`TestReportListsTwoRecordsOfOneRunIdThatDisagreeAndNamesBothPathsOnStderr`,
+`TestReportStillCountsIdenticalCopiesOfARunOnce` and
+`TestReportNeverLetsAnIncompleteCopyHideDisagreementBetweenOtherCopies`.
+
+## 2026-11-11: A started run always leaves a result
+
+Once telemetry exists, run and play finalize failures, interrupts and panics with a failed outcome
+and reason; panics are raised again. An outright kill or a failed result write can still leave an
+unfinished record. The shared runEnsemble path owns this guarantee. km status is absent on this
+base; the result is also the completion marker that status will need. Evidence:
+`TestARunWhoseEngineErrorsAfterTelemetryStartsStillWritesAFailedResultWithItsReason`,
+`TestARunWhoseConfigRecordCannotBeWrittenStillWritesAFailedResult`,
+`TestARunWhoseWorktreeGitBreaksDuringTheRunStillWritesAFailedResult`,
+`TestARunWhoseDiffStatFailsStillWritesAFailedResult`,
+`TestARunThatPanicsAfterTelemetryStartsWritesAFailedResultAndPanicsAgain`,
+`TestPlayAndRunBothLeaveAResultWhenTheRunFailsAfterItStarted` and
+`TestRunDeletesItsSessionOnSuccessFailureAndInterrupt`.

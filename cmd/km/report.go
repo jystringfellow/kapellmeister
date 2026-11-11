@@ -8,7 +8,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,7 +15,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"text/tabwriter"
 	"time"
 	"unicode"
@@ -27,15 +25,17 @@ import (
 )
 
 type reportRun struct {
-	RunID      string     `json:"run_id"`
-	Path       string     `json:"path"`
-	Started    *time.Time `json:"started,omitempty"`
-	Repository string     `json:"repository,omitempty"`
-	Ensemble   string     `json:"ensemble,omitempty"`
-	Outcome    string     `json:"outcome,omitempty"`
-	Rounds     *int       `json:"rounds,omitempty"`
-	DurationMS *int64     `json:"duration_ms,omitempty"`
-	Reason     string     `json:"reason,omitempty"`
+	RunID      string      `json:"run_id"`
+	Path       string      `json:"path"`
+	Started    *time.Time  `json:"started,omitempty"`
+	Repository string      `json:"repository,omitempty"`
+	Ensemble   string      `json:"ensemble,omitempty"`
+	Outcome    string      `json:"outcome,omitempty"`
+	Rounds     *int        `json:"rounds,omitempty"`
+	DurationMS *int64      `json:"duration_ms,omitempty"`
+	Reason     string      `json:"reason,omitempty"`
+	Usage      reportUsage `json:"usage"`
+	Conflict   bool        `json:"conflict,omitempty"`
 	quality    int
 	state      *runState
 	hasResult  bool
@@ -43,15 +43,20 @@ type reportRun struct {
 }
 
 type reportTotals struct {
-	Runs         int            `json:"runs"`
-	Outcomes     map[string]int `json:"outcomes"`
-	Repositories map[string]int `json:"repositories"`
-	Ensembles    map[string]int `json:"ensembles"`
+	Usage           reportUsageTotal            `json:"usage"`
+	EnsembleUsage   map[string]reportUsageTotal `json:"ensemble_usage"`
+	RepositoryUsage map[string]reportUsageTotal `json:"repository_usage"`
+	Runs            int                         `json:"runs"`
+	Outcomes        map[string]int              `json:"outcomes"`
+	Repositories    map[string]int              `json:"repositories"`
+	Ensembles       map[string]int              `json:"ensembles"`
 }
 
 type runReport struct {
-	Runs   []reportRun  `json:"runs"`
-	Totals reportTotals `json:"totals"`
+	NotSearched      []reportNotSearched `json:"not_searched"`
+	NotSearchedTotal int                 `json:"not_searched_total"`
+	Runs             []reportRun         `json:"runs"`
+	Totals           reportTotals        `json:"totals"`
 }
 
 func reportCommand(args []string, stdout, stderr io.Writer) error {
@@ -60,9 +65,14 @@ func reportCommand(args []string, stdout, stderr io.Writer) error {
 	asJSON := flags.Bool("json", false, "print runs and totals as JSON")
 	sinceText := flags.String("since", "", "keep runs started on or after a UTC date or RFC3339 timestamp")
 	repository := flags.String("repository", "", "keep runs from this exact repository")
-	options, dirs := splitRecordArgs(args, "since", "repository")
+	maxDepth := flags.Int("max-depth", 64, "maximum directory levels below each root")
+	maxEntries := flags.Int("max-entries", 1000000, "maximum directory entries read (at most 16777216)")
+	options, dirs := splitRecordArgs(args, "since", "repository", "max-depth", "max-entries")
 	if err := flags.Parse(options); err != nil {
 		return err
+	}
+	if *maxDepth < 1 || *maxEntries < 1 || *maxEntries > 1<<24 {
+		return errors.New("report: -max-depth must be at least 1; -max-entries must be between 1 and 16777216")
 	}
 	set := flagsSet(flags)
 	var since time.Time
@@ -80,16 +90,17 @@ func reportCommand(args []string, stdout, stderr io.Writer) error {
 	if defaultDir {
 		dirs = []string{filepath.Join(loop.StateDir(), "runs")}
 	}
-	runs, diagnostics, err := findRuns(dirs, defaultDir)
+	runs, scan, err := findRuns(dirs, defaultDir, *maxDepth, *maxEntries, false)
 	if err != nil {
 		return fmt.Errorf("report: %s", plain(err.Error()))
 	}
-	for _, diagnostic := range diagnostics {
+	for _, diagnostic := range scan.diagnostics {
 		fmt.Fprintln(stderr, diagnostic)
 	}
 	report := runReport{
-		Runs:   []reportRun{},
-		Totals: reportTotals{Outcomes: map[string]int{}, Repositories: map[string]int{}, Ensembles: map[string]int{}},
+		Runs:        []reportRun{},
+		NotSearched: scan.notSearched, NotSearchedTotal: scan.notSearchedTotal,
+		Totals: reportTotals{EnsembleUsage: map[string]reportUsageTotal{}, RepositoryUsage: map[string]reportUsageTotal{}, Outcomes: map[string]int{}, Repositories: map[string]int{}, Ensembles: map[string]int{}},
 	}
 	for _, run := range runs {
 		if set["since"] && (run.Started == nil || run.Started.Before(since)) {
@@ -100,6 +111,9 @@ func reportCommand(args []string, stdout, stderr io.Writer) error {
 		}
 		report.Runs = append(report.Runs, run)
 		report.Totals.Runs++
+		report.Totals.Usage.add(run.Usage)
+		addReportGroupUsage(report.Totals.EnsembleUsage, reportKnown(run.Ensemble), run.Usage)
+		addReportGroupUsage(report.Totals.RepositoryUsage, reportKnown(run.Repository), run.Usage)
 		report.Totals.Outcomes[reportKnown(run.Outcome)]++
 		report.Totals.Repositories[reportKnown(run.Repository)]++
 		report.Totals.Ensembles[reportKnown(run.Ensemble)]++
@@ -115,7 +129,10 @@ func reportCommand(args []string, stdout, stderr io.Writer) error {
 		if a.Started != nil && !a.Started.Equal(*b.Started) {
 			return a.Started.Before(*b.Started)
 		}
-		return a.RunID < b.RunID
+		if a.RunID != b.RunID {
+			return a.RunID < b.RunID
+		}
+		return a.Path < b.Path
 	})
 	if *asJSON {
 		return printReportJSON(stdout, report)
@@ -144,91 +161,6 @@ func splitRecordArgs(args []string, valueFlags ...string) (options, dirs []strin
 	return options, dirs
 }
 
-func findRuns(dirs []string, defaultDir bool, noSymlinks ...bool) (map[string]reportRun, []string, error) {
-	runs := map[string]reportRun{}
-	var diagnostics []string
-	for _, dir := range dirs {
-		var file *os.File
-		var err error
-		if len(noSymlinks) > 0 && noSymlinks[0] {
-			file, err = openRecordRoot(dir)
-		} else {
-			var root string
-			root, err = filepath.EvalSymlinks(dir)
-			if err == nil {
-				file, err = os.OpenFile(root, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_DIRECTORY, 0)
-			}
-		}
-		if defaultDir && errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return nil, nil, err
-		}
-		err = scanReportDirectory(file, runs, &diagnostics)
-		file.Close()
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-	return runs, diagnostics, nil
-}
-
-func openRecordRoot(path string) (*os.File, error) {
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return nil, err
-	}
-	parent, err := filepath.EvalSymlinks(filepath.Dir(absolute))
-	if err != nil {
-		return nil, err
-	}
-	return os.OpenFile(filepath.Join(parent, filepath.Base(absolute)), os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
-}
-
-func scanReportDirectory(dir *os.File, runs map[string]reportRun, diagnostics *[]string) error {
-	entries, err := dir.ReadDir(-1)
-	if err != nil {
-		return err
-	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
-	result, telemetry, current, config := false, false, false, false
-	for _, entry := range entries {
-		result = result || entry.Name() == "result.json"
-		telemetry = telemetry || entry.Name() == "telemetry.jsonl"
-		current = current || entry.Name() == "current.json"
-		config = config || entry.Name() == "config.json"
-	}
-	if result || telemetry || current {
-		run, messages := readReportRun(dir, result, telemetry, current, config)
-		*diagnostics = append(*diagnostics, messages...)
-		keepReportRun(runs, run)
-		return nil
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		path := filepath.Join(dir.Name(), entry.Name())
-		child, err := openReportEntry(dir, entry.Name(), unix.O_DIRECTORY)
-		if err == nil {
-			err = scanReportDirectory(child, runs, diagnostics)
-			child.Close()
-		}
-		if err != nil {
-			*diagnostics = append(*diagnostics, "km: report: "+plain(path)+": "+plain(err.Error()))
-			keepReportRun(runs, reportRun{RunID: entry.Name(), Path: path, Outcome: "unreadable"})
-		}
-	}
-	return nil
-}
-
-func keepReportRun(runs map[string]reportRun, run reportRun) {
-	if previous, exists := runs[run.RunID]; !exists || run.quality > previous.quality {
-		runs[run.RunID] = run
-	}
-}
-
 func openReportEntry(dir *os.File, name string, flags int) (*os.File, error) {
 	path := filepath.Join(dir.Name(), name)
 	// Resolve one entry against its open parent so renames cannot redirect through symlinks.
@@ -251,9 +183,14 @@ func readReportRun(dir *os.File, hasResult, hasTelemetry, hasCurrent, hasConfig 
 		path := filepath.Join(dir.Name(), "result.json")
 		data, err := readReportFile(dir, "result.json", false)
 		var recorded *struct {
-			ensembleSummary
-			Rounds     *int   `json:"rounds"`
-			DurationMS *int64 `json:"duration_ms"`
+			RunID      string          `json:"run_id"`
+			Repository string          `json:"repository"`
+			Ensemble   string          `json:"ensemble"`
+			Outcome    string          `json:"outcome"`
+			Reason     string          `json:"reason"`
+			Usage      json.RawMessage `json:"usage"`
+			Rounds     *int            `json:"rounds"`
+			DurationMS *int64          `json:"duration_ms"`
 		}
 		if err == nil {
 			err = json.Unmarshal(data, &recorded)
@@ -272,6 +209,7 @@ func readReportRun(dir *os.File, hasResult, hasTelemetry, hasCurrent, hasConfig 
 		run.Repository, run.Ensemble = recorded.Repository, recorded.Ensemble
 		run.Outcome, run.Reason = recorded.Outcome, recorded.Reason
 		run.Rounds, run.DurationMS = recorded.Rounds, recorded.DurationMS
+		run.Usage = readReportUsage(recorded.Usage)
 		run.quality = 2
 	}
 	if !hasResult && hasCurrent {
@@ -449,11 +387,13 @@ func printReportJSON(stdout io.Writer, report any) error {
 
 func printReport(stdout io.Writer, report runReport) error {
 	if len(report.Runs) == 0 {
-		_, err := fmt.Fprintln(stdout, "no runs found")
-		return err
+		if _, err := fmt.Fprintln(stdout, "no runs found"); err != nil {
+			return err
+		}
+		return printReportNotSearched(stdout, report)
 	}
 	w := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "STARTED\tREPOSITORY\tENSEMBLE\tOUTCOME\tROUNDS\tTOOK")
+	fmt.Fprintln(w, "STARTED\tREPOSITORY\tENSEMBLE\tOUTCOME\tROUNDS\tTOOK\tTOKENS")
 	for _, run := range report.Runs {
 		started, rounds, took := "unknown", "unknown", "unknown"
 		if run.Started != nil {
@@ -465,12 +405,29 @@ func printReport(stdout io.Writer, report runReport) error {
 		if run.DurationMS != nil {
 			took = (time.Duration(*run.DurationMS) * time.Millisecond).Round(time.Second).String()
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", plain(started), plain(reportKnown(run.Repository)), plain(reportKnown(run.Ensemble)), plain(reportKnown(run.Outcome)), plain(rounds), plain(took))
+		tokens := "unknown"
+		if run.Usage.Known {
+			tokens = compactTokens(run.Usage.InputTokens) + "/" + compactTokens(run.Usage.OutputTokens)
+			if run.Usage.UnknownSteps > 0 {
+				tokens = "≥" + tokens
+			}
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", reportCell(started, 19), reportCell(reportKnown(run.Repository), 20), reportCell(reportKnown(run.Ensemble), 8), reportCell(reportKnown(run.Outcome), 16), reportCell(rounds, 7), reportCell(took, 7), plain(tokens))
 	}
 	if err := w.Flush(); err != nil {
 		return err
 	}
 	fmt.Fprintf(w, "\nruns: %d\n", report.Totals.Runs)
+	conflicts := 0
+	for _, run := range report.Runs {
+		if run.Conflict {
+			conflicts++
+		}
+	}
+	if conflicts > 0 {
+		fmt.Fprintf(w, "conflicts: %d\n", conflicts)
+	}
+	fmt.Fprintf(w, "usage: %s\n", plain(reportUsageText(report.Totals.Usage)))
 	for _, group := range []struct {
 		name   string
 		counts map[string]int
@@ -487,11 +444,34 @@ func printReport(stdout io.Writer, report runReport) error {
 			return names[i] < names[j]
 		})
 		for _, name := range names {
-			fmt.Fprintf(w, "  %s\t%d\n", plain(name), group.counts[name])
+			suffix := ""
+			if group.name == "ensemble" {
+				suffix = "  " + reportUsageText(report.Totals.EnsembleUsage[name])
+			}
+			if group.name == "repository" {
+				suffix = "  " + reportUsageText(report.Totals.RepositoryUsage[name])
+			}
+			fmt.Fprintf(w, "  %s\t%d%s\n", plain(name), group.counts[name], plain(suffix))
 		}
 		if err := w.Flush(); err != nil {
 			return err
 		}
 	}
-	return nil
+	return printReportNotSearched(stdout, report)
+}
+
+func reportCell(text string, width int) string {
+	value := []rune(plain(text))
+	if len(value) > width {
+		return string(value[:width-1]) + "…"
+	}
+	return string(value)
+}
+
+func printReportNotSearched(w io.Writer, report runReport) error {
+	if report.NotSearchedTotal == 0 {
+		return nil
+	}
+	_, err := fmt.Fprintf(w, "not searched: %d directories (see stderr)\n", report.NotSearchedTotal)
+	return err
 }

@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -83,6 +84,7 @@ type Step struct {
 	ReplyPath     string
 	KeepTerminal  bool
 	ReuseTerminal string
+	FreshTerminal bool
 	Timeout       time.Duration
 	Label         string
 	Assignment    Assignment
@@ -126,53 +128,59 @@ type VerifyResult struct {
 type Verifier func(ctx context.Context, dir string) (VerifyResult, error)
 
 type Config struct {
-	ScratchDir    string
-	BlockerPoll   time.Duration
-	GateWhen      string
-	RunID         string
-	Task          string
-	Worktree      string
-	Chairs        Chairs
-	MaxRounds     int
-	StepTimeout   time.Duration
-	VerifyCommand string
-	CheckCommand  string
-	ReplyGrace    time.Duration
-	SkipBaseline  bool
-	Policy        *Policy
+	Lessons        bool
+	LessonsTimeout time.Duration
+	LearnedBudget  int
+	ScratchDir     string
+	BlockerPoll    time.Duration
+	GateWhen       string
+	RunID          string
+	Task           string
+	Worktree       string
+	Chairs         Chairs
+	MaxRounds      int
+	StepTimeout    time.Duration
+	VerifyCommand  string
+	CheckCommand   string
+	ReplyGrace     time.Duration
+	SkipBaseline   bool
+	Policy         *Policy
 }
 
 type Record struct {
-	PID           int           `json:"pid,omitempty"`
-	Command       string        `json:"command,omitempty"`
-	BlockedStep   string        `json:"blocked_step,omitempty"`
-	ChairName     string        `json:"chair_name,omitempty"`
-	At            time.Time     `json:"at"`
-	RunID         string        `json:"run_id"`
-	Round         int           `json:"round,omitempty"`
-	Step          string        `json:"step"`
-	Chair         *Chair        `json:"chair,omitempty"`
-	Tier          string        `json:"tier,omitempty"`
-	Effort        string        `json:"effort,omitempty"`
-	TierSource    string        `json:"tier_source,omitempty"`
-	Decision      *SizeDecision `json:"decision,omitempty"`
-	Detail        string        `json:"detail,omitempty"`
-	TerminalID    string        `json:"terminal_id,omitempty"`
-	Status        string        `json:"status,omitempty"`
-	Model         string        `json:"model,omitempty"`
-	ModelHonored  *bool         `json:"model_honored,omitempty"`
-	DurationMS    int64         `json:"duration_ms"`
-	Reply         string        `json:"reply,omitempty"`
-	ReplyChars    int           `json:"reply_chars,omitempty"`
-	ReplyWaitMS   int64         `json:"reply_wait_ms,omitempty"`
-	Verdict       string        `json:"verdict,omitempty"`
-	VerdictSource string        `json:"verdict_source,omitempty"`
-	ExitCode      *int          `json:"exit_code,omitempty"`
-	Attempts      int           `json:"attempts,omitempty"`
-	TreeChanged   bool          `json:"tree_changed,omitempty"`
-	LastMessage   string        `json:"last_message,omitempty"`
-	Screen        string        `json:"screen,omitempty"`
-	Error         string        `json:"error,omitempty"`
+	Usage         *Usage         `json:"usage,omitempty"`
+	Lessons       *LessonsRecord `json:"lessons,omitempty"`
+	PID           int            `json:"pid,omitempty"`
+	Command       string         `json:"command,omitempty"`
+	BlockedStep   string         `json:"blocked_step,omitempty"`
+	ChairName     string         `json:"chair_name,omitempty"`
+	At            time.Time      `json:"at"`
+	RunID         string         `json:"run_id"`
+	Round         int            `json:"round,omitempty"`
+	Step          string         `json:"step"`
+	Chair         *Chair         `json:"chair,omitempty"`
+	Tier          string         `json:"tier,omitempty"`
+	Effort        string         `json:"effort,omitempty"`
+	TierSource    string         `json:"tier_source,omitempty"`
+	Decision      *SizeDecision  `json:"decision,omitempty"`
+	Detail        string         `json:"detail,omitempty"`
+	TerminalID    string         `json:"terminal_id,omitempty"`
+	Status        string         `json:"status,omitempty"`
+	Model         string         `json:"model,omitempty"`
+	ModelHonored  *bool          `json:"model_honored,omitempty"`
+	DurationMS    int64          `json:"duration_ms"`
+	QueueMS       int64          `json:"queue_ms,omitempty"`
+	Reply         string         `json:"reply,omitempty"`
+	ReplyChars    int            `json:"reply_chars,omitempty"`
+	ReplyWaitMS   int64          `json:"reply_wait_ms,omitempty"`
+	Verdict       string         `json:"verdict,omitempty"`
+	VerdictSource string         `json:"verdict_source,omitempty"`
+	ExitCode      *int           `json:"exit_code,omitempty"`
+	Attempts      int            `json:"attempts,omitempty"`
+	TreeChanged   bool           `json:"tree_changed,omitempty"`
+	LastMessage   string         `json:"last_message,omitempty"`
+	Screen        string         `json:"screen,omitempty"`
+	Error         string         `json:"error,omitempty"`
 }
 
 const (
@@ -184,12 +192,15 @@ const (
 )
 
 type Result struct {
-	RunID    string `json:"run_id"`
-	Outcome  string `json:"outcome"`
-	Rounds   int    `json:"rounds"`
-	Reason   string `json:"reason,omitempty"`
-	Worktree string `json:"worktree"`
-	RunDir   string `json:"run_dir"`
+	Usage    *Usage         `json:"usage,omitempty"`
+	Lessons  *LessonsReport `json:"lessons,omitempty"`
+	Proposed []Lesson       `json:"-"`
+	RunID    string         `json:"run_id"`
+	Outcome  string         `json:"outcome"`
+	Rounds   int            `json:"rounds"`
+	Reason   string         `json:"reason,omitempty"`
+	Worktree string         `json:"worktree"`
+	RunDir   string         `json:"run_dir"`
 }
 
 type ActiveStep struct {
@@ -200,20 +211,24 @@ type ActiveStep struct {
 }
 
 type Engine struct {
-	Watcher  Watcher
-	watch    watchState
-	Config   Config
-	Stepper  Stepper
-	Verify   Verifier
-	Records  io.Writer
-	Progress io.Writer
-	Playing  func(round int, active []ActiveStep)
+	Meter     UsageMeter
+	usage     Usage
+	gateRound int
+	Watcher   Watcher
+	watch     watchState
+	Config    Config
+	Stepper   Stepper
+	Verify    Verifier
+	Records   io.Writer
+	Progress  io.Writer
+	Playing   func(round int, active []ActiveStep)
 
-	active []*ActiveStep
-	round  int
-	mu     sync.Mutex
-	size   string
-	bump   int
+	lessons map[lessonKey]chairLessons
+	active  []*ActiveStep
+	round   int
+	mu      sync.Mutex
+	size    string
+	bump    int
 }
 
 var verdictRE = regexp.MustCompile(`\b(APPROVE|CHANGES|UNCLEAR)\b`)
@@ -222,14 +237,37 @@ func RunDirRel(runID string) string {
 	return filepath.Join(".kapellmeister", "runs", runID)
 }
 
-func (e *Engine) Run(ctx context.Context) (Result, error) {
+func (e *Engine) Run(ctx context.Context) (res Result, err error) {
+	e.mu.Lock()
+	e.usage = Usage{}
+	e.mu.Unlock()
+	defer func() {
+		if e.Meter != nil {
+			e.mu.Lock()
+			total := e.usage
+			e.mu.Unlock()
+			res.Usage = &total
+		}
+	}()
 	stopWatcher := e.startWatcher(ctx)
 	defer stopWatcher()
+	e.gateRound = 0
+	res, err = e.play(ctx)
+	if e.Config.Lessons {
+		proposed, report := e.proposeLessons(ctx, res)
+		res.Proposed, res.Lessons = proposed, &report
+	}
+	return res, err
+}
+
+func (e *Engine) play(ctx context.Context) (Result, error) {
 	cfg := e.Config
 	res := Result{RunID: cfg.RunID, Worktree: cfg.Worktree, RunDir: filepath.Join(cfg.Worktree, RunDirRel(cfg.RunID))}
 	if err := PrepareRunDir(cfg.Worktree, cfg.RunID); err != nil {
 		return res, err
 	}
+
+	e.loadLessons()
 
 	if cfg.VerifyCommand != "" && e.Verify != nil && !cfg.SkipBaseline {
 		baselinePath := e.rel("verify-0.txt")
@@ -244,7 +282,7 @@ func (e *Engine) Run(ctx context.Context) (Result, error) {
 
 	plan := e.rel("plan.md")
 	askSize := e.sizing().Mode != SizingOff && e.sizing().Decider == DeciderPlanner
-	if _, err := e.step(ctx, Step{Name: "plan", Chair: cfg.Chairs.Planner, Prompt: planPrompt(cfg.Task, plan, askSize), ReplyPath: plan}); err != nil {
+	if _, err := e.step(ctx, Step{Name: "plan", Chair: cfg.Chairs.Planner, Prompt: planPrompt(cfg.Task, plan, askSize, e.lessonsFor("plan", cfg.Chairs.Planner)), ReplyPath: plan}); err != nil {
 		return e.fail(res, err), nil
 	}
 	e.decideSize(ctx, plan)
@@ -256,7 +294,7 @@ func (e *Engine) Run(ctx context.Context) (Result, error) {
 		go func() {
 			path := e.rel("test-plan.md")
 			_, err := e.step(testCtx, Step{Name: "test-plan", Chair: *cfg.Chairs.Tester,
-				Prompt: testPlanPrompt(cfg.Task, plan, path, cfg.ScratchDir, e.testerTimeout()), ReplyPath: path})
+				Prompt: testPlanPrompt(cfg.Task, plan, path, cfg.ScratchDir, e.testerTimeout(), e.lessonsFor("test-plan", *cfg.Chairs.Tester)), ReplyPath: path})
 			testPlanDone <- err
 		}()
 		defer func() {
@@ -296,7 +334,7 @@ func (e *Engine) Run(ctx context.Context) (Result, error) {
 		implementerChair, _ = e.resolve("implement", cfg.Chairs.Implementer)
 		out, err := e.step(ctx, Step{
 			Name: "implement", Round: round, Chair: cfg.Chairs.Implementer,
-			Prompt:    implementPrompt(cfg.Task, plan, summary, cfg.CheckCommand, feedback, feedbackGate, feedbackTest),
+			Prompt:    implementPrompt(cfg.Task, plan, summary, cfg.CheckCommand, feedback, feedbackGate, feedbackTest, e.lessonsFor("implement", cfg.Chairs.Implementer)),
 			ReplyPath: summary, KeepTerminal: true, ReuseTerminal: implementer,
 		})
 		if out.TerminalID != "" {
@@ -340,7 +378,7 @@ func (e *Engine) Run(ctx context.Context) (Result, error) {
 		gate := e.relf("gate-%d.md", round)
 		if errs, err := e.readOnlySteps(ctx, []Step{{
 			Name: "gate", Round: round, Chair: cfg.Chairs.Gate,
-			Prompt:    gatePrompt(cfg.Task, plan, summary, files, failed, cfg.VerifyCommand, verify, verifyPath, gate),
+			Prompt:    gatePrompt(cfg.Task, plan, summary, files, failed, cfg.VerifyCommand, verify, verifyPath, gate, e.lessonsFor("gate", cfg.Chairs.Gate)),
 			ReplyPath: gate,
 		}}); err != nil {
 			return e.fail(res, err), nil
@@ -351,6 +389,7 @@ func (e *Engine) Run(ctx context.Context) (Result, error) {
 		if err != nil {
 			return e.fail(res, err), nil
 		}
+		e.gateRound = round
 		if gateVerdict == "APPROVE" {
 			if cfg.Chairs.Tester == nil {
 				res.Outcome = Approved
@@ -414,7 +453,7 @@ func (e *Engine) testRound(ctx context.Context, round int, plan, summary string,
 	defer e.reportLeftRunning(round)
 	errs, err := e.readOnlySteps(ctx, []Step{{
 		Name: "test", Round: round, Chair: *e.Config.Chairs.Tester,
-		Prompt:    testPrompt(e.Config.Task, plan, e.rel("test-plan.md"), summary, e.Config.VerifyCommand, verify, verifyPath, e.Config.ScratchDir, path, e.testerTimeout()),
+		Prompt:    testPrompt(e.Config.Task, plan, e.rel("test-plan.md"), summary, e.Config.VerifyCommand, verify, verifyPath, e.Config.ScratchDir, path, e.testerTimeout(), e.lessonsFor("test", *e.Config.Chairs.Tester)),
 		ReplyPath: path,
 	}})
 	if err != nil {
@@ -460,6 +499,9 @@ func (e *Engine) sizing() SizingConfig {
 }
 
 func stepKey(name string) string {
+	if name == "lessons" {
+		return "gate"
+	}
 	if name == "test-plan" {
 		return "test"
 	}
@@ -579,16 +621,20 @@ func (e *Engine) step(ctx context.Context, s Step) (StepResult, error) {
 	return out, err
 }
 
-var stepRoles = map[string]string{"plan": "planner", "implement": "implementer", "review": "reviewer", "gate": "gate", "test-plan": "tester", "test": "tester"}
+var stepRoles = map[string]string{"lessons": "gate", "plan": "planner", "implement": "implementer", "review": "reviewer", "gate": "gate", "test-plan": "tester", "test": "tester"}
+
+func partOf(stepName string) string {
+	if part, ok := stepRoles[stepName]; ok {
+		return part
+	}
+	if strings.HasPrefix(stepName, "classify-") {
+		return "classifier"
+	}
+	return stepName
+}
 
 func TerminalLabel(runID, stepName string) string {
-	role := stepName
-	if r, ok := stepRoles[stepName]; ok {
-		role = r
-	} else if strings.HasPrefix(stepName, "classify-") {
-		role = "classifier"
-	}
-	return "km " + runID + " · " + role
+	return "km " + runID + " · " + partOf(stepName)
 }
 
 var errNoReply = errors.New("no reply file")
@@ -600,6 +646,18 @@ func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 	rec := Record{RunID: e.Config.RunID, Round: s.Round, Step: s.Name, ChairName: s.ChairName, Chair: &chair, Reply: s.ReplyPath,
 		Tier: s.Assignment.Tier, Effort: s.Assignment.Effort, TierSource: s.Assignment.Source}
 	e.progress("→ %s %s%s", strings.TrimSpace(label(s.Name, s.Round)+" "+s.ChairName), chair, tierNote(s.Assignment))
+	var closeUsage func() Usage
+	if e.Meter != nil {
+		queued := time.Now()
+		var err error
+		closeUsage, err = e.Meter.Open(ctx, s)
+		rec.QueueMS = time.Since(queued).Milliseconds()
+		if err != nil {
+			rec.Error = err.Error()
+			e.record(rec)
+			return StepResult{}, err
+		}
+	}
 	start := time.Now()
 	finishWatch := e.watchStep(s)
 	out, err := e.Stepper.Run(ctx, s)
@@ -611,6 +669,10 @@ func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 		var waited time.Duration
 		reply, waited, err = e.awaitReply(ctx, s.ReplyPath)
 		rec.ReplyChars, rec.ReplyWaitMS = len(reply), waited.Milliseconds()
+	}
+	if closeUsage != nil {
+		usage := closeUsage()
+		rec.Usage = &usage
 	}
 	if err != nil {
 		rec.Error = err.Error()
@@ -704,7 +766,7 @@ func (e *Engine) reviewRound(ctx context.Context, round int, plan, summary strin
 		}
 		reviews[i] = review{Name: name, Chair: chair, Path: path}
 		steps[i] = Step{Name: "review", Round: round, Chair: chair, ChairName: chairName,
-			Prompt: reviewPrompt(e.Config.Task, plan, summary, e.Config.VerifyCommand, verify, verifyPath, path), ReplyPath: path}
+			Prompt: reviewPrompt(e.Config.Task, plan, summary, e.Config.VerifyCommand, verify, verifyPath, path, e.lessonsFor("review", chair)), ReplyPath: path}
 	}
 	classifyErrs := make([]error, len(chairs))
 	errs, err := e.readOnlyStepsThen(ctx, steps, func(i int) {
@@ -779,7 +841,7 @@ func (e *Engine) classify(ctx context.Context, round int, subject, path, chairNa
 	verdictPath := strings.TrimSuffix(path, filepath.Ext(path)) + ".verdict"
 	out, err := e.step(ctx, Step{
 		Name: "classify-" + subject, Round: round, Chair: e.Config.Chairs.Classifier, ChairName: chairName,
-		Prompt: classifyPrompt(subject, path, verdictPath), ReplyPath: verdictPath,
+		Prompt: classifyPrompt(subject, path, verdictPath, e.lessonsFor("classify-"+subject, e.Config.Chairs.Classifier)), ReplyPath: verdictPath,
 	})
 	if err != nil {
 		return "", err
@@ -836,13 +898,16 @@ func (e *Engine) awaitReply(ctx context.Context, rel string) (string, time.Durat
 		wait := min(replyPollInterval, e.Config.ReplyGrace-waited)
 		select {
 		case <-ctx.Done():
-			return "", waited, err
+			return "", waited, ctx.Err()
 		case <-time.After(wait):
 		}
 	}
 }
 
 func (e *Engine) readReply(rel string) (string, error) {
+	if filepath.Base(rel) == "lessons-reply.json" {
+		return ReadLessonsReply(filepath.Join(e.Config.Worktree, rel))
+	}
 	data, err := os.ReadFile(filepath.Join(e.Config.Worktree, rel))
 	if errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("%w at %s", errNoReply, rel)
@@ -880,9 +945,11 @@ func (e *Engine) git(args ...string) error {
 
 func (e *Engine) gitOutput(args ...string) (string, error) {
 	cmd := exec.Command("git", append([]string{"-C", e.Config.Worktree}, args...)...)
-	out, err := cmd.CombinedOutput()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, out)
+		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, &stderr)
 	}
 	return string(out), nil
 }
@@ -921,6 +988,9 @@ func (e *Engine) notifyPlaying(round int) {
 func (e *Engine) record(rec Record) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if rec.Usage != nil {
+		e.usage.add(*rec.Usage)
+	}
 	if e.Records == nil {
 		return
 	}

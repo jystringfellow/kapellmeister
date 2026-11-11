@@ -16,12 +16,20 @@ import (
 
 func TestTheTestAndTestPlanPromptsNameTheAbsoluteScratchDirectoryAsTheOnlyScratchPlace(t *testing.T) {
 	e, f := testerEngine(t)
+	stateDir := t.TempDir()
+	e.Config.ScratchDir = filepath.Join(stateDir, "scratch", e.Config.RunID)
 	run(t, e)
 	for _, name := range []string{"test-plan", "test"} {
 		p := testerSteps(f, name)[0].Prompt
 		want := "Use only " + e.Config.ScratchDir + " for scratch files, build output, scratch repositories and server state."
 		if !filepath.IsAbs(e.Config.ScratchDir) || !strings.Contains(p, want) {
 			t.Errorf("%s prompt lacks scratch rule %q: %s", name, want, p)
+		}
+		if strings.Contains(p, filepath.Join(stateDir, "runs", e.Config.RunID, "scratch")) {
+			t.Errorf("%s prompt names scratch in the run records: %s", name, p)
+		}
+		if name == "test" && !strings.Contains(p, filepath.Join(e.Config.ScratchDir, "pids")) {
+			t.Errorf("test prompt lacks scratch pids path: %s", p)
 		}
 		for _, line := range strings.Split(p, "\n") {
 			if strings.Contains(line, "scratch") && strings.Contains(line, RunDirRel(e.Config.RunID)) {

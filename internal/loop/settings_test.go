@@ -1,6 +1,8 @@
 package loop
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -417,5 +419,138 @@ func TestTheDefaultStepTimeoutIsSixtyMinutes(t *testing.T) {
 	s, err := LoadSettings(writeUserConfig(t, "[run]\ntimeout = '10m'\n"), "")
 	if err != nil || s.Timeout != 10*time.Minute {
 		t.Fatalf("explicit timeout = %s, error = %v", s.Timeout, err)
+	}
+}
+
+func TestLessonsAreOnByDefaultWithAFiveMinuteLimit(t *testing.T) {
+	s, err := LoadSettings(t.TempDir(), t.TempDir())
+	if err != nil || !s.Lessons || s.LessonsTimeout != 5*time.Minute {
+		t.Fatalf("%+v %v", s, err)
+	}
+}
+
+func TestTheRepositoryConfigTurnsLessonsOffOverTheUserConfig(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		user, repoValue := "true", "false"
+		if enabled {
+			user, repoValue = "false", "true"
+		}
+		home := writeUserConfig(t, "[run]\nlessons = "+user+"\nlessons_timeout = '1m'\n")
+		repo := t.TempDir()
+		writeConfig(t, repo, "[run]\nlessons = "+repoValue+"\nlessons_timeout = '2m'\n")
+		s, err := LoadSettings(home, repo)
+		if err != nil || s.Lessons != enabled || s.LessonsTimeout != 2*time.Minute {
+			t.Fatalf("%+v %v", s, err)
+		}
+	}
+}
+
+func TestALessonsTimeoutThatIsNotAPositiveDurationIsRejected(t *testing.T) {
+	for _, value := range []string{"0", "-1s", "never", ""} {
+		home := writeUserConfig(t, "[run]\nlessons_timeout = '"+value+"'\n")
+		_, err := LoadSettings(home, t.TempDir())
+		if err == nil || !strings.Contains(err.Error(), "run.lessons_timeout") {
+			t.Fatalf("%q: %v", value, err)
+		}
+	}
+}
+
+func learnedBudgetOfSettings(t *testing.T, s Settings) int {
+	t.Helper()
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields struct {
+		Budget int `json:"learned_budget"`
+	}
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	return fields.Budget
+}
+
+func TestLearnedBudgetDefaultsTo4000Bytes(t *testing.T) {
+	s, err := LoadSettings(t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := learnedBudgetOfSettings(t, s); got != 4000 {
+		t.Fatalf("learned budget = %d", got)
+	}
+}
+
+func TestRepositoryConfigOverridesTheLearnedBudget(t *testing.T) {
+	home := writeUserConfig(t, "[run]\nlearned_budget = 1234\n")
+	s, err := LoadSettings(home, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := learnedBudgetOfSettings(t, s); got != 1234 {
+		t.Fatalf("user budget = %d", got)
+	}
+	repo := t.TempDir()
+	writeConfig(t, repo, "[run]\nlearned_budget = 321\n")
+	s, err = LoadSettings(home, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := learnedBudgetOfSettings(t, s); got != 321 {
+		t.Fatalf("repository budget = %d", got)
+	}
+}
+
+func TestALearnedBudgetBelowOneIsRejected(t *testing.T) {
+	for _, budget := range []int{0, -1} {
+		for _, layer := range []string{"user", "repository"} {
+			t.Run(fmt.Sprintf("%s/%d", layer, budget), func(t *testing.T) {
+				home, repo := t.TempDir(), t.TempDir()
+				body := fmt.Sprintf("[run]\nlearned_budget = %d\n", budget)
+				path := ConfigFile
+				if layer == "user" {
+					home = writeUserConfig(t, body)
+					path = UserConfigPath(home)
+				} else {
+					writeConfig(t, repo, body)
+				}
+				_, err := LoadSettings(home, repo)
+				if err == nil || err.Error() != path+": run.learned_budget: must be at least 1" {
+					t.Fatalf("error = %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestTheOldLessonsBudgetKeyIsAnErrorNamingLearnedBudget(t *testing.T) {
+	for _, layer := range []string{"user", "repository"} {
+		for _, value := range []string{"123", "0", "-1", "'any value'"} {
+			t.Run(layer+"/"+value, func(t *testing.T) {
+				home, repo := t.TempDir(), t.TempDir()
+				body := "[run]\nlessons_budget = " + value + "\nlessons = false\nlessons_timeout = '2s'\n"
+				path := ConfigFile
+				if layer == "user" {
+					home = writeUserConfig(t, body)
+					path = UserConfigPath(home)
+				} else {
+					writeConfig(t, repo, body)
+				}
+				_, err := LoadSettings(home, repo)
+				if err == nil || err.Error() != path+": run.lessons_budget: renamed to run.learned_budget" {
+					t.Fatalf("error = %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestLearnedBudgetLeavesGateLessonsSettingsUnchanged(t *testing.T) {
+	home := writeUserConfig(t, "[run]\nlearned_budget = 123\nlessons = false\nlessons_timeout = '2s'\n")
+	s, err := LoadSettings(home, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if learnedBudgetOfSettings(t, s) != 123 || s.Lessons || s.LessonsTimeout != 2*time.Second {
+		t.Fatalf("settings = %+v", s)
 	}
 }
