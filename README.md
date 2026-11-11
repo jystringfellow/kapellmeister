@@ -339,6 +339,8 @@ in one or two sentences, and cites the step and finding that support it. The gat
 array of objects with `part`, `lesson` and `evidence` fields.
 
 This is shadow mode: km never reads `lessons.json` back and never puts a lesson in a briefing.
+The lessons step always plays in a fresh terminal that is released afterwards, so under `km play`
+the standing gate never sees what was proposed and cannot carry it into the next play.
 It writes `lessons.json` only in the run's state directory, beside `result.json`, with km-stamped
 `run_id`, `repository` and `ensemble` on each lesson. It never writes that file into the repository's
 worktree. The gate's reply uses the ignored `.kapellmeister/runs/<run>/lessons-reply.json` record,

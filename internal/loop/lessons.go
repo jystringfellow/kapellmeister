@@ -191,7 +191,7 @@ func (e *Engine) proposeLessons(ctx context.Context, res Result) (lessons []Less
 		return
 	}
 	path := e.rel("lessons-reply.json")
-	_, stepErr := e.step(ctx, Step{Name: "lessons", Round: res.Rounds, Chair: e.Config.Chairs.Gate, ReplyPath: path, Timeout: limit,
+	_, stepErr := e.step(ctx, Step{Name: "lessons", Round: res.Rounds, Chair: e.Config.Chairs.Gate, ReplyPath: path, Timeout: limit, FreshTerminal: true,
 		Prompt: lessonsPrompt(e.Config.Task, res, e.lessonFiles(), path)})
 	after, err := e.treeState()
 	if err != nil {

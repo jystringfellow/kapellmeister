@@ -98,7 +98,7 @@ func playCommand(args []string) error {
 			BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, CheckCommand: checkCmd,
 		},
 		Watcher: loop.CAOWatcher{Client: client, Session: standing.Session},
-		Stepper: ensemble.NewOccupantStepper(loop.CAOStepper{Client: client}, standing),
+		Stepper: ensemble.NewOccupantStepper(loop.CAOStepper{Client: client, Session: standing.Session}, standing),
 		Verify:  loop.Retrying(loop.CommandVerifier(verifyCmd), s.VerifyRetries), Progress: os.Stdout,
 	})
 	if err != nil {

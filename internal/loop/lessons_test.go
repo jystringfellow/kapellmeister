@@ -428,3 +428,13 @@ func TestALessonsDeadlineReportedByTheStepperIsRecordedAsATimeout(t *testing.T) 
 		t.Fatalf("%+v %+v", res, res.Lessons)
 	}
 }
+
+func TestTheLessonsStepAsksForAFreshTerminal(t *testing.T) {
+	e, f, _ := lessonsEngine(t, lessonAnswer)
+	run(t, e)
+	for _, step := range f.steps {
+		if step.FreshTerminal != (step.Name == "lessons") {
+			t.Errorf("%s: fresh terminal = %v", step.Name, step.FreshTerminal)
+		}
+	}
+}

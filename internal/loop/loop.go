@@ -83,6 +83,7 @@ type Step struct {
 	ReplyPath     string
 	KeepTerminal  bool
 	ReuseTerminal string
+	FreshTerminal bool
 	Timeout       time.Duration
 	Label         string
 	Assignment    Assignment
