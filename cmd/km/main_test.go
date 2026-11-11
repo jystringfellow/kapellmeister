@@ -426,3 +426,9 @@ func TestAnUntestedOutcomeExitsNonZeroAfterPrintingItsReason(t *testing.T) {
 		t.Fatalf("error = %v, output = %q", err, out.String())
 	}
 }
+
+func TestKmUsageSaysReportSummarizesRunRecordsNotOnlyFinishedRuns(t *testing.T) {
+	if !strings.Contains(usage, "summarize run records") || strings.Contains(usage, "summarize finished runs") {
+		t.Fatal(usage)
+	}
+}

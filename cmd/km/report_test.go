@@ -71,23 +71,23 @@ func TestReportPrintsOneRowPerRunOldestFirstThenTotalsByOutcomeRepositoryAndEnse
 		lines = append(lines, strings.Join(strings.Fields(line), " "))
 	}
 	want := []string{
-		"STARTED REPOSITORY ENSEMBLE OUTCOME ROUNDS TOOK",
-		"2026-11-09 14:00:00 host/owner/app thorough approved 2 18m31s",
-		"2026-11-10 14:00:00 host/owner/app thorough failed 2 18m31s",
-		"2026-11-11 14:00:00 host/owner/other quick rounds_exhausted 2 18m31s",
-		"2026-11-12 14:00:00 host/owner/other quick untested 2 18m31s",
-		"", "runs: 4", "by outcome", "approved 1", "failed 1", "rounds_exhausted 1", "untested 1",
-		"by repository", "host/owner/app 2", "host/owner/other 2", "by ensemble", "quick 2", "thorough 2",
+		"STARTED REPOSITORY ENSEMBLE OUTCOME ROUNDS TOOK TOKENS",
+		"2026-11-09 14:00:00 host/owner/app thorough approved 2 18m31s unknown",
+		"2026-11-10 14:00:00 host/owner/app thorough failed 2 18m31s unknown",
+		"2026-11-11 14:00:00 host/owner/other quick rounds_exhausted 2 18m31s unknown",
+		"2026-11-12 14:00:00 host/owner/other quick untested 2 18m31s unknown",
+		"", "runs: 4", "usage: unknown (4 without usage)", "by outcome", "approved 1", "failed 1", "rounds_exhausted 1", "untested 1",
+		"by repository", "host/owner/app 2 unknown (2 without usage)", "host/owner/other 2 unknown (2 without usage)", "by ensemble", "quick 2 unknown (2 without usage)", "thorough 2 unknown (2 without usage)",
 	}
 	if !reflect.DeepEqual(lines, want) {
 		t.Fatalf("report:\n%s\nwant lines: %q", out, want)
 	}
 }
 
-func TestReportCountsARunThatAppearsInTwoDirectoriesOnce(t *testing.T) {
+func TestReportStillCountsIdenticalCopiesOfARunOnce(t *testing.T) {
 	a, b := recordRoot(t), recordRoot(t)
 	first := reportFixture(t, a, "same", "2026-11-09T14:00:00Z", "app", "first", "approved")
-	reportFixture(t, filepath.Join(b, "sandbox", "state", "runs"), "same", "2026-11-09T14:00:00Z", "app", "second", "failed")
+	reportFixture(t, filepath.Join(b, "sandbox", "state", "runs"), "same", "2026-11-09T14:00:00Z", "app", "first", "approved")
 	rows := reportRows(t, a, b, a)
 	if len(rows) != 1 || rows[0].(map[string]any)["path"] != first || rows[0].(map[string]any)["outcome"] != "approved" {
 		t.Fatalf("runs = %v", rows)
@@ -166,6 +166,18 @@ func TestReportJSONPrintsTheSameRunsAndTotalsAsTheTable(t *testing.T) {
 		},
 		"totals": map[string]any{"runs": float64(2), "outcomes": map[string]any{"approved": float64(1), "failed": float64(1)}, "repositories": map[string]any{"app": float64(1), "unknown": float64(1)}, "ensembles": map[string]any{"thorough": float64(1), "unknown": float64(1)}},
 	}
+	want["not_searched"] = []any{}
+	want["not_searched_total"] = float64(0)
+	for _, row := range want["runs"].([]any) {
+		row.(map[string]any)["usage"] = map[string]any{"known": false}
+	}
+	unknownTotal := func(n int) map[string]any {
+		return map[string]any{"known_runs": float64(0), "unknown_runs": float64(n), "input_tokens": float64(0), "output_tokens": float64(0), "cache_read_tokens": float64(0), "cache_write_tokens": float64(0)}
+	}
+	totals := want["totals"].(map[string]any)
+	totals["usage"] = unknownTotal(2)
+	totals["ensemble_usage"] = map[string]any{"thorough": unknownTotal(1), "unknown": unknownTotal(1)}
+	totals["repository_usage"] = map[string]any{"app": unknownTotal(1), "unknown": unknownTotal(1)}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("JSON = %#v, want %#v", got, want)
 	}
@@ -227,7 +239,7 @@ func TestReportEscapesControlCharactersInEveryValueItPrints(t *testing.T) {
 			}
 		}
 	}
-	if lines := strings.Split(strings.Split(out, "\n\n")[0], "\n"); len(lines) != 3 || len(strings.Fields(lines[1])) != 7 {
+	if lines := strings.Split(strings.Split(out, "\n\n")[0], "\n"); len(lines) != 3 || len(strings.Fields(lines[1])) != 8 {
 		t.Fatalf("row broken: %q", out)
 	}
 	jsonOut, _ := captureReport(t, "-json", root)
@@ -455,7 +467,7 @@ func TestReportOrdersTiedAndUnknownStartsByRunIDAndTotalsByCountThenName(t *test
 	}
 	out, _ := captureReport(t, root)
 	flat := strings.Join(strings.Fields(out), " ")
-	for _, section := range []string{"by outcome failed 3 approved 2", "by repository z 3 a 2", "by ensemble z 3 a 2"} {
+	for _, section := range []string{"by outcome failed 3 approved 2", "by repository z 3 unknown (3 without usage) a 2 unknown (2 without usage)", "by ensemble z 3 unknown (3 without usage) a 2 unknown (2 without usage)"} {
 		if !strings.Contains(flat, section) {
 			t.Fatalf("missing %s in %s", section, out)
 		}

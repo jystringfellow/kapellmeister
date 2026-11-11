@@ -197,3 +197,40 @@ checked-in budget `learned_budget` to distinguish it from gate collection's `les
 `TestUnsafeLessonFilesAreSkippedWithAWarning`,
 `TestALessonFileContainingAMarkerCannotEndTheSectionEarly` and
 `TestTheOldLessonsBudgetKeyIsAnErrorNamingLearnedBudget`.
+
+
+## 2026-11-11: Report never shows unmeasured usage as zero
+
+Report uses only complete, known usage from result.json. Partly measured totals would under-count;
+invalid or missing counters are unknown. Ensemble and repository totals exclude unknown runs and
+count them explicitly. Search depth and entry budgets bound work on untrusted kept sandbox copies;
+skipped paths remain visible. Evidence:
+`TestReportShowsUnknownUsageForARunWithoutUsageWithUnknownUsageOrWithPartlyMeasuredUsageNeverZero`,
+`TestReportTotalsByEnsembleAndRepositorySumOnlyKnownUsageAndCountRunsLeftOut`,
+`TestReportStopsBelowTheDepthLimitSaysWhatItSkippedAndCarriesOn`,
+`TestReportStopsAtTheEntryLimitSaysWhatItSkippedAndCarriesOn` and
+`TestReportDefaultLimitsReachThousandsOfKeptSandboxesAndTwentyLevelsOfDepth`.
+
+## 2026-11-11: Disagreeing run records are listed, not merged
+
+A shared run id does not prove records agree: known starts, repositories and finished outcomes must
+match. Prefer the most complete agreeing copy, then lexical path, independently of directory order.
+List conflicting versions separately and diagnose both paths. Incomplete copies must not hide a
+conflict between other copies. Evidence:
+`TestReportListsTwoRecordsOfOneRunIdThatDisagreeAndNamesBothPathsOnStderr`,
+`TestReportStillCountsIdenticalCopiesOfARunOnce` and
+`TestReportNeverLetsAnIncompleteCopyHideDisagreementBetweenOtherCopies`.
+
+## 2026-11-11: A started run always leaves a result
+
+Once telemetry exists, run and play finalize failures, interrupts and panics with a failed outcome
+and reason; panics are raised again. An outright kill or a failed result write can still leave an
+unfinished record. The shared runEnsemble path owns this guarantee. km status is absent on this
+base; the result is also the completion marker that status will need. Evidence:
+`TestARunWhoseEngineErrorsAfterTelemetryStartsStillWritesAFailedResultWithItsReason`,
+`TestARunWhoseConfigRecordCannotBeWrittenStillWritesAFailedResult`,
+`TestARunWhoseWorktreeGitBreaksDuringTheRunStillWritesAFailedResult`,
+`TestARunWhoseDiffStatFailsStillWritesAFailedResult`,
+`TestARunThatPanicsAfterTelemetryStartsWritesAFailedResultAndPanicsAgain`,
+`TestPlayAndRunBothLeaveAResultWhenTheRunFailsAfterItStarted` and
+`TestRunDeletesItsSessionOnSuccessFailureAndInterrupt`.
