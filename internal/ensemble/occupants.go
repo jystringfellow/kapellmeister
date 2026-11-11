@@ -34,6 +34,9 @@ func (s *OccupantStepper) Run(ctx context.Context, step loop.Step) (loop.StepRes
 	if chair.Provider != binding.Provider || chair.Profile != binding.Profile || chair.Model != binding.Model {
 		return loop.StepResult{}, fmt.Errorf("chair %s is occupied by %s but step %s resolved to %s; km play does not swap occupants", c.Address, binding, step.Name, chair)
 	}
+	if step.FreshTerminal {
+		return s.inner.Run(ctx, step)
+	}
 	slot := s.slots[c.TerminalID]
 	select {
 	case slot <- struct{}{}:

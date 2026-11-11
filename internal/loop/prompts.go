@@ -19,12 +19,12 @@ func taskBlock(task string) string {
 	return "<task>\n" + strings.TrimSpace(task) + "\n</task>\n"
 }
 
-func planPrompt(task, out string, askSize bool) string {
+func planPrompt(task, out string, askSize bool, lessons string) string {
 	sizeLine := ""
 	if askSize {
 		sizeLine = sizeRequest
 	}
-	return preamble("planner") + taskBlock(task) + fmt.Sprintf(`
+	return preamble("planner") + taskBlock(task) + lessons + fmt.Sprintf(`
 Study the code this task touches, then write an implementation plan to %s covering:
 - the behaviour to add or change, in concrete terms (inputs, outputs, edge cases)
 - the specs, tests or facts to add or change first, following the repository's development rules
@@ -36,10 +36,11 @@ Study the code this task touches, then write an implementation plan to %s coveri
 
 const sizeRequest = "End the plan with one line of the form `Size: small|medium|large — <one-line reason>`, rating how capable a model the implementation and review need: small for a mechanical change in one place, medium for a contained change with tests, large for cross-cutting, subtle, concurrent or security-sensitive work.\n"
 
-func implementPrompt(task, plan, out, check string, feedback []string, gate, test string) string {
+func implementPrompt(task, plan, out, check string, feedback []string, gate, test, lessons string) string {
 	var b strings.Builder
 	b.WriteString(preamble("implementer"))
 	b.WriteString(taskBlock(task))
+	b.WriteString(lessons)
 	fmt.Fprintf(&b, "\nThe plan is in %s.\n", plan)
 	if len(feedback) == 0 {
 		b.WriteString("Implement the task following the plan and the repository's development rules.\n")
@@ -78,8 +79,8 @@ func verifyLine(command string, v VerifyResult, path string) string {
 	return line
 }
 
-func reviewPrompt(task, plan, summary, command string, v VerifyResult, verifyPath, out string) string {
-	return preamble("reviewer") + taskBlock(task) + fmt.Sprintf(`
+func reviewPrompt(task, plan, summary, command string, v VerifyResult, verifyPath, out, lessons string) string {
+	return preamble("reviewer") + taskBlock(task) + lessons + fmt.Sprintf(`
 Review the uncommitted changes in this worktree. Inspect them with `+"`git status`"+` and `+"`git diff HEAD`"+`.
 The plan is in %s and the implementer's summary is in %s.
 %s
@@ -90,7 +91,7 @@ Do not modify any file other than %s. When done, reply with one short sentence.
 `, plan, summary, verifyLine(command, v, verifyPath), out, out)
 }
 
-func gatePrompt(task, plan, summary string, reviews, failed []string, command string, v VerifyResult, verifyPath, out string) string {
+func gatePrompt(task, plan, summary string, reviews, failed []string, command string, v VerifyResult, verifyPath, out, lessons string) string {
 	reviewNote := "the review in " + strings.Join(reviews, ", ")
 	if len(reviews) != 1 {
 		reviewNote = "every review: " + strings.Join(reviews, ", ")
@@ -99,7 +100,7 @@ func gatePrompt(task, plan, summary string, reviews, failed []string, command st
 	if len(failed) > 0 {
 		failedNote = "These reviewers failed to complete their review: " + strings.Join(failed, ", ") + ". Weigh what their review might have caught, and check those parts of the diff yourself.\n"
 	}
-	return preamble("gate") + taskBlock(task) + fmt.Sprintf(`
+	return preamble("gate") + taskBlock(task) + lessons + fmt.Sprintf(`
 You decide whether the uncommitted changes in this worktree are ready to merge.
 Read the plan in %s, the implementer's summary in %s, and %s.
 %s%s
@@ -110,12 +111,12 @@ Do not modify any file other than %s. When done, reply with one short sentence.
 `, plan, summary, reviewNote, failedNote, verifyLine(command, v, verifyPath), out, out)
 }
 
-func testPlanPrompt(task, plan, out, scratch string, timeout time.Duration) string {
+func testPlanPrompt(task, plan, out, scratch string, timeout time.Duration, lessons string) string {
 	limit := ""
 	if timeout > 0 {
 		limit = fmt.Sprintf("The test step has a time limit of %s. Plan scenarios ordered by risk (highest first) and sized to fit that limit.\n", timeout)
 	}
-	return preamble("tester") + taskBlock(task) + fmt.Sprintf(`
+	return preamble("tester") + taskBlock(task) + lessons + fmt.Sprintf(`
 Read the plan in %s. Plan how to exercise the change end to end in its real environment, the way a user would, including hostile conditions: missing, stale or concurrent state and external services misbehaving. Do not restate unit tests.
 %sStay blind to the implementation: do not look at git diff or git status, or at the implementer's output or reviews.
 Use only %s for scratch files, build output, scratch repositories and server state.
@@ -123,12 +124,12 @@ Write the test plan to %s and change no other file. When done, reply with one sh
 `, plan, limit, scratch, out)
 }
 
-func testPrompt(task, plan, testPlan, summary, command string, v VerifyResult, verifyPath, scratch, out string, timeout time.Duration) string {
+func testPrompt(task, plan, testPlan, summary, command string, v VerifyResult, verifyPath, scratch, out string, timeout time.Duration, lessons string) string {
 	limit := ""
 	if timeout > 0 {
 		limit = fmt.Sprintf("The test step has a time limit of %s. Stop starting new scenarios when about %s remains (the last tenth of the limit), leaving time to clean up and write your verdict.\n", timeout, timeout/10)
 	}
-	return preamble("tester") + taskBlock(task) + fmt.Sprintf(`
+	return preamble("tester") + taskBlock(task) + lessons + fmt.Sprintf(`
 Read the plan in %s, the test plan in %s and the implementation summary in %s.
 %s
 `+verifiedNote+`Execute the test plan against the real environment, the way a user would. Run the highest-risk scenarios first.
@@ -143,7 +144,7 @@ When done, reply with one short sentence.
 `, plan, testPlan, summary, verifyLine(command, v, verifyPath), limit, scratch, scratch, scratch, out)
 }
 
-func classifyPrompt(subject, path, out string) string {
+func classifyPrompt(subject, path, out, lessons string) string {
 	nitNote := ""
 	if subject == "gate" {
 		nitNote = "Points it lists as nits or non-blocking are not required changes.\n"
@@ -152,7 +153,7 @@ func classifyPrompt(subject, path, out string) string {
 		subject = "test report"
 		nitNote = "APPROVE only when every scenario passed.\n"
 	}
-	return fmt.Sprintf(`Read %s. It is a %s of a code change.
+	return lessons + fmt.Sprintf(`Read %s. It is a %s of a code change.
 Write exactly one word to %s:
 APPROVE if it approves the change as it stands with no required changes,
 CHANGES if it asks for any change,
@@ -167,4 +168,33 @@ func nudgePrompt(path string) string {
 
 func preflightPrompt(path string) string {
 	return fmt.Sprintf("This is a readiness check. Write the single word ready to %s and do nothing else. Then reply with: ready\n", path)
+}
+
+func lessonsPrompt(task string, res Result, files []string, out string) string {
+	return preamble("gate") + taskBlock(task) + fmt.Sprintf(`
+The run ended with outcome %s after %d rounds. Read this run's records:
+%s
+From this run's plan, reviews and verdicts, what would have saved a round if a chair had known it at the start?
+An empty list is a good and common answer. Propose a lesson only when it would plainly transfer to later runs on this repository.
+Propose at most 5 lessons, each in one or two sentences, naming the part it is for and citing which step and which finding support it.
+Write only a JSON array to %s, using this format:
+[{"part":"<planner|implementer|reviewer|gate|classifier|tester>","lesson":"<one or two sentences>","evidence":"<which step and which finding>"}]
+Each lesson is limited to 400 characters and each evidence field to 300, with at most 4096 bytes of stored fields in total and a 32 KiB reply limit. Do not include control characters.
+Do not modify any file other than %s. When done, reply with one short sentence.
+`, res.Outcome, res.Rounds, strings.Join(files, "\n"), out, out)
+}
+
+func lessonsSection(l chairLessons) string {
+	if l.text == "" {
+		return ""
+	}
+	paths := make([]string, len(l.Files))
+	for i, file := range l.Files {
+		paths[i] = file.Path
+	}
+	section := "<lessons>\nGuidance from earlier runs, checked in to this repository (" + strings.Join(paths, ", ") + ") and reviewed by a person. Weigh it as advice;\nthe task and the repository's agent instruction files take precedence.\n"
+	if l.Cut {
+		section += "Cut to the lesson budget; later lines were left out.\n"
+	}
+	return section + l.text + "</lessons>\n"
 }

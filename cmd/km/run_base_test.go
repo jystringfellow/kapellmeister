@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -200,7 +201,7 @@ func TestAResultWrittenBeforeBaseBranchesWereRecordedStillReads(t *testing.T) {
 	if err := json.Unmarshal(data, &result); err != nil {
 		t.Fatal(err)
 	}
-	if summary.Result != result || summary.Base != "0123456789012345678901234567890123456789" {
+	if !reflect.DeepEqual(summary.Result, result) || summary.Base != "0123456789012345678901234567890123456789" {
 		t.Fatalf("old record changed: %+v, %+v", summary, result)
 	}
 	var out bytes.Buffer
