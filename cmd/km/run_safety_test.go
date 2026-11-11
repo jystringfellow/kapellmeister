@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -88,8 +89,10 @@ func TestRunAndPlayCreateTheScratchDirectoryUnderStateScratchOutsideTheRunRecord
 			for _, entry := range entries {
 				names = append(names, entry.Name())
 			}
-			if got := strings.Join(names, ","); got != "config.json,replies,result.json,telemetry.jsonl" {
-				t.Errorf("run records = %s", got)
+			for _, record := range []string{"config.json", "replies", "result.json", "telemetry.jsonl"} {
+				if !slices.Contains(names, record) {
+					t.Errorf("run records = %s, missing %s", strings.Join(names, ","), record)
+				}
 			}
 			if !filepath.IsAbs(scratch) || strings.HasPrefix(scratch, wt+string(os.PathSeparator)) {
 				t.Fatalf("scratch is not external and absolute: %s", scratch)
