@@ -422,6 +422,39 @@ func TestTheDefaultStepTimeoutIsSixtyMinutes(t *testing.T) {
 	}
 }
 
+func TestLessonsAreOnByDefaultWithAFiveMinuteLimit(t *testing.T) {
+	s, err := LoadSettings(t.TempDir(), t.TempDir())
+	if err != nil || !s.Lessons || s.LessonsTimeout != 5*time.Minute {
+		t.Fatalf("%+v %v", s, err)
+	}
+}
+
+func TestTheRepositoryConfigTurnsLessonsOffOverTheUserConfig(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		user, repoValue := "true", "false"
+		if enabled {
+			user, repoValue = "false", "true"
+		}
+		home := writeUserConfig(t, "[run]\nlessons = "+user+"\nlessons_timeout = '1m'\n")
+		repo := t.TempDir()
+		writeConfig(t, repo, "[run]\nlessons = "+repoValue+"\nlessons_timeout = '2m'\n")
+		s, err := LoadSettings(home, repo)
+		if err != nil || s.Lessons != enabled || s.LessonsTimeout != 2*time.Minute {
+			t.Fatalf("%+v %v", s, err)
+		}
+	}
+}
+
+func TestALessonsTimeoutThatIsNotAPositiveDurationIsRejected(t *testing.T) {
+	for _, value := range []string{"0", "-1s", "never", ""} {
+		home := writeUserConfig(t, "[run]\nlessons_timeout = '"+value+"'\n")
+		_, err := LoadSettings(home, t.TempDir())
+		if err == nil || !strings.Contains(err.Error(), "run.lessons_timeout") {
+			t.Fatalf("%q: %v", value, err)
+		}
+	}
+}
+
 func lessonsBudgetOfSettings(t *testing.T, s Settings) int {
 	t.Helper()
 	data, err := json.Marshal(s)

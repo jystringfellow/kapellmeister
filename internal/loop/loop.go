@@ -83,6 +83,7 @@ type Step struct {
 	ReplyPath     string
 	KeepTerminal  bool
 	ReuseTerminal string
+	FreshTerminal bool
 	Timeout       time.Duration
 	Label         string
 	Assignment    Assignment
@@ -126,21 +127,23 @@ type VerifyResult struct {
 type Verifier func(ctx context.Context, dir string) (VerifyResult, error)
 
 type Config struct {
-	LessonsBudget int
-	ScratchDir    string
-	BlockerPoll   time.Duration
-	GateWhen      string
-	RunID         string
-	Task          string
-	Worktree      string
-	Chairs        Chairs
-	MaxRounds     int
-	StepTimeout   time.Duration
-	VerifyCommand string
-	CheckCommand  string
-	ReplyGrace    time.Duration
-	SkipBaseline  bool
-	Policy        *Policy
+	Lessons        bool
+	LessonsTimeout time.Duration
+	LessonsBudget  int
+	ScratchDir     string
+	BlockerPoll    time.Duration
+	GateWhen       string
+	RunID          string
+	Task           string
+	Worktree       string
+	Chairs         Chairs
+	MaxRounds      int
+	StepTimeout    time.Duration
+	VerifyCommand  string
+	CheckCommand   string
+	ReplyGrace     time.Duration
+	SkipBaseline   bool
+	Policy         *Policy
 }
 
 type Record struct {
@@ -186,22 +189,25 @@ const (
 )
 
 type Result struct {
-	RunID    string `json:"run_id"`
-	Outcome  string `json:"outcome"`
-	Rounds   int    `json:"rounds"`
-	Reason   string `json:"reason,omitempty"`
-	Worktree string `json:"worktree"`
-	RunDir   string `json:"run_dir"`
+	Lessons  *LessonsReport `json:"lessons,omitempty"`
+	Proposed []Lesson       `json:"-"`
+	RunID    string         `json:"run_id"`
+	Outcome  string         `json:"outcome"`
+	Rounds   int            `json:"rounds"`
+	Reason   string         `json:"reason,omitempty"`
+	Worktree string         `json:"worktree"`
+	RunDir   string         `json:"run_dir"`
 }
 
 type Engine struct {
-	Watcher  Watcher
-	watch    watchState
-	Config   Config
-	Stepper  Stepper
-	Verify   Verifier
-	Records  io.Writer
-	Progress io.Writer
+	gateRound int
+	Watcher   Watcher
+	watch     watchState
+	Config    Config
+	Stepper   Stepper
+	Verify    Verifier
+	Records   io.Writer
+	Progress  io.Writer
 
 	lessons map[lessonKey]chairLessons
 	mu      sync.Mutex
@@ -218,6 +224,16 @@ func RunDirRel(runID string) string {
 func (e *Engine) Run(ctx context.Context) (Result, error) {
 	stopWatcher := e.startWatcher(ctx)
 	defer stopWatcher()
+	e.gateRound = 0
+	res, err := e.play(ctx)
+	if e.Config.Lessons {
+		proposed, report := e.proposeLessons(ctx, res)
+		res.Proposed, res.Lessons = proposed, &report
+	}
+	return res, err
+}
+
+func (e *Engine) play(ctx context.Context) (Result, error) {
 	cfg := e.Config
 	res := Result{RunID: cfg.RunID, Worktree: cfg.Worktree, RunDir: filepath.Join(cfg.Worktree, RunDirRel(cfg.RunID))}
 	if err := PrepareRunDir(cfg.Worktree, cfg.RunID); err != nil {
@@ -346,6 +362,7 @@ func (e *Engine) Run(ctx context.Context) (Result, error) {
 		if err != nil {
 			return e.fail(res, err), nil
 		}
+		e.gateRound = round
 		if gateVerdict == "APPROVE" {
 			if cfg.Chairs.Tester == nil {
 				res.Outcome = Approved
@@ -455,6 +472,9 @@ func (e *Engine) sizing() SizingConfig {
 }
 
 func stepKey(name string) string {
+	if name == "lessons" {
+		return "gate"
+	}
 	if name == "test-plan" {
 		return "test"
 	}
@@ -574,7 +594,7 @@ func (e *Engine) step(ctx context.Context, s Step) (StepResult, error) {
 	return out, err
 }
 
-var stepRoles = map[string]string{"plan": "planner", "implement": "implementer", "review": "reviewer", "gate": "gate", "test-plan": "tester", "test": "tester"}
+var stepRoles = map[string]string{"lessons": "gate", "plan": "planner", "implement": "implementer", "review": "reviewer", "gate": "gate", "test-plan": "tester", "test": "tester"}
 
 func partOf(stepName string) string {
 	if part, ok := stepRoles[stepName]; ok {
@@ -831,13 +851,16 @@ func (e *Engine) awaitReply(ctx context.Context, rel string) (string, time.Durat
 		wait := min(replyPollInterval, e.Config.ReplyGrace-waited)
 		select {
 		case <-ctx.Done():
-			return "", waited, err
+			return "", waited, ctx.Err()
 		case <-time.After(wait):
 		}
 	}
 }
 
 func (e *Engine) readReply(rel string) (string, error) {
+	if filepath.Base(rel) == "lessons-reply.json" {
+		return ReadLessonsReply(filepath.Join(e.Config.Worktree, rel))
+	}
 	data, err := os.ReadFile(filepath.Join(e.Config.Worktree, rel))
 	if errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("%w at %s", errNoReply, rel)

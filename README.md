@@ -14,6 +14,7 @@ km play SESSION [-max-rounds N] [-verify CMD] [-timeout D] [-cao URL]  # run the
 km reseat SESSION ADDRESS [-agent SPEC] [-timeout D] [-cao URL]  # replace one occupant
 km ensemble list                                # list standing ensembles
 km ensemble down SESSION                        # take one down
+km report [-json] [-since DATE] [-repository NAME] [DIR...]  # summarize run records
 km preflight -worktree DIR [-tier large]          # check each agent starts and answers
 km config [-worktree DIR] [-cao URL]              # show the effective settings and their files
 ```
@@ -223,7 +224,7 @@ optional, and unknown keys are an error.
 - **`.kapellmeister/config.toml`** in the repository holds the contract everyone working in it shares:
   `[test]`, step tiers and floors, rounds, lessons budget and sizing.
 
-The repository's values win for `[run]` rounds, retries and lessons budget, `[steps]` and `[sizing]`; yours win
+The repository's values win for `[run]` rounds, retries, `lessons`, `lessons_timeout` and `lessons_budget`, `[steps]` and `[sizing]`; yours win
 for `[tiers]`, because only you know what your accounts can run. `[cao]`, `[chairs]`, `[agents]` and
 `[ensembles]` are machine-only and `[test]` is repository-only; putting one in the wrong file is an error.
 `$CAO_API_BASE_URL` overrides `[cao] url`. State lives in `~/.kapellmeister/state` (`$KAPELLMEISTER_STATE_DIR`).
@@ -241,6 +242,8 @@ timeout = "60m"                     # each agent step
 reply_grace = "15m"
 preflight_timeout = "4m"
 blocker_poll = "20s"
+lessons = true
+lessons_timeout = "5m"
 lessons_budget = 4000              # bytes of lesson text per chair; at least 1
 
 [chairs]                            # agent or provider:profile; optional @tier, or :model
@@ -314,10 +317,10 @@ it. Later rounds reuse the same test plan.
 A test-step timeout after gate approval ends `untested`: the change was approved but testing did
 not finish. The outcome names the partial report if it exists and preserves the worktree and its
 uncommitted change as an approved run would. Other test-step failures, and a timeout or failure in
-any other step, still fail the run. The test step gets the same worktree check as the gate and
+any other score step, still fail the run. The test step gets the same worktree check as the gate and
 reviewers; a tester that modifies the worktree still fails the run even if it also times out.
 Both tester prompts restrict scratch files, build output, scratch repositories and server state to
-the absolute `<state dir>/runs/<run id>/scratch` directory, outside the worktree.
+the absolute `<state dir>/scratch/<run id>` directory, outside the worktree.
 `km run` and `km play` create it before starting the score and refuse to start if it is inside a git
 work tree; set `KAPELLMEISTER_STATE_DIR` outside any repository. The test prompt permits git commands
 that write only in repositories the tester created inside scratch, always using `git -C <repository>`.
@@ -329,6 +332,39 @@ km never signals these processes. It silently skips non-regular `pids` files (in
 files larger than 1 MiB. The concurrent test-plan step
 relies on its prompt to forbid file changes because implementation is editing at the same time.
 Without a tester, gate approval finishes the run as usual.
+
+After the score ends, km asks the gate for lessons when it has given a verdict, whether or not
+it approved the run. The question is: from this run's plan, reviews and verdicts, what would have
+saved a round if a chair had known it at the start? Zero lessons is a good answer. Each candidate
+names its part (`planner`, `implementer`, `reviewer`, `gate`, `classifier` or `tester`), states a lesson
+in one or two sentences, and cites the step and finding that support it. The gate returns a JSON
+array of objects with `part`, `lesson` and `evidence` fields.
+
+This is shadow mode: km never reads `lessons.json` back and never puts a lesson in a briefing.
+The lessons step always plays in a fresh terminal that is released afterwards, so under `km play`
+the standing gate never sees what was proposed and cannot carry it into the next play.
+It writes `lessons.json` only in the run's state directory, beside `result.json`, with km-stamped
+`run_id`, `repository` and `ensemble` on each lesson. It never writes that file into the repository's
+worktree. The gate's reply uses the ignored `.kapellmeister/runs/<run>/lessons-reply.json` record,
+like other step replies; a regular reply within the size limit is copied to the state's `replies/`
+for audit, including malformed answers. Non-regular and oversized replies are not copied.
+
+Collection is on by default. Set `[run] lessons = false` in either config layer to turn it off;
+`lessons_timeout = "5m"` sets its own positive time limit, covering the question, reply wait
+and nudge. Terminal inspection, diagnostic screening and release still run after a timeout with
+independent limits of 15s, 15s and 30s respectively, so cleanup can extend beyond the lessons deadline.
+Lessons use the gate's chair and tier policy. At most five lessons are kept,
+with 400 characters per lesson, 300 per evidence field, and 4096 bytes across stored fields.
+Replies are capped at 32 KiB. Control and invisible formatting characters are removed and whitespace
+is collapsed. Unknown parts, empty or oversized fields and lessons beyond the count or total size
+limit are dropped; malformed JSON, extra fields or trailing data reject the answer.
+
+`result.json` records `lessons.proposed` and, when needed, `lessons.reason`; zero proposals writes
+an empty `lessons.json` array. A timeout, step error, unreadable or oversized reply, invalid answer,
+interrupt or missing gate verdict records zero with a reason. A lessons step that changes the
+worktree discards its proposals and prints a warning. A failed lessons-file write also records
+zero and warns. Lessons never change the run's outcome or exit code. With collection disabled,
+there is no lessons step, file or result key.
 
 A reviewer whose step errors or leaves no reply after its one nudge is recorded as `FAILED`.
 It counts as not approving for `gate_when`; surviving reviews continue through the round, and
@@ -427,7 +463,7 @@ in the selected ensemble to turn escalation off for that run. `true` or an omitt
 (approved but testing timed out), a failed, interrupted or rounds-exhausted run, exits 1 after
 printing the outcome and diff-stat. Missing or unknown subcommands exit 2.
 
-## Lessons
+## Checked-in lessons
 
 A person can give chairs guidance from earlier runs by editing Markdown files under
 `.kapellmeister/learned/` and opening a pull request for review. km only reads these files; it never
@@ -453,11 +489,65 @@ If the first line exceeds the budget, no lesson section is added, but the cut is
 Symbolic links, non-regular files and files containing control characters other than newline and
 tab are skipped with a warning naming the file. This includes CRLF files.
 
+## Report
+
+`km report [DIR...]` summarizes run records, oldest first, followed by totals by outcome,
+repository and ensemble. With no directory it reads `<state>/runs`. Each directory is searched
+at any depth, so `km report ~/kept-sandboxes` works across kept sandbox copies. A directory
+holding `result.json` is a run; one holding only `telemetry.jsonl` counts as unfinished. The
+search stops inside each run directory, ignores directory symlinks and never follows record-file
+symlinks. An explicitly chosen root directory may itself be a symlink. Copies with the same run
+id count once, preferring a finished copy over an unfinished or unreadable one.
+
+Started comes from the first telemetry record's timestamp, shown in UTC; it is unknown without
+usable telemetry. Missing repository or ensemble fields show as `unknown`, as with an older km,
+plain chairs that omit the ensemble, or a repository without a hosted origin. Unfinished runs
+have unknown rounds and duration. Malformed records are diagnosed on stderr and counted as
+unreadable without stopping the report. Text values are escaped for safe terminal output.
+Unreadable or disappearing subdirectories are also diagnosed and counted as unreadable;
+other directories are still searched. Directory handles keep searches and record reads from
+following a symlink even if a directory is renamed during the report.
+The command only reads the supplied directories.
+
+`-since 2026-11-09` keeps runs started at or after midnight UTC on that date; RFC3339 timestamps
+are also accepted. Runs without a known start are excluded by this filter.
+`-repository github.com/acme/app` matches the recorded repository exactly and excludes unknown
+repositories. Both filters can be combined, before or after directories. `-json` emits the same
+ordered runs and totals as a JSON document, omitting unrecorded fields from individual runs.
+Nonprinting characters are escaped in JSON too, preserving their values when decoded.
+With no matches the table says `no runs found`; JSON contains an empty runs array and zero totals.
+
+For example, `km report ~/kept-sandboxes` can print:
+
+```text
+STARTED              REPOSITORY           ENSEMBLE  OUTCOME     ROUNDS   TOOK
+2026-11-09 14:02:11  github.com/acme/app  thorough  approved    2        18m31s
+2026-11-10 09:40:52  github.com/acme/app  unknown   failed      1        4m2s
+2026-11-10 16:15:03  unknown              unknown   unfinished  unknown  unknown
+
+runs: 3
+by outcome
+  approved    1
+  failed      1
+  unfinished  1
+by repository
+  github.com/acme/app  2
+  unknown              1
+by ensemble
+  unknown   2
+  thorough  1
+```
+
 ## Telemetry
+
+Run records (`config.json`, `telemetry.jsonl`, `result.json` and `replies/`) live in
+`<state dir>/runs/<run id>/`. Tester scratch lives separately in `<state dir>/scratch/<run id>/`
+and is left in place after the run.
 
 Each run writes `telemetry.jsonl` under `~/.kapellmeister/state/runs/<run>/`: one record per step with its chair, tier, effort, tier source (`default`,
 `pinned`, `sized`, `escalated` or `explicit`), the model CAO reported, durations and verdicts, plus `size`
-and `escalate` records for each decision. A seated tester adds `test-plan`, `test`,
+and `escalate` records for each decision. Lessons add a `lessons` step record and a
+`lessons-proposed` summary (also recorded when collection is skipped); the step uses the `gate` tier. A seated tester adds `test-plan`, `test`,
 `classify-test`, `verdict-test` and any `left-running` records; both tester steps use the `test` tier. With several reviewers,
 their review, nudge, classification and verdict records include `chair_name` (`reviewer-1`, `reviewer-2`, etc.).
 A failed review has verdict `FAILED` and its error; single-reviewer records omit `chair_name`.
