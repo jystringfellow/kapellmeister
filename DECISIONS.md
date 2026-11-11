@@ -269,3 +269,17 @@ with tmux object/index errors, while three serial creations returned 201. The ea
 probe missed this intermittent failure. Concurrent terminal additions into one existing session
 passed in both probes (five and four additions). Run steps and ensemble seating use this latter
 primitive; their creation behavior stays unchanged. See `spike/SPIKE.md`, finding 26.
+
+## 2026-11-11: A second signal kills, SIGHUP is handled, and session deletions take the seating turn
+
+A review of the two entries above found gaps. km stopped listening after the first signal only when
+the command returned, so a second SIGTERM during a long teardown did nothing; it now stops listening
+at the first signal, and a second one ends the process the default way. SIGHUP is handled like
+SIGINT and SIGTERM, because km runs beside tmux and closing its pane or killing the tmux server
+sends SIGHUP. A command that is cancelled before a run starts, or whose result is written by the
+failure path, now names the signal where it said only "context canceled". In preflight, deleting a
+session takes the same one-at-a-time turn as creating one, since a deletion overlapping another
+chair's creation is the same kind of concurrent tmux change the serial seating was meant to avoid;
+retry waits carry random jitter so two km processes do not retry in step. Not covered by a test: the
+second signal, and a deletion waiting for a creation. Two km processes preflighting at once can
+still collide on their first attempts; the turn is per process.

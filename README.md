@@ -47,13 +47,14 @@ reviewers follow sizing. Other required parts have one chair; the optional teste
 `km preflight -worktree DIR [-agents claude,codex]` seats each chair in its own temporary CAO
 session, one at a time. Checks run concurrently once their chairs are seated. Session-creation
 5xx errors and a 400 saying the requested session was not found get up to three retries, after
-1, 2 and 4 seconds, under distinct names ending in `r`, `r2` and `r3`. The `ok` or `BLOCKED` line
+1, 2 and 4 seconds plus up to half as much again at random, under distinct names ending in `r`, `r2` and `r3`. The `ok` or `BLOCKED` line
 reports `seat retried N time(s) after <first error>`. Other failures keep one immediate retry;
 CAO call timeouts, including an expired launch context, and permission blockers are not retried.
-A seat launch is bounded at 90 seconds; other seats wait for that launch to finish.
+A seat launch is bounded at 90 seconds; other seats wait for that launch to finish. Deleting a
+session also waits its turn, so a deletion never overlaps another chair's creation.
 
 km cleans up failed launches by their exact chosen session names, deletes passing chairs' sessions,
-and keeps blocked chairs' attach targets. SIGINT or SIGTERM waits for any bounded launch already
+and keeps blocked chairs' attach targets. SIGINT, SIGTERM or SIGHUP waits for any bounded launch already
 in progress, then tears down this preflight's sessions. Cancellation also stops queued seats and
 retry waits. Teardown failures are reported by session name.
 
@@ -492,9 +493,10 @@ in the selected ensemble to turn escalation off for that run. `true` or an omitt
 
 `km run` and `km play` exit 0 only for an `approved` outcome. Every other outcome, including `untested`
 (approved but testing did not finish), a failed, interrupted or rounds-exhausted run, exits 1 after
-printing the outcome and diff-stat. SIGINT and SIGTERM cancel steps and allow cleanup; a run
+printing the outcome and diff-stat. SIGINT, SIGTERM and SIGHUP cancel steps and allow cleanup; a run
 ended by a signal names it, such as `interrupted by SIGINT`, in the output, `result.json` and
-telemetry. Cancellation from another cause keeps its usual wording. Missing or unknown subcommands
+telemetry. A second signal while km is cleaning up ends it at once. `km audition`, `rehearse` and
+`reseat` name the signal in their error line. Cancellation from another cause keeps its usual wording. Missing or unknown subcommands
 exit 2.
 
 ## Checked-in lessons

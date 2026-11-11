@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	mathrand "math/rand/v2"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -98,6 +99,8 @@ func preflightChairAttempts(ctx context.Context, stepper interface {
 	var unseated int
 	var teardownErrors []string
 	unseat := func(session string) {
+		seatSlot <- struct{}{}
+		defer func() { <-seatSlot }()
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
 		if err := stepper.Unseat(cleanupCtx, session); err != nil {
@@ -139,7 +142,8 @@ func preflightChairAttempts(ctx context.Context, stepper interface {
 			if seatRetryError == "" {
 				seatRetryError = err.Error()
 			}
-			timer := time.NewTimer(seatRetryBackoff[attempt])
+			wait := seatRetryBackoff[attempt]
+			timer := time.NewTimer(wait + time.Duration(mathrand.Int64N(int64(wait)/2+1)))
 			select {
 			case <-ctx.Done():
 				timer.Stop()
@@ -215,7 +219,6 @@ func preflightChair(ctx context.Context, stepper interface {
 	seat, err := stepper.Seat(seatCtx, name, chair, worktree)
 	cancel()
 	booting.Add(-1)
-	<-seatSlot
 	res.TerminalID, res.Session = seat.TerminalID, seat.Session
 	res.Model, res.Honored = seat.Model, seat.Honored
 	if err == nil && (seat.TerminalID == "" || seat.Session == "") {
@@ -233,6 +236,7 @@ func preflightChair(ctx context.Context, stepper interface {
 		}
 		cleanupCancel()
 	}
+	<-seatSlot
 	if ctx.Err() != nil {
 		return res, ctx.Err()
 	}

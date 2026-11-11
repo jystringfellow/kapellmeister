@@ -78,7 +78,7 @@ func playCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	client := cao.NewClient(s.CAOURL)
 	missing, err := ensemble.MissingOccupants(ctx, client, standing)

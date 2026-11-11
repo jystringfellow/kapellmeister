@@ -80,6 +80,10 @@ func execute(args []string, stderr io.Writer) int {
 		return 1
 	}
 	if err != nil {
+		var named *loop.SignalError
+		if signalled := loop.LastSignal(); signalled != nil && errors.Is(err, context.Canceled) && !errors.As(err, &named) {
+			err = fmt.Errorf("%s: %w", signalled, err)
+		}
 		fmt.Fprintln(stderr, "km:", err)
 		return 1
 	}
@@ -334,7 +338,7 @@ func runCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	client := cao.NewClient(s.CAOURL)
 	printSources(os.Stdout, s)
@@ -377,7 +381,7 @@ func runCommand(args []string) error {
 }
 
 func preflightCommand(args []string) error {
-	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	fs := flag.NewFlagSet("preflight", flag.ContinueOnError)
 	worktree := fs.String("worktree", "", "git worktree to start the chairs in")
@@ -753,7 +757,9 @@ func runEnsemble(ctx context.Context, p ensembleRun) (sum ensembleSummary, runEr
 			if runErr != nil {
 				reason = runErr.Error()
 			}
-			if ctx.Err() != nil {
+			if signalled := loop.SignalOf(ctx); signalled != nil {
+				reason = signalled.Error() + ": " + reason
+			} else if ctx.Err() != nil {
 				reason = "interrupted: " + ctx.Err().Error() + ": " + reason
 			}
 			if caught != nil {

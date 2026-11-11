@@ -63,7 +63,7 @@ func reseatCommand(args []string) error {
 	if *timeout == 0 {
 		*timeout = s.PreflightTimeout
 	}
-	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	client := cao.NewClient(firstNonEmpty(*caoURL, s.CAOURL))
 	m := standing.Members()[index]

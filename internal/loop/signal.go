@@ -5,8 +5,13 @@ import (
 	"errors"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 )
+
+var lastSignal atomic.Pointer[SignalError]
+
+func LastSignal() *SignalError { return lastSignal.Load() }
 
 type SignalError struct{ Signal os.Signal }
 
@@ -32,7 +37,10 @@ func SignalContext(parent context.Context, sigs ...os.Signal) (context.Context, 
 	go func() {
 		select {
 		case sig := <-signals:
-			cancel(&SignalError{Signal: sig})
+			signal.Stop(signals)
+			cause := &SignalError{Signal: sig}
+			lastSignal.Store(cause)
+			cancel(cause)
 		case <-ctx.Done():
 		}
 	}()

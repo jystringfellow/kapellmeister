@@ -123,8 +123,8 @@ func assertSeatRetry(t *testing.T, kind string, failures, retries int) {
 			if kind == "500" || kind == "400 session" {
 				want = time.Second << uint(i-1)
 			}
-			if elapsed := starts[i].Sub(starts[i-1]); elapsed != want {
-				t.Errorf("wait %d = %s, want %s", i, elapsed, want)
+			if elapsed := starts[i].Sub(starts[i-1]); elapsed < want || elapsed > want+want/2 {
+				t.Errorf("wait %d = %s, want %s plus at most half again", i, elapsed, want)
 			}
 		}
 		equal(t, deleted, names)

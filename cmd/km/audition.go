@@ -57,7 +57,7 @@ func auditionCommand(args []string) error {
 	}
 	policy := s.Policy
 	sizeMembers(policy, members)
-	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	client := cao.NewClient(firstNonEmpty(*caoURL, s.CAOURL))
 	if err := ensureProfiles(ctx, client, &policy, stepChairs(chairs)); err != nil {
