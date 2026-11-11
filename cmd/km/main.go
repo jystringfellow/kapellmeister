@@ -32,6 +32,7 @@ const usage = `usage:
   km reseat SESSION ADDRESS [-agent SPEC] [-timeout D] [-cao URL]  replace one chair's occupant
   km ensemble list                                         list standing ensembles
   km ensemble down [-cao URL] SESSION                       take down a standing ensemble
+  km report [-json] [-since DATE] [-repository NAME] [DIR...]   summarize finished runs
   km cue done -queue FILE CUE [NOTE]                         close a cue (chairs run this)
   km preflight -worktree DIR [-agents LIST] [-tier T]       check each agent starts and answers
   km config [-worktree DIR]                                  show the effective settings and the files they come from`
@@ -59,6 +60,8 @@ func execute(args []string, stderr io.Writer) int {
 		err = reseatCommand(args[1:])
 	case "ensemble":
 		err = ensembleCommand(args[1:], os.Stdout)
+	case "report":
+		err = reportCommand(args[1:], os.Stdout, stderr)
 	case "cue":
 		err = cueCommand(args[1:])
 	case "preflight":

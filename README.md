@@ -14,6 +14,7 @@ km play SESSION [-max-rounds N] [-verify CMD] [-timeout D] [-cao URL]  # run the
 km reseat SESSION ADDRESS [-agent SPEC] [-timeout D] [-cao URL]  # replace one occupant
 km ensemble list                                # list standing ensembles
 km ensemble down SESSION                        # take one down
+km report [-json] [-since DATE] [-repository NAME] [DIR...]  # summarize run records
 km preflight -worktree DIR [-tier large]          # check each agent starts and answers
 km config [-worktree DIR] [-cao URL]              # show the effective settings and their files
 ```
@@ -425,6 +426,55 @@ in the selected ensemble to turn escalation off for that run. `true` or an omitt
 `km run` and `km play` exit 0 only for an `approved` outcome. Every other outcome, including `untested`
 (approved but testing timed out), a failed, interrupted or rounds-exhausted run, exits 1 after
 printing the outcome and diff-stat. Missing or unknown subcommands exit 2.
+
+## Report
+
+`km report [DIR...]` summarizes run records, oldest first, followed by totals by outcome,
+repository and ensemble. With no directory it reads `<state>/runs`. Each directory is searched
+at any depth, so `km report ~/kept-sandboxes` works across kept sandbox copies. A directory
+holding `result.json` is a run; one holding only `telemetry.jsonl` counts as unfinished. The
+search stops inside each run directory, ignores directory symlinks and never follows record-file
+symlinks. An explicitly chosen root directory may itself be a symlink. Copies with the same run
+id count once, preferring a finished copy over an unfinished or unreadable one.
+
+Started comes from the first telemetry record's timestamp, shown in UTC; it is unknown without
+usable telemetry. Missing repository or ensemble fields show as `unknown`, as with an older km,
+plain chairs that omit the ensemble, or a repository without a hosted origin. Unfinished runs
+have unknown rounds and duration. Malformed records are diagnosed on stderr and counted as
+unreadable without stopping the report. Text values are escaped for safe terminal output.
+Unreadable or disappearing subdirectories are also diagnosed and counted as unreadable;
+other directories are still searched. Directory handles keep searches and record reads from
+following a symlink even if a directory is renamed during the report.
+The command only reads the supplied directories.
+
+`-since 2026-11-09` keeps runs started at or after midnight UTC on that date; RFC3339 timestamps
+are also accepted. Runs without a known start are excluded by this filter.
+`-repository github.com/acme/app` matches the recorded repository exactly and excludes unknown
+repositories. Both filters can be combined, before or after directories. `-json` emits the same
+ordered runs and totals as a JSON document, omitting unrecorded fields from individual runs.
+Nonprinting characters are escaped in JSON too, preserving their values when decoded.
+With no matches the table says `no runs found`; JSON contains an empty runs array and zero totals.
+
+For example, `km report ~/kept-sandboxes` can print:
+
+```text
+STARTED              REPOSITORY           ENSEMBLE  OUTCOME     ROUNDS   TOOK
+2026-11-09 14:02:11  github.com/acme/app  thorough  approved    2        18m31s
+2026-11-10 09:40:52  github.com/acme/app  unknown   failed      1        4m2s
+2026-11-10 16:15:03  unknown              unknown   unfinished  unknown  unknown
+
+runs: 3
+by outcome
+  approved    1
+  failed      1
+  unfinished  1
+by repository
+  github.com/acme/app  2
+  unknown              1
+by ensemble
+  unknown   2
+  thorough  1
+```
 
 ## Telemetry
 
