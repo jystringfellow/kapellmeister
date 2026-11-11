@@ -34,6 +34,7 @@ type TestConfig struct {
 }
 
 type RunConfig struct {
+	LessonsBudget    *int   `toml:"lessons_budget"`
 	BlockerPoll      string `toml:"blocker_poll"`
 	Rounds           *int   `toml:"rounds"`
 	VerifyRetries    *int   `toml:"verify_retries"`
@@ -118,6 +119,7 @@ type FileConfig struct {
 }
 
 type Settings struct {
+	LessonsBudget    int                 `json:"lessons_budget"`
 	BlockerPoll      time.Duration       `json:"blocker_poll"`
 	GateWhen         string              `json:"gate_when"`
 	Files            []string            `json:"files"`
@@ -179,6 +181,7 @@ func UserConfigPath(home string) string {
 
 func DefaultSettings() Settings {
 	return Settings{
+		LessonsBudget:    defaultLessonsBudget,
 		BlockerPoll:      20 * time.Second,
 		GateWhen:         GateWhenAny,
 		CAOURL:           "http://127.0.0.1:9889",
@@ -313,6 +316,12 @@ func refuseSections(cfg loadedConfig, name string, sections []string, home strin
 
 func (s *Settings) applyRun(layer loadedConfig) error {
 	r := layer.Run
+	if r.LessonsBudget != nil {
+		if *r.LessonsBudget < 1 {
+			return fmt.Errorf("%s: run.lessons_budget: must be at least 1", layer.name)
+		}
+		s.LessonsBudget = *r.LessonsBudget
+	}
 	if r.Rounds != nil {
 		if *r.Rounds < 1 {
 			return fmt.Errorf("%s: run.rounds: must be at least 1", layer.name)

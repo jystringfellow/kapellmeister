@@ -1,6 +1,8 @@
 package loop
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -417,5 +419,72 @@ func TestTheDefaultStepTimeoutIsSixtyMinutes(t *testing.T) {
 	s, err := LoadSettings(writeUserConfig(t, "[run]\ntimeout = '10m'\n"), "")
 	if err != nil || s.Timeout != 10*time.Minute {
 		t.Fatalf("explicit timeout = %s, error = %v", s.Timeout, err)
+	}
+}
+
+func lessonsBudgetOfSettings(t *testing.T, s Settings) int {
+	t.Helper()
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields struct {
+		Budget int `json:"lessons_budget"`
+	}
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	return fields.Budget
+}
+
+func TestLessonsBudgetDefaultsTo4000Bytes(t *testing.T) {
+	s, err := LoadSettings(t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := lessonsBudgetOfSettings(t, s); got != 4000 {
+		t.Fatalf("lessons budget = %d", got)
+	}
+}
+
+func TestRepositoryConfigOverridesTheLessonsBudget(t *testing.T) {
+	home := writeUserConfig(t, "[run]\nlessons_budget = 1234\n")
+	s, err := LoadSettings(home, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := lessonsBudgetOfSettings(t, s); got != 1234 {
+		t.Fatalf("user budget = %d", got)
+	}
+	repo := t.TempDir()
+	writeConfig(t, repo, "[run]\nlessons_budget = 321\n")
+	s, err = LoadSettings(home, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := lessonsBudgetOfSettings(t, s); got != 321 {
+		t.Fatalf("repository budget = %d", got)
+	}
+}
+
+func TestALessonsBudgetBelowOneIsRejected(t *testing.T) {
+	for _, budget := range []int{0, -1} {
+		for _, layer := range []string{"user", "repository"} {
+			t.Run(fmt.Sprintf("%s/%d", layer, budget), func(t *testing.T) {
+				home, repo := t.TempDir(), t.TempDir()
+				body := fmt.Sprintf("[run]\nlessons_budget = %d\n", budget)
+				path := ConfigFile
+				if layer == "user" {
+					home = writeUserConfig(t, body)
+					path = UserConfigPath(home)
+				} else {
+					writeConfig(t, repo, body)
+				}
+				_, err := LoadSettings(home, repo)
+				if err == nil || err.Error() != path+": run.lessons_budget: must be at least 1" {
+					t.Fatalf("error = %v", err)
+				}
+			})
+		}
 	}
 }

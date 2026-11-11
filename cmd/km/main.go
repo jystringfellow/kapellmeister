@@ -342,7 +342,7 @@ func runCommand(args []string) error {
 		RunID: runID, StateDir: runDir, Ensemble: *ensemble,
 		Config: loop.Config{
 			ScratchDir: scratch, RunID: runID, Task: text, Worktree: wt, Chairs: seated, GateWhen: s.GateWhen,
-			BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, CheckCommand: checkCmd, Policy: &policy,
+			LessonsBudget: s.LessonsBudget, BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, CheckCommand: checkCmd, Policy: &policy,
 		},
 		Watcher: loop.CAOWatcher{Client: client, Session: podium.SessionName},
 		Stepper: loop.CAOStepper{Client: client, Session: podium.SessionName}, Verify: loop.Retrying(loop.CommandVerifier(verifyCmd), s.VerifyRetries), Progress: os.Stdout,
@@ -417,8 +417,8 @@ func configCommand(args []string) error {
 	}
 	s.CAOURL = firstNonEmpty(*caoURL, s.CAOURL)
 	printSources(os.Stdout, s)
-	fmt.Printf("cao    %s\nstate  %s\nrun    rounds %d, verify retries %d, step timeout %s, reply grace %s, preflight %s, blocker poll %s\n",
-		s.CAOURL, loop.StateDir(), s.Rounds, s.VerifyRetries, s.Timeout, s.ReplyGrace, s.PreflightTimeout, s.BlockerPoll)
+	fmt.Printf("cao    %s\nstate  %s\nrun    rounds %d, verify retries %d, step timeout %s, reply grace %s, preflight %s, blocker poll %s, lessons budget %d bytes\n",
+		s.CAOURL, loop.StateDir(), s.Rounds, s.VerifyRetries, s.Timeout, s.ReplyGrace, s.PreflightTimeout, s.BlockerPoll, s.LessonsBudget)
 	printChairs(os.Stdout, s)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
