@@ -439,7 +439,17 @@ bare last line supplies the verdict; these replies produce no corresponding `cla
 Classified verdicts omit `verdict_source`. A review's `classify-review` and verdict records can
 interleave with other reviewers' progress and telemetry while their reviews are still running.
 
-Beside the telemetry, `result.json` records the worktree's starting commit as `base`. Its `diff_stat`
+A step record's `chair` carries its `address`, `section.chair@ensemble`, when the run plays an ensemble
+file or `km play` plays a standing ensemble; with plain `[chairs]` or an `[ensembles.NAME]` table the
+address is omitted. In a run from an ensemble file, `blocked` and `unblocked` name a chair by that address;
+reviewers keep `reviewer-N`.
+
+Beside the telemetry, `result.json` records the `ensemble` the run used (the `-ensemble` name, or the
+standing ensemble's for `km play`; omitted for plain `[chairs]`) and the `repository`: the worktree's
+`origin` remote as `host/owner/name`, without scheme, credentials, port or `.git`. It is omitted when
+there is no `origin` or it names no host, such as a local path.
+
+`result.json` also records the worktree's starting commit as `base`. Its `diff_stat`
 compares the final tree against that base, including untracked non-ignored files and changes committed
 during the run. Generating this report uses a temporary index and leaves the worktree's index unchanged.
 If HEAD moves, the result also records `head` and `head_moved: true`, and km prints

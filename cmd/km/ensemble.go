@@ -124,3 +124,14 @@ func failedChairs(report ensemble.Report) []string {
 	}
 	return failed
 }
+
+func addressedChairs(worktree, name string, chairs loop.Chairs, members []ensemble.Member) (loop.Chairs, error) {
+	if _, found := ensemble.Path(name, loop.Home(), worktree); !found {
+		return chairs, nil
+	}
+	seated := slices.Clone(members)
+	for i, m := range seated {
+		seated[i].Chair.Address = m.Address(name)
+	}
+	return ensemble.ChairsOf(seated)
+}
