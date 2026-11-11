@@ -197,3 +197,37 @@ checked-in budget `learned_budget` to distinguish it from gate collection's `les
 `TestUnsafeLessonFilesAreSkippedWithAWarning`,
 `TestALessonFileContainingAMarkerCannotEndTheSectionEarly` and
 `TestTheOldLessonsBudgetKeyIsAnErrorNamingLearnedBudget`.
+
+
+## 2026-11-11: Name the signal that ended a run, and handle SIGTERM
+
+Cancellation carries its signal cause through the score while still matching `context.Canceled`.
+SIGTERM receives the same recording and cleanup as SIGINT. After gate approval, a signalled test
+step ends `untested` and says the tester did not finish and the approval stands unverified. Both
+tester briefings identify the conductor's PID and restrict signals to processes the tester started
+and recorded. Evidence: runs lost when a tester signalled the first process named km;
+`TestAnInterruptedRunPrintsAndRecordsTheSignalThatEndedIt`,
+`TestASignalDuringTheTestStepAfterGateApprovalEndsUntestedAndSaysTheApprovalStandsUnverified`,
+`TestTheTesterBriefingNamesTheConductorsPidAndForbidsSignallingItOrProcessesFoundByName`,
+`TestASignalDuringParallelReviewsNamesTheSignal` and
+`TestASignalDuringVerificationNamesTheSignalInsteadOfACommandExitFailure`.
+
+## 2026-11-11: Seat preflight chairs one at a time and back off on CAO's session-creation race
+
+Preflight serializes session creation while checks remain concurrent. Transient seat errors
+(5xx, or a 400 naming the requested session as not found) get three retries after 1, 2 and 4 seconds,
+each under a new name. A CAO call timeout is never retried, including when the launch context
+expires before the client limit and returns `context.DeadlineExceeded`. This bounds the workaround
+to session creation, behind the existing Seat seam. Evidence: CAO logs from failed preflights showed five
+creations within 100 ms and tmux object, index and missing-session failures; immediate retries
+failed in the same burst. Tests: `TestPreflightSeatsOneChairAtATimeButChecksThemTogether`,
+`TestPreflightRetriesAnHTTP500SeatWithGrowingWaitsAndRenamedSessions`,
+`TestPreflightRetriesA400ThatSaysTheSessionJustAskedForWasNotFound`,
+`TestACancelDuringASeatBackoffEndsWithoutAnotherSeat`,
+`TestPreflightDoesNotRetryAChairWhoseCAOCallTimedOut` and
+`TestPreflightDoesNotRetryASeatWhenItsLaunchContextExpires`.
+The tester reproduced the race on CAO 2.5.4: two of five concurrent session creations returned 500
+with tmux object/index errors, while three serial creations returned 201. The earlier all-201
+probe missed this intermittent failure. Concurrent terminal additions into one existing session
+passed in both probes (five and four additions). Run steps and ensemble seating use this latter
+primitive; their creation behavior stays unchanged. See `spike/SPIKE.md`, finding 26.
