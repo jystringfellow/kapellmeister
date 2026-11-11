@@ -101,7 +101,9 @@ func (f *runCAO) serve(t *testing.T) *httptest.Server {
 		}
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
-			t.Error(err)
+			if r.Context().Err() == nil {
+				t.Error(err)
+			}
 			return
 		}
 		defer resp.Body.Close()
