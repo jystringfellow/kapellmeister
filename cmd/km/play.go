@@ -95,7 +95,7 @@ func playCommand(args []string) error {
 		Config: loop.Config{
 			ScratchDir: scratch, RunID: runID, Task: text, Worktree: standing.Worktree, Chairs: chairs, GateWhen: firstNonEmpty(standing.GateWhen, s.GateWhen),
 			Lessons: s.Lessons, LessonsTimeout: s.LessonsTimeout,
-			LessonsBudget: s.LessonsBudget, BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, CheckCommand: checkCmd,
+			LearnedBudget: s.LearnedBudget, BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, CheckCommand: checkCmd,
 		},
 		Watcher: loop.CAOWatcher{Client: client, Session: standing.Session},
 		Stepper: ensemble.NewOccupantStepper(loop.CAOStepper{Client: client, Session: standing.Session}, standing),

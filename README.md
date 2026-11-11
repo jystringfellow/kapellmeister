@@ -233,9 +233,9 @@ optional, and unknown keys are an error.
 - **`~/.kapellmeister/config.toml`** (`$KAPELLMEISTER_HOME` moves it) holds what depends on your machine and accounts:
   `[cao]`, `[chairs]`, `[agents]`, `[ensembles]`, timeouts, and the model each tier means for you.
 - **`.kapellmeister/config.toml`** in the repository holds the contract everyone working in it shares:
-  `[test]`, step tiers and floors, rounds, lessons budget and sizing.
+  `[test]`, step tiers and floors, rounds, learned budget and sizing.
 
-The repository's values win for `[run]` rounds, retries, `lessons`, `lessons_timeout` and `lessons_budget`, `[steps]` and `[sizing]`; yours win
+The repository's values win for `[run]` rounds, retries, `lessons`, `lessons_timeout` and `learned_budget`, `[steps]` and `[sizing]`; yours win
 for `[tiers]`, because only you know what your accounts can run. `[cao]`, `[chairs]`, `[agents]` and
 `[ensembles]` are machine-only and `[test]` is repository-only; putting one in the wrong file is an error.
 `$CAO_API_BASE_URL` overrides `[cao] url`. State lives in `~/.kapellmeister/state` (`$KAPELLMEISTER_STATE_DIR`).
@@ -255,7 +255,7 @@ preflight_timeout = "4m"
 blocker_poll = "20s"
 lessons = true
 lessons_timeout = "5m"
-lessons_budget = 4000              # bytes of lesson text per chair; at least 1
+learned_budget = 4000              # bytes of lesson text per chair; at least 1
 
 [chairs]                            # agent or provider:profile; optional @tier, or :model
 implementer = "claude"
@@ -489,16 +489,21 @@ to each step's briefing as guidance from earlier runs reviewed by a person; the 
 repository's agent instruction files take precedence. No files means no added section.
 
 km reads lessons once from the committed tree at the run's base commit, before verification or
-any chair starts. Working files, including edits or new lessons made during the run, cannot
+any chair starts. Lesson content comes from git's stdout only; warnings on stderr never become
+lesson text. Working files, including edits or new lessons made during the run, cannot
 change that run's briefings. Merge the lesson pull request before starting a run that needs it.
 
-`[run] lessons_budget` limits lesson text to 4,000 bytes per chair by default, shared between the
+`[run] learned_budget` limits lesson text to 4,000 bytes per chair by default, shared between the
 part and chair files. Set it in your user config or the repository config; the repository wins.
 km keeps whole lines from the top, counting a newline for each line, and stops at the first line
 that does not fit. It reports a cut in the output, briefing and telemetry without failing the run.
 If the first line exceeds the budget, no lesson section is added, but the cut is still recorded.
 Symbolic links, non-regular files and files containing control characters other than newline and
-tab are skipped with a warning naming the file. This includes CRLF files.
+tab are skipped with a warning naming the file. This includes CRLF files. Invalid UTF-8, invisible
+or direction-changing Unicode characters (format characters and line or paragraph separators),
+and files containing the `<lessons` or `</lessons` section markers (case-insensitive) are skipped
+with the same warning and recorded reason. The old `[run] lessons_budget` key is an error naming
+`learned_budget`; `lessons` and `lessons_timeout` still control gate-proposed lessons.
 
 ## Report
 

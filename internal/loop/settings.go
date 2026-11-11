@@ -34,7 +34,7 @@ type TestConfig struct {
 }
 
 type RunConfig struct {
-	LessonsBudget    *int   `toml:"lessons_budget"`
+	LearnedBudget    *int   `toml:"learned_budget"`
 	Lessons          *bool  `toml:"lessons"`
 	LessonsTimeout   string `toml:"lessons_timeout"`
 	BlockerPoll      string `toml:"blocker_poll"`
@@ -121,7 +121,7 @@ type FileConfig struct {
 }
 
 type Settings struct {
-	LessonsBudget    int                 `json:"lessons_budget"`
+	LearnedBudget    int                 `json:"learned_budget"`
 	Lessons          bool                `json:"lessons"`
 	LessonsTimeout   time.Duration       `json:"lessons_timeout"`
 	BlockerPoll      time.Duration       `json:"blocker_poll"`
@@ -185,7 +185,7 @@ func UserConfigPath(home string) string {
 
 func DefaultSettings() Settings {
 	return Settings{
-		LessonsBudget:    defaultLessonsBudget,
+		LearnedBudget:    defaultLearnedBudget,
 		Lessons:          true,
 		LessonsTimeout:   DefaultLessonsTimeout,
 		BlockerPoll:      20 * time.Second,
@@ -304,6 +304,9 @@ func loadConfigFile(path, name string) (loadedConfig, bool, error) {
 	if err != nil {
 		return cfg, false, fmt.Errorf("%s: %w", name, err)
 	}
+	if md.IsDefined("run", "lessons_budget") {
+		return cfg, false, fmt.Errorf("%s: run.lessons_budget: renamed to run.learned_budget", name)
+	}
 	if extra := md.Undecoded(); len(extra) > 0 {
 		return cfg, false, fmt.Errorf("%s: unknown keys %v", name, extra)
 	}
@@ -322,11 +325,11 @@ func refuseSections(cfg loadedConfig, name string, sections []string, home strin
 
 func (s *Settings) applyRun(layer loadedConfig) error {
 	r := layer.Run
-	if r.LessonsBudget != nil {
-		if *r.LessonsBudget < 1 {
-			return fmt.Errorf("%s: run.lessons_budget: must be at least 1", layer.name)
+	if r.LearnedBudget != nil {
+		if *r.LearnedBudget < 1 {
+			return fmt.Errorf("%s: run.learned_budget: must be at least 1", layer.name)
 		}
-		s.LessonsBudget = *r.LessonsBudget
+		s.LearnedBudget = *r.LearnedBudget
 	}
 	if r.Lessons != nil {
 		s.Lessons = *r.Lessons
