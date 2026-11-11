@@ -185,3 +185,15 @@ there or reads lessons from agent-written memory. This prevents a bad run from t
 steps or runs without review. Evidence: `TestLessonsAreReadFromTheBaseCommitNotTheWorkingFiles`,
 `TestALessonWrittenByAStepIsNotSeenByALaterStepOfTheSameRun` and
 `TestKmNeverWritesUnderTheLearnedDirectory`.
+
+## 2026-11-11: Chairs receive exactly the reviewed lesson bytes
+
+Read committed lessons from git's stdout only. Refuse invalid UTF-8, invisible or direction-changing
+characters and section markers rather than escaping: skipped files remain visible in warnings and
+records, while escaping would give chairs text that differs from what was reviewed. Name the
+checked-in budget `learned_budget` to distinguish it from gate collection's `lessons` and
+`lessons_timeout`. Evidence:
+`TestAWarningGitPrintsToStderrWhileSucceedingNeverReachesLessonsOrTheirHash`,
+`TestUnsafeLessonFilesAreSkippedWithAWarning`,
+`TestALessonFileContainingAMarkerCannotEndTheSectionEarly` and
+`TestTheOldLessonsBudgetKeyIsAnErrorNamingLearnedBudget`.
