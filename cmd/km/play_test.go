@@ -71,7 +71,7 @@ type playCAO struct {
 	changes     bool
 }
 
-var playReplyPath = regexp.MustCompile(`\.kapellmeister/runs/[^\s,:;]+\.(?:md|verdict)`)
+var playReplyPath = regexp.MustCompile(`\.kapellmeister/runs/[^\s,:;]+\.(?:md|verdict|json)`)
 
 func (f *playCAO) serve(t *testing.T) *httptest.Server {
 	t.Helper()
@@ -106,12 +106,15 @@ func (f *playCAO) serve(t *testing.T) *httptest.Server {
 			f.requests = append(f.requests, req)
 			f.replies = append(f.replies, filepath.Base(path))
 			part := playReplyPart(filepath.Base(path))
-			if f.failPart == part {
+			if f.failPart == part || (filepath.Base(path) == "lessons-reply.json" && f.failPart == "lessons") {
 				http.Error(w, `{"detail":{"terminal_id":"unexpected-terminal"}}`, 500)
 				return
 			}
-			if f.noReplyPart != part {
+			if f.noReplyPart != part && !(filepath.Base(path) == "lessons-reply.json" && f.noReplyPart == "lessons") {
 				text := "reply\nSize: large — exercise fixed binding\n"
+				if filepath.Base(path) == "lessons-reply.json" {
+					text = "[]"
+				}
 				if strings.HasSuffix(path, ".verdict") {
 					text = "APPROVE"
 					if f.changes && strings.HasPrefix(filepath.Base(path), "gate-") {
@@ -143,6 +146,8 @@ func playReplyPart(path string) string {
 	switch {
 	case strings.HasSuffix(path, ".verdict"):
 		return "classifier"
+	case path == "lessons-reply.json":
+		return "gate"
 	case path == "plan.md":
 		return "planner"
 	case strings.HasPrefix(path, "implement-"):
@@ -283,7 +288,7 @@ func TestPlayRunsEveryStepInItsChairsStandingOccupantAndDeletesNothing(t *testin
 	if err != nil || !strings.Contains(out, "approved after 1 round(s)") {
 		t.Fatalf("play: %v\n%s", err, out)
 	}
-	if len(fake.requests) != 8 {
+	if len(fake.requests) != 9 {
 		t.Fatalf("run-step calls = %d, replies = %v", len(fake.requests), fake.replies)
 	}
 	requirePlayBindings(t, s, fake)
@@ -372,7 +377,7 @@ func TestPlayKeepsEachChairsRecordedBindingEvenWhenSizingAndEscalationAreConfigu
 		t.Fatalf("play: %v\n%s", err, out)
 	}
 	requirePlayBindings(t, s, fake)
-	if len(fake.requests) != 22 {
+	if len(fake.requests) != 23 {
 		t.Fatalf("requests across rounds: %d", len(fake.requests))
 	}
 	for _, req := range fake.requests {
@@ -392,9 +397,13 @@ func TestPlayHonoursVerifyAndTimeoutFlags(t *testing.T) {
 	if err != nil || !strings.Contains(out, "approved after 1 round(s)") {
 		t.Fatalf("play: %v\n%s", err, out)
 	}
-	for _, req := range fake.requests {
-		if req.Timeout != (7 * time.Second).Seconds() {
-			t.Errorf("timeout = %v", req.Timeout)
+	for i, req := range fake.requests {
+		want := (7 * time.Second).Seconds()
+		if fake.replies[i] == "lessons-reply.json" {
+			want = loop.DefaultLessonsTimeout.Seconds()
+		}
+		if req.Timeout != want {
+			t.Errorf("%s timeout = %v, want %v", fake.replies[i], req.Timeout, want)
 		}
 	}
 }
