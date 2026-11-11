@@ -206,8 +206,15 @@ func TestPlayPollsTheStandingSessionAndNeverDeletesIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.polled == 0 || len(f.created) != 0 || len(f.deleted) != 0 || len(f.terminalDeletes) != 0 {
+	if f.polled == 0 || len(f.created) != 0 || len(f.deleted) != 0 {
 		t.Fatalf("polls=%d creates=%v deletes=%v", f.polled, f.created, f.deleted)
+	}
+	for _, deleted := range f.terminalDeletes {
+		for _, chair := range s.Chairs {
+			if strings.HasSuffix(deleted, "/"+chair.TerminalID) {
+				t.Fatalf("deleted the standing occupant %s", deleted)
+			}
+		}
 	}
 	if !strings.Contains(out, "  blocked: permission chair — Permission rule Bash(cp*) requires confirmation for this command. — attach with tmux attach -t cao-standing") {
 		t.Fatalf("progress = %s", out)

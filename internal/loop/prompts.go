@@ -168,3 +168,17 @@ func nudgePrompt(path string) string {
 func preflightPrompt(path string) string {
 	return fmt.Sprintf("This is a readiness check. Write the single word ready to %s and do nothing else. Then reply with: ready\n", path)
 }
+
+func lessonsPrompt(task string, res Result, files []string, out string) string {
+	return preamble("gate") + taskBlock(task) + fmt.Sprintf(`
+The run ended with outcome %s after %d rounds. Read this run's records:
+%s
+From this run's plan, reviews and verdicts, what would have saved a round if a chair had known it at the start?
+An empty list is a good and common answer. Propose a lesson only when it would plainly transfer to later runs on this repository.
+Propose at most 5 lessons, each in one or two sentences, naming the part it is for and citing which step and which finding support it.
+Write only a JSON array to %s, using this format:
+[{"part":"<planner|implementer|reviewer|gate|classifier|tester>","lesson":"<one or two sentences>","evidence":"<which step and which finding>"}]
+Each lesson is limited to 400 characters and each evidence field to 300, with at most 4096 bytes of stored fields in total and a 32 KiB reply limit. Do not include control characters.
+Do not modify any file other than %s. When done, reply with one short sentence.
+`, res.Outcome, res.Rounds, strings.Join(files, "\n"), out, out)
+}

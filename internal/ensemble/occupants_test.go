@@ -228,3 +228,28 @@ func TestScreenIsForwardedToTheInnerStepper(t *testing.T) {
 		t.Fatalf("screen = %q %q %v", session, screen, err)
 	}
 }
+
+func TestAStepThatAsksForAFreshTerminalNeverPlaysInItsStandingOccupant(t *testing.T) {
+	s := standingScore()
+	gate := s.Chairs[4]
+	var got loop.Step
+	fake := &occupantFake{run: func(_ context.Context, step loop.Step) (loop.StepResult, error) {
+		got = step
+		return loop.StepResult{TerminalID: "fresh"}, nil
+	}}
+	stepper := NewOccupantStepper(fake, s)
+
+	out, err := stepper.Run(context.Background(), loop.Step{Name: "lessons", Chair: gate.Binding, FreshTerminal: true})
+
+	if err != nil || got.ReuseTerminal != "" || out.TerminalID != "fresh" {
+		t.Fatalf("ran in %q and returned %q: %v", got.ReuseTerminal, out.TerminalID, err)
+	}
+	if err := stepper.Release(context.Background(), out.TerminalID); err != nil || len(fake.released) != 1 || fake.released[0] != "fresh" {
+		t.Fatalf("released %v: %v", fake.released, err)
+	}
+	other := gate.Binding
+	other.Model = "another-model"
+	if _, err := stepper.Run(context.Background(), loop.Step{Name: "lessons", Chair: other, FreshTerminal: true}); err == nil {
+		t.Fatal("a fresh terminal was given to a binding the occupant does not have")
+	}
+}

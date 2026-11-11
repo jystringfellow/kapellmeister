@@ -65,13 +65,14 @@ type playCAO struct {
 	replies     []string
 	checked     []string
 	unexpected  []string
+	released    []string
 	missing     map[string]int
 	failPart    string
 	noReplyPart string
 	changes     bool
 }
 
-var playReplyPath = regexp.MustCompile(`\.kapellmeister/runs/[^\s,:;]+\.(?:md|verdict)`)
+var playReplyPath = regexp.MustCompile(`\.kapellmeister/runs/[^\s,:;]+\.(?:md|verdict|json)`)
 
 func (f *playCAO) serve(t *testing.T) *httptest.Server {
 	t.Helper()
@@ -106,12 +107,15 @@ func (f *playCAO) serve(t *testing.T) *httptest.Server {
 			f.requests = append(f.requests, req)
 			f.replies = append(f.replies, filepath.Base(path))
 			part := playReplyPart(filepath.Base(path))
-			if f.failPart == part {
+			if f.failPart == part || (filepath.Base(path) == "lessons-reply.json" && f.failPart == "lessons") {
 				http.Error(w, `{"detail":{"terminal_id":"unexpected-terminal"}}`, 500)
 				return
 			}
-			if f.noReplyPart != part {
+			if f.noReplyPart != part && !(filepath.Base(path) == "lessons-reply.json" && f.noReplyPart == "lessons") {
 				text := "reply\nSize: large — exercise fixed binding\n"
+				if filepath.Base(path) == "lessons-reply.json" {
+					text = "[]"
+				}
 				if strings.HasSuffix(path, ".verdict") {
 					text = "APPROVE"
 					if f.changes && strings.HasPrefix(filepath.Base(path), "gate-") {
@@ -130,6 +134,9 @@ func (f *playCAO) serve(t *testing.T) *httptest.Server {
 				id = fmt.Sprintf("step-%d", len(f.requests))
 			}
 			_ = json.NewEncoder(w).Encode(cao.StepResponse{TerminalID: id, Status: "completed"})
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/terminals/step-"):
+			f.released = append(f.released, strings.TrimPrefix(r.URL.Path, "/terminals/"))
+			w.Write([]byte(`{}`))
 		default:
 			f.unexpected = append(f.unexpected, r.Method+" "+r.URL.Path)
 			http.NotFound(w, r)
@@ -143,6 +150,8 @@ func playReplyPart(path string) string {
 	switch {
 	case strings.HasSuffix(path, ".verdict"):
 		return "classifier"
+	case path == "lessons-reply.json":
+		return "gate"
 	case path == "plan.md":
 		return "planner"
 	case strings.HasPrefix(path, "implement-"):
@@ -283,7 +292,7 @@ func TestPlayRunsEveryStepInItsChairsStandingOccupantAndDeletesNothing(t *testin
 	if err != nil || !strings.Contains(out, "approved after 1 round(s)") {
 		t.Fatalf("play: %v\n%s", err, out)
 	}
-	if len(fake.requests) != 8 {
+	if len(fake.requests) != 9 {
 		t.Fatalf("run-step calls = %d, replies = %v", len(fake.requests), fake.replies)
 	}
 	requirePlayBindings(t, s, fake)
@@ -323,7 +332,11 @@ func requirePlayBindings(t *testing.T, s ensemble.Standing, fake *playCAO) {
 		if part == "reviewer" && strings.HasSuffix(path, "-2.md") {
 			want = s.Chairs[3]
 		}
-		if req.ReuseTerminalID != want.TerminalID || req.Provider != want.Binding.Provider || req.Agent != want.Binding.Profile || req.Model != want.Binding.Model || req.Teardown || req.WorkingDirectory != s.Worktree {
+		terminal := want.TerminalID
+		if path == "lessons-reply.json" {
+			terminal = ""
+		}
+		if req.ReuseTerminalID != terminal || req.Provider != want.Binding.Provider || req.Agent != want.Binding.Profile || req.Model != want.Binding.Model || req.Teardown || req.WorkingDirectory != s.Worktree {
 			t.Errorf("%s: request = %+v, want occupant = %+v", path, req, want)
 		}
 	}
@@ -372,7 +385,7 @@ func TestPlayKeepsEachChairsRecordedBindingEvenWhenSizingAndEscalationAreConfigu
 		t.Fatalf("play: %v\n%s", err, out)
 	}
 	requirePlayBindings(t, s, fake)
-	if len(fake.requests) != 22 {
+	if len(fake.requests) != 23 {
 		t.Fatalf("requests across rounds: %d", len(fake.requests))
 	}
 	for _, req := range fake.requests {
@@ -392,9 +405,13 @@ func TestPlayHonoursVerifyAndTimeoutFlags(t *testing.T) {
 	if err != nil || !strings.Contains(out, "approved after 1 round(s)") {
 		t.Fatalf("play: %v\n%s", err, out)
 	}
-	for _, req := range fake.requests {
-		if req.Timeout != (7 * time.Second).Seconds() {
-			t.Errorf("timeout = %v", req.Timeout)
+	for i, req := range fake.requests {
+		want := (7 * time.Second).Seconds()
+		if fake.replies[i] == "lessons-reply.json" {
+			want = loop.DefaultLessonsTimeout.Seconds()
+		}
+		if req.Timeout != want {
+			t.Errorf("%s timeout = %v, want %v", fake.replies[i], req.Timeout, want)
 		}
 	}
 }
@@ -462,6 +479,36 @@ func TestPlayRefusingUnbriefedChairsSuggestsKmReseatForEachChair(t *testing.T) {
 	}
 	if len(fake.requests) != 0 || len(fake.checked) != 0 {
 		t.Errorf("requests = %+v, checked = %v", fake.requests, fake.checked)
+	}
+	requirePlayStillStanding(t, s, fake, out)
+}
+
+func TestPlayAsksForLessonsInAFreshTerminalBesideTheStandingGateAndReleasesIt(t *testing.T) {
+	s := playStanding(t)
+	fake := &playCAO{}
+	srv := fake.serve(t)
+	out, err := capturePlay(t, []string{s.Session, "-cao", srv.URL})
+	if err != nil || !strings.Contains(out, "approved after 1 round(s)") {
+		t.Fatalf("play: %v\n%s", err, out)
+	}
+	asked := 0
+	for i, req := range fake.requests {
+		if fake.replies[i] != "lessons-reply.json" {
+			if req.ReuseTerminalID == "" {
+				t.Errorf("%s did not play in its standing occupant", fake.replies[i])
+			}
+			continue
+		}
+		asked++
+		if req.ReuseTerminalID != "" || req.SessionName != s.Session {
+			t.Errorf("lessons asked in terminal %q of session %q, want a fresh terminal in %s", req.ReuseTerminalID, req.SessionName, s.Session)
+		}
+		if want := fmt.Sprintf("step-%d", i+1); !slices.Contains(fake.released, want) {
+			t.Errorf("released %v, want the lessons terminal %s", fake.released, want)
+		}
+	}
+	if asked != 1 || len(fake.released) != 1 {
+		t.Errorf("lessons asked %d time(s), released %v", asked, fake.released)
 	}
 	requirePlayStillStanding(t, s, fake, out)
 }
