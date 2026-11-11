@@ -33,6 +33,7 @@ const usage = `usage:
   km ensemble list                                         list standing ensembles
   km ensemble down [-cao URL] SESSION                       take down a standing ensemble
   km report [-json] [-since DATE] [-repository NAME] [DIR...]   summarize finished runs
+  km status [-json] [DIR...]                               show the runs in progress
   km cue done -queue FILE CUE [NOTE]                         close a cue (chairs run this)
   km preflight -worktree DIR [-agents LIST] [-tier T]       check each agent starts and answers
   km config [-worktree DIR]                                  show the effective settings and the files they come from`
@@ -62,6 +63,8 @@ func execute(args []string, stderr io.Writer) int {
 		err = ensembleCommand(args[1:], os.Stdout)
 	case "report":
 		err = reportCommand(args[1:], os.Stdout, stderr)
+	case "status":
+		err = statusCommand(args[1:], os.Stdout, stderr)
 	case "cue":
 		err = cueCommand(args[1:])
 	case "preflight":
@@ -699,7 +702,24 @@ func runEnsemble(ctx context.Context, p ensembleRun) (ensembleSummary, error) {
 	}
 	fmt.Fprintf(p.Progress, "km %s %s\n  worktree  %s\n  state     %s\n", firstNonEmpty(p.Command, "run"), p.RunID, p.Config.Worktree, p.StateDir)
 	eng := &loop.Engine{Watcher: p.Watcher, Config: p.Config, Stepper: p.Stepper, Verify: p.Verify, Records: telemetry, Progress: p.Progress}
-	start := time.Now()
+	origin, _ := gitOutput(p.Config.Worktree, "config", "--get", "remote.origin.url")
+	repository := repositoryOf(origin)
+	start := time.Now().UTC()
+	host, _ := os.Hostname()
+	token, _ := processStart(os.Getpid())
+	state := runState{RunID: p.RunID, Command: firstNonEmpty(p.Command, "run"), Ensemble: p.Ensemble, Repository: repository, Started: start, Updated: start, MaxRounds: p.Config.MaxRounds, PID: os.Getpid(), Host: host, ProcessStart: token, Playing: []loop.ActiveStep{}}
+	warned := false
+	publish := func() {
+		if err := writeRunState(p.StateDir, state); err != nil && !warned {
+			fmt.Fprintln(os.Stderr, "km: recording current state:", plain(err.Error()))
+			warned = true
+		}
+	}
+	publish()
+	eng.Playing = func(round int, active []loop.ActiveStep) {
+		state.Round, state.Playing, state.Updated = round, active, time.Now().UTC()
+		publish()
+	}
 	res, err := eng.Run(ctx)
 	if err != nil {
 		return ensembleSummary{}, err
@@ -715,8 +735,7 @@ func runEnsemble(ctx context.Context, p ensembleRun) (ensembleSummary, error) {
 	if err != nil {
 		return ensembleSummary{}, err
 	}
-	origin, _ := gitOutput(p.Config.Worktree, "config", "--get", "remote.origin.url")
-	sum := ensembleSummary{Result: res, DurationMS: time.Since(start).Milliseconds(), DiffStat: stat, Ensemble: p.Ensemble, Repository: repositoryOf(origin), Base: base}
+	sum := ensembleSummary{Result: res, DurationMS: time.Since(start).Milliseconds(), DiffStat: stat, Ensemble: p.Ensemble, Repository: repository, Base: base}
 	if head != base {
 		sum.Head, sum.HeadMoved = head, true
 	}

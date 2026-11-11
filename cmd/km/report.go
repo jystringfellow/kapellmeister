@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -35,6 +36,9 @@ type reportRun struct {
 	DurationMS *int64     `json:"duration_ms,omitempty"`
 	Reason     string     `json:"reason,omitempty"`
 	quality    int
+	state      *runState
+	hasResult  bool
+	hasStarted bool
 }
 
 type reportTotals struct {
@@ -55,24 +59,7 @@ func reportCommand(args []string, stdout, stderr io.Writer) error {
 	asJSON := flags.Bool("json", false, "print runs and totals as JSON")
 	sinceText := flags.String("since", "", "keep runs started on or after a UTC date or RFC3339 timestamp")
 	repository := flags.String("repository", "", "keep runs from this exact repository")
-	var options, dirs []string
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if arg == "--" {
-			dirs = append(dirs, args[i+1:]...)
-			break
-		}
-		if arg == "-" || !strings.HasPrefix(arg, "-") {
-			dirs = append(dirs, arg)
-			continue
-		}
-		options = append(options, arg)
-		name := strings.TrimLeft(arg, "-")
-		if (name == "since" || name == "repository") && i+1 < len(args) {
-			i++
-			options = append(options, args[i])
-		}
-	}
+	options, dirs := splitRecordArgs(args, "since", "repository")
 	if err := flags.Parse(options); err != nil {
 		return err
 	}
@@ -135,25 +122,45 @@ func reportCommand(args []string, stdout, stderr io.Writer) error {
 	return printReport(stdout, report)
 }
 
-func findRuns(dirs []string, defaultDir bool) (map[string]reportRun, []string, error) {
+func splitRecordArgs(args []string, valueFlags ...string) (options, dirs []string) {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			dirs = append(dirs, args[i+1:]...)
+			break
+		}
+		if arg == "-" || !strings.HasPrefix(arg, "-") {
+			dirs = append(dirs, arg)
+			continue
+		}
+		options = append(options, arg)
+		name := strings.TrimLeft(arg, "-")
+		if slices.Contains(valueFlags, name) && i+1 < len(args) {
+			i++
+			options = append(options, args[i])
+		}
+	}
+	return options, dirs
+}
+
+func findRuns(dirs []string, defaultDir bool, noSymlinks ...bool) (map[string]reportRun, []string, error) {
 	runs := map[string]reportRun{}
 	var diagnostics []string
 	for _, dir := range dirs {
-		root, err := filepath.EvalSymlinks(dir)
+		var file *os.File
+		var err error
+		if len(noSymlinks) > 0 && noSymlinks[0] {
+			file, err = openRecordRoot(dir)
+		} else {
+			var root string
+			root, err = filepath.EvalSymlinks(dir)
+			if err == nil {
+				file, err = os.OpenFile(root, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_DIRECTORY, 0)
+			}
+		}
 		if defaultDir && errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
-		if err != nil {
-			return nil, nil, err
-		}
-		info, err := os.Stat(root)
-		if err != nil {
-			return nil, nil, err
-		}
-		if !info.IsDir() {
-			return nil, nil, fmt.Errorf("%s: not a directory", dir)
-		}
-		file, err := os.OpenFile(root, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_DIRECTORY, 0)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -166,19 +173,43 @@ func findRuns(dirs []string, defaultDir bool) (map[string]reportRun, []string, e
 	return runs, diagnostics, nil
 }
 
+func openRecordRoot(path string) (*os.File, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	dir, err := os.OpenFile("/", os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	for _, name := range strings.Split(strings.TrimPrefix(absolute, "/"), "/") {
+		if name == "" {
+			continue
+		}
+		child, err := openReportEntry(dir, name, unix.O_DIRECTORY)
+		dir.Close()
+		if err != nil {
+			return nil, err
+		}
+		dir = child
+	}
+	return dir, nil
+}
+
 func scanReportDirectory(dir *os.File, runs map[string]reportRun, diagnostics *[]string) error {
 	entries, err := dir.ReadDir(-1)
 	if err != nil {
 		return err
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
-	result, telemetry := false, false
+	result, telemetry, current := false, false, false
 	for _, entry := range entries {
 		result = result || entry.Name() == "result.json"
 		telemetry = telemetry || entry.Name() == "telemetry.jsonl"
+		current = current || entry.Name() == "current.json"
 	}
-	if result || telemetry {
-		run, messages := readReportRun(dir, result, telemetry)
+	if result || telemetry || current {
+		run, messages := readReportRun(dir, result, telemetry, current)
 		*diagnostics = append(*diagnostics, messages...)
 		keepReportRun(runs, run)
 		return nil
@@ -218,8 +249,8 @@ func openReportEntry(dir *os.File, name string, flags int) (*os.File, error) {
 	return os.NewFile(uintptr(fd), path), nil
 }
 
-func readReportRun(dir *os.File, hasResult, hasTelemetry bool) (reportRun, []string) {
-	run := reportRun{RunID: filepath.Base(dir.Name()), Path: dir.Name(), Outcome: "unreadable"}
+func readReportRun(dir *os.File, hasResult, hasTelemetry, hasCurrent bool) (reportRun, []string) {
+	run := reportRun{RunID: filepath.Base(dir.Name()), Path: dir.Name(), Outcome: "unreadable", hasResult: hasResult, hasStarted: hasTelemetry || hasCurrent}
 	var diagnostics []string
 	diagnose := func(path string, err error) {
 		diagnostics = append(diagnostics, "km: report: "+plain(path)+": "+plain(err.Error()))
@@ -250,7 +281,29 @@ func readReportRun(dir *os.File, hasResult, hasTelemetry bool) (reportRun, []str
 		run.Rounds, run.DurationMS = recorded.Rounds, recorded.DurationMS
 		run.quality = 2
 	}
-	if hasTelemetry {
+	if !hasResult && hasCurrent {
+		data, err := readReportFile(dir, "current.json", false)
+		var state *runState
+		if err == nil {
+			err = json.Unmarshal(data, &state)
+			if err == nil && (state == nil || state.Started.IsZero()) {
+				err = errors.New("expected a current state with a start time")
+			}
+		}
+		if err != nil {
+			diagnose(filepath.Join(dir.Name(), "current.json"), err)
+		} else {
+			run.state = state
+			run.Repository, run.Ensemble = state.Repository, state.Ensemble
+			started := state.Started.UTC()
+			run.Started = &started
+			if state.RunID != "" {
+				run.RunID = state.RunID
+			}
+			run.Outcome, run.quality = "unfinished", 1
+		}
+	}
+	if hasTelemetry && run.state == nil {
 		path := filepath.Join(dir.Name(), "telemetry.jsonl")
 		data, err := readReportFile(dir, "telemetry.jsonl", true)
 		var record loop.Record
@@ -335,7 +388,7 @@ func plain(value string) string {
 	return out.String()
 }
 
-func printReportJSON(stdout io.Writer, report runReport) error {
+func printReportJSON(stdout io.Writer, report any) error {
 	data, err := json.Marshal(report)
 	if err != nil {
 		return err
