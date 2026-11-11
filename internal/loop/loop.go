@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -129,7 +130,7 @@ type Verifier func(ctx context.Context, dir string) (VerifyResult, error)
 type Config struct {
 	Lessons        bool
 	LessonsTimeout time.Duration
-	LessonsBudget  int
+	LearnedBudget  int
 	ScratchDir     string
 	BlockerPoll    time.Duration
 	GateWhen       string
@@ -921,9 +922,11 @@ func (e *Engine) git(args ...string) error {
 
 func (e *Engine) gitOutput(args ...string) (string, error) {
 	cmd := exec.Command("git", append([]string{"-C", e.Config.Worktree}, args...)...)
-	out, err := cmd.CombinedOutput()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, out)
+		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, &stderr)
 	}
 	return string(out), nil
 }

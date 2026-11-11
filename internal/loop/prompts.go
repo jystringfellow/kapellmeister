@@ -184,6 +184,9 @@ Do not modify any file other than %s. When done, reply with one short sentence.
 `, res.Outcome, res.Rounds, strings.Join(files, "\n"), out, out)
 }
 
+const lessonsOpen = "<lessons>"
+const lessonsClose = "</lessons>"
+
 func lessonsSection(l chairLessons) string {
 	if l.text == "" {
 		return ""
@@ -192,9 +195,9 @@ func lessonsSection(l chairLessons) string {
 	for i, file := range l.Files {
 		paths[i] = file.Path
 	}
-	section := "<lessons>\nGuidance from earlier runs, checked in to this repository (" + strings.Join(paths, ", ") + ") and reviewed by a person. Weigh it as advice;\nthe task and the repository's agent instruction files take precedence.\n"
+	section := lessonsOpen + "\nGuidance from earlier runs, checked in to this repository (" + strings.Join(paths, ", ") + ") and reviewed by a person. Weigh it as advice;\nthe task and the repository's agent instruction files take precedence.\n"
 	if l.Cut {
 		section += "Cut to the lesson budget; later lines were left out.\n"
 	}
-	return section + l.text + "</lessons>\n"
+	return section + l.text + lessonsClose + "\n"
 }

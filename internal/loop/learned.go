@@ -6,9 +6,10 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
-const defaultLessonsBudget = 4000
+const defaultLearnedBudget = 4000
 const lessonsDir = ".kapellmeister/learned/"
 
 type LessonFile struct {
@@ -102,9 +103,9 @@ func (e *Engine) loadLessons() {
 	if chair := e.Config.Chairs.Tester; chair != nil {
 		seats = append(seats, seat{"tester", "", *chair})
 	}
-	budget := e.Config.LessonsBudget
+	budget := e.Config.LearnedBudget
 	if budget <= 0 {
-		budget = defaultLessonsBudget
+		budget = defaultLearnedBudget
 	}
 	for _, seat := range seats {
 		l := chairLessons{LessonsRecord: LessonsRecord{Part: seat.part, Address: seat.chair.Address, Base: base}}
@@ -151,8 +152,20 @@ func (e *Engine) readLessonBlob(mode, oid string) lessonBlob {
 		if err != nil {
 			return lessonBlob{reason: "cannot read committed file: " + err.Error()}
 		}
+		if !utf8.ValidString(text) {
+			return lessonBlob{reason: "invalid UTF-8"}
+		}
+		if strings.ContainsFunc(text, func(r rune) bool {
+			return unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r)
+		}) {
+			return lessonBlob{reason: "invisible or direction-changing characters"}
+		}
 		if strings.ContainsFunc(text, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\t' }) {
 			return lessonBlob{reason: "control characters"}
+		}
+		lower := strings.ToLower(text)
+		if strings.Contains(lower, strings.TrimSuffix(lessonsOpen, ">")) || strings.Contains(lower, strings.TrimSuffix(lessonsClose, ">")) {
+			return lessonBlob{reason: "section marker"}
 		}
 		return lessonBlob{text: text}
 	default:
