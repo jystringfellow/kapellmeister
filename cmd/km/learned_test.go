@@ -161,8 +161,10 @@ func gitWithStderrWarning(t *testing.T) {
 
 func TestTheConductorsGitOutputIgnoresWarningsOnStderr(t *testing.T) {
 	dir := t.TempDir()
-	if out, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v: %s", err, out)
+	for _, args := range [][]string{{"init", "-q"}, {"config", "user.name", "Test"}, {"config", "user.email", "test@example.invalid"}} {
+		if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
 	}
 	commitChairLessons(t, dir, map[string]string{"planner.md": "Reviewed\n"})
 	want, err := gitOutput(dir, "rev-parse", "HEAD")
