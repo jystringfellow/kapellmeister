@@ -222,9 +222,9 @@ optional, and unknown keys are an error.
 - **`~/.kapellmeister/config.toml`** (`$KAPELLMEISTER_HOME` moves it) holds what depends on your machine and accounts:
   `[cao]`, `[chairs]`, `[agents]`, `[ensembles]`, timeouts, and the model each tier means for you.
 - **`.kapellmeister/config.toml`** in the repository holds the contract everyone working in it shares:
-  `[test]`, step tiers and floors, rounds and sizing.
+  `[test]`, step tiers and floors, rounds, lessons budget and sizing.
 
-The repository's values win for `[run]` rounds, retries, `lessons` and `lessons_timeout`, `[steps]` and `[sizing]`; yours win
+The repository's values win for `[run]` rounds, retries, `lessons`, `lessons_timeout` and `lessons_budget`, `[steps]` and `[sizing]`; yours win
 for `[tiers]`, because only you know what your accounts can run. `[cao]`, `[chairs]`, `[agents]` and
 `[ensembles]` are machine-only and `[test]` is repository-only; putting one in the wrong file is an error.
 `$CAO_API_BASE_URL` overrides `[cao] url`. State lives in `~/.kapellmeister/state` (`$KAPELLMEISTER_STATE_DIR`).
@@ -244,6 +244,7 @@ preflight_timeout = "4m"
 blocker_poll = "20s"
 lessons = true
 lessons_timeout = "5m"
+lessons_budget = 4000              # bytes of lesson text per chair; at least 1
 
 [chairs]                            # agent or provider:profile; optional @tier, or :model
 implementer = "claude"
@@ -462,6 +463,32 @@ in the selected ensemble to turn escalation off for that run. `true` or an omitt
 (approved but testing timed out), a failed, interrupted or rounds-exhausted run, exits 1 after
 printing the outcome and diff-stat. Missing or unknown subcommands exit 2.
 
+## Checked-in lessons
+
+A person can give chairs guidance from earlier runs by editing Markdown files under
+`.kapellmeister/learned/` and opening a pull request for review. km only reads these files; it never
+creates or updates them, and never copies proposed lessons or agent memory into them.
+
+A part file (`planner.md`, `implementer.md`, `reviewer.md`, `gate.md`, `classifier.md` or `tester.md`)
+reaches every chair playing that part. When playing an ensemble file, a chair also receives
+`<section>.<chair>.md`, using its existing section and chair names: for example,
+`review.security.md` for `review.security@thorough`. The part file comes first. Plain `[chairs]`
+and `[ensembles.NAME]` tables receive only part files. Both `km run` and `km play` add the lessons
+to each step's briefing as guidance from earlier runs reviewed by a person; the task and the
+repository's agent instruction files take precedence. No files means no added section.
+
+km reads lessons once from the committed tree at the run's base commit, before verification or
+any chair starts. Working files, including edits or new lessons made during the run, cannot
+change that run's briefings. Merge the lesson pull request before starting a run that needs it.
+
+`[run] lessons_budget` limits lesson text to 4,000 bytes per chair by default, shared between the
+part and chair files. Set it in your user config or the repository config; the repository wins.
+km keeps whole lines from the top, counting a newline for each line, and stops at the first line
+that does not fit. It reports a cut in the output, briefing and telemetry without failing the run.
+If the first line exceeds the budget, no lesson section is added, but the cut is still recorded.
+Symbolic links, non-regular files and files containing control characters other than newline and
+tab are skipped with a warning naming the file. This includes CRLF files.
+
 ## Report
 
 `km report [DIR...]` summarizes run records, oldest first, followed by totals by outcome,
@@ -556,6 +583,12 @@ these logs. Non-step records omit usage, and older records without usage remain 
 when any steps have unknown usage. Its `known` is true when at least one step has known usage; totals
 can therefore be incomplete when `unknown_steps` is nonzero. Without a configured usage meter,
 records and results omit usage.
+
+A `lessons` record identifies each briefed chair by `part` and `address` (or `chair_name` for
+unaddressed reviewers), and records the lesson `base` commit, ordered `files` with their `path`,
+`sha256` of the entire committed content and original `bytes`, any `skipped` paths and reasons,
+the number of kept `bytes` and whether text was `cut`. Hashes cover the whole file even when its
+text was cut. Chairs with no lesson files or skipped candidates add no record.
 
 A step record's `chair` carries its `address`, `section.chair@ensemble`, when the run plays an ensemble
 file or `km play` plays a standing ensemble; with plain `[chairs]` or an `[ensembles.NAME]` table the

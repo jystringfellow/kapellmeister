@@ -34,6 +34,7 @@ type TestConfig struct {
 }
 
 type RunConfig struct {
+	LessonsBudget    *int   `toml:"lessons_budget"`
 	Lessons          *bool  `toml:"lessons"`
 	LessonsTimeout   string `toml:"lessons_timeout"`
 	BlockerPoll      string `toml:"blocker_poll"`
@@ -120,6 +121,7 @@ type FileConfig struct {
 }
 
 type Settings struct {
+	LessonsBudget    int                 `json:"lessons_budget"`
 	Lessons          bool                `json:"lessons"`
 	LessonsTimeout   time.Duration       `json:"lessons_timeout"`
 	BlockerPoll      time.Duration       `json:"blocker_poll"`
@@ -183,6 +185,7 @@ func UserConfigPath(home string) string {
 
 func DefaultSettings() Settings {
 	return Settings{
+		LessonsBudget:    defaultLessonsBudget,
 		Lessons:          true,
 		LessonsTimeout:   DefaultLessonsTimeout,
 		BlockerPoll:      20 * time.Second,
@@ -319,6 +322,12 @@ func refuseSections(cfg loadedConfig, name string, sections []string, home strin
 
 func (s *Settings) applyRun(layer loadedConfig) error {
 	r := layer.Run
+	if r.LessonsBudget != nil {
+		if *r.LessonsBudget < 1 {
+			return fmt.Errorf("%s: run.lessons_budget: must be at least 1", layer.name)
+		}
+		s.LessonsBudget = *r.LessonsBudget
+	}
 	if r.Lessons != nil {
 		s.Lessons = *r.Lessons
 	}

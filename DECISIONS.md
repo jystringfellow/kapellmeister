@@ -157,3 +157,12 @@ Evidence: `TestTwoStepsOnOneReusedTerminalEachGetOnlyTheirOwnUsage`,
 `TestConcurrentStepsInOneWorktreeAreAttributedByTheirReplyPath`,
 `TestStepsQueuedForOneChairDoNotCountEachOthersUsage` and
 `TestRunRecordsEachStepsOwnUsageForClaudeCodexAndUnknownAgentsAndTotalsThemInResultJSON`.
+
+## 2026-11-11: Lessons reach chairs only through checked-in, reviewed files
+
+Lessons come only from files committed under `.kapellmeister/learned/`, read once at the run's
+base commit. A person reviews them through the same pull request process as code; km never writes
+there or reads lessons from agent-written memory. This prevents a bad run from teaching later
+steps or runs without review. Evidence: `TestLessonsAreReadFromTheBaseCommitNotTheWorkingFiles`,
+`TestALessonWrittenByAStepIsNotSeenByALaterStepOfTheSameRun` and
+`TestKmNeverWritesUnderTheLearnedDirectory`.
