@@ -31,6 +31,8 @@ func (f usageStepper) Run(ctx context.Context, s loop.Step) (loop.StepResult, er
 		lines = append(meta, []byte("\n"+`{"type":"turn_context","payload":{"model":"gpt-6.1-sol"}}`+"\n"+`{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":20,"cached_input_tokens":7,"output_tokens":6},"last_token_usage":{"input_tokens":20,"cached_input_tokens":7,"output_tokens":6}}}}`+"\n")...)
 	}
 	if path != "" {
+		prompt, _ := json.Marshal(map[string]any{"type": "user", "message": map[string]string{"content": s.ReplyPath}})
+		lines = append(lines, append(prompt, '\n')...)
 		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 			return loop.StepResult{}, err
 		}

@@ -3,9 +3,11 @@ package loop
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -66,7 +68,9 @@ func (u *Usage) add(step Usage) {
 	}
 }
 
-type UsageMeter interface{ Open(step Step) func() Usage }
+type UsageMeter interface {
+	Open(context.Context, Step) (func() Usage, error)
+}
 
 type LogMeter struct {
 	ClaudeHome string
@@ -74,6 +78,7 @@ type LogMeter struct {
 	mu         sync.Mutex
 	cwd        map[string]string
 	windows    map[string]chan struct{}
+	counted    map[string]map[string]struct{}
 }
 
 func NewLogMeter() *LogMeter {
@@ -94,25 +99,29 @@ const maxUsageLine = 4 << 20
 
 var claudeProjectName = regexp.MustCompile(`[^a-zA-Z0-9]`)
 
-func (m *LogMeter) Open(step Step) (close func() Usage) {
+func (m *LogMeter) Open(ctx context.Context, step Step) (close func() Usage, err error) {
 	close = func() Usage { return unknownUsage("unreadable-log") }
 	var release func()
 	handedOff := false
 	defer func() {
 		if recover() != nil {
 			close = func() Usage { return unknownUsage("unreadable-log") }
+			err = nil
 		}
 		if !handedOff && release != nil {
 			release()
 		}
 	}()
 	if step.Chair.Provider != "claude_code" && step.Chair.Provider != "codex" {
-		return func() Usage { return unknownUsage("unsupported-provider") }
+		return func() Usage { return unknownUsage("unsupported-provider") }, nil
 	}
-	release = m.chairWindow(step)
-	before, err := m.logs(step)
+	release, err = m.chairWindow(ctx, step)
 	if err != nil {
-		return close
+		return nil, err
+	}
+	before, logErr := m.logs(step)
+	if logErr != nil {
+		return close, nil
 	}
 	handedOff = true
 	return func() (usage Usage) {
@@ -134,14 +143,10 @@ func (m *LogMeter) Open(step Step) (close func() Usage) {
 				return usage
 			}
 		}
-		type growth struct {
-			path  string
-			start int64
-			data  []byte
-		}
-		var grown []growth
-		for path, size := range after {
-			start := before[path]
+		var grown []usageGrowth
+		for path, log := range after {
+			start := before[path].size
+			size := log.size
 			if size < start {
 				return usage
 			}
@@ -152,40 +157,41 @@ func (m *LogMeter) Open(step Step) (close func() Usage) {
 			if err != nil {
 				return usage
 			}
-			grown = append(grown, growth{path, start, data})
+			grown = append(grown, usageGrowth{path: path, parent: log.parent, start: start, data: data})
 		}
 		if len(grown) == 0 {
 			return unknownUsage("no-log")
 		}
 		chosen := grown[0]
-		if len(grown) > 1 {
-			matches := 0
-			for _, g := range grown {
-				if step.ReplyPath != "" && bytes.Contains(g.data, []byte(step.ReplyPath)) {
-					chosen = g
-					matches++
-				}
-			}
-			if matches != 1 {
-				return unknownUsage("ambiguous-log")
+		matches := 0
+		for _, g := range grown {
+			if g.path == g.parent && step.ReplyPath != "" && bytes.Contains(g.data, []byte(step.ReplyPath)) {
+				chosen = g
+				matches++
 			}
 		}
+		if matches != 1 {
+			return unknownUsage("ambiguous-log")
+		}
 		if step.Chair.Provider == "claude_code" {
-			return claudeUsage(chosen.data)
+			return m.claudeWindow(grown, chosen.path)
 		}
 		head, err := readUsageHead(chosen.path, chosen.start)
 		if err != nil {
 			return usage
 		}
 		return codexUsage(chosen.data, head)
-	}
+	}, nil
 }
 
-func (m *LogMeter) chairWindow(step Step) func() {
+func (m *LogMeter) chairWindow(ctx context.Context, step Step) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	key := "chair:" + step.Chair.Address
 	if step.Chair.Address == "" {
 		if step.ReuseTerminal == "" {
-			return nil
+			return nil, nil
 		}
 		key = "terminal:" + step.ReuseTerminal
 	}
@@ -200,9 +206,17 @@ func (m *LogMeter) chairWindow(step Step) func() {
 		m.windows[key] = slot
 	}
 	m.mu.Unlock()
-	slot <- struct{}{}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case slot <- struct{}{}:
+	}
+	if err := ctx.Err(); err != nil {
+		<-slot
+		return nil, err
+	}
 	var once sync.Once
-	return func() { once.Do(func() { <-slot }) }
+	return func() { once.Do(func() { <-slot }) }, nil
 }
 
 func readUsageRange(path string, start, end int64) ([]byte, error) {
@@ -257,8 +271,19 @@ func readUsageHead(path string, end int64) ([]byte, error) {
 	return nil, nil
 }
 
-func (m *LogMeter) logs(step Step) (map[string]int64, error) {
-	paths := make(map[string]int64)
+type usageSnapshot struct {
+	size   int64
+	parent string
+}
+
+type usageGrowth struct {
+	path, parent string
+	start        int64
+	data         []byte
+}
+
+func (m *LogMeter) logs(step Step) (map[string]usageSnapshot, error) {
+	paths := make(map[string]usageSnapshot)
 	var dirs []string
 	pattern := "*.jsonl"
 	if step.Chair.Provider == "claude_code" {
@@ -301,10 +326,60 @@ func (m *LogMeter) logs(step Step) (map[string]int64, error) {
 					continue
 				}
 			}
-			paths[path] = info.Size()
+			paths[path] = usageSnapshot{size: info.Size(), parent: path}
+			if step.Chair.Provider == "claude_code" {
+				if err := claudeSubagentLogs(path, paths); err != nil {
+					return nil, err
+				}
+			}
 		}
 	}
 	return paths, nil
+}
+
+func claudeSubagentLogs(parent string, paths map[string]usageSnapshot) error {
+	session := strings.TrimSuffix(parent, ".jsonl")
+	info, err := os.Lstat(session)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return errors.New("usage session is not a directory")
+	}
+	dir := filepath.Join(session, "subagents")
+	return filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+		if path == dir && os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return errors.New("usage subagent path is a symlink")
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if path == dir {
+			return errors.New("usage subagents is not a directory")
+		}
+		match, _ := filepath.Match("agent-*.jsonl", entry.Name())
+		if !match {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return errors.New("usage subagent log is not a regular file")
+		}
+		paths[path] = usageSnapshot{size: info.Size(), parent: parent}
+		return nil
+	})
 }
 
 func (m *LogMeter) codexCwd(path string) (string, error) {

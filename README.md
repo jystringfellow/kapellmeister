@@ -572,6 +572,11 @@ bare last line supplies the verdict; these replies produce no corresponding `cla
 Classified verdicts omit `verdict_source`. A review's `classify-review` and verdict records can
 interleave with other reviewers' progress and telemetry while their reviews are still running.
 
+`duration_ms` measures the step's own run time. `queue_ms`, when nonzero, records time spent opening
+its usage window, including waiting for an earlier step on the same chair. Queued steps are not
+watched as running, and the wait stops when the run is cancelled. A step cancelled while queued
+records its error and queue time with zero duration and no usage. `reply_wait_ms` remains separate.
+
 Steps also record `usage` from Claude Code and Codex session logs when readable. A known usage has
 `known: true`, separate `input_tokens`, `output_tokens`, `cache_write_tokens` and `cache_read_tokens`,
 and a `models` map with the same counters for each model named in the log. Claude input excludes
@@ -581,14 +586,22 @@ Output includes reasoning tokens. km records tokens, without converting them to 
 
 Usage covers complete log lines appended during one step attempt, including the reply wait. Earlier
 steps on a reused occupant are excluded, and each nudge has its own usage. Windows for steps sharing
-a chair or an explicitly reused terminal are serialized. Claude streamed messages are counted once
-by message id, using the last usage; Codex cumulative counts are differenced for the attempt. Claude
+a chair or an explicitly reused terminal are serialized. Each Claude message id is counted once per
+terminal or subagent log across windows, attributed to the first window with known usage that saw it. Within
+that window, its last usage wins; later streamed lines of that message are excluded from subsequent
+windows. Codex cumulative counts are differenced for the attempt. Claude
 logs are found under `CLAUDE_CONFIG_DIR` (default `~/.claude`); Codex logs under `CODEX_HOME` (default
-`~/.codex`), in today's and yesterday's session directories, matched to the worktree. If several
-logs grow, exactly one must name the step's reply path in its appended lines.
+`~/.codex`), in today's and yesterday's session directories, matched to the worktree. Exactly one
+growing session log must name the step's reply path in its appended lines, even when only one grows.
+Claude usage also includes growth in `<session-id>/subagents/**/agent-*.jsonl` beside that session's
+`<session-id>.jsonl`. Subagent transcripts are attributed through the matching parent session;
+they need no reply-path match themselves. Existing subagent content is excluded, and new transcripts
+start at byte zero. Metadata files are ignored. Parent and subagent message ids are remembered only
+when the whole window has known usage; malformed subagent usage makes the window unknown.
 
 Unavailable usage has `known: false` and a `reason`: `unsupported-provider` (Copilot CLI and
-Antigravity), `no-log`, `ambiguous-log`, `unreadable-log` or `no-usage`. Unknown usage omits token
+Antigravity), `no-log`, `ambiguous-log` (no unique growing session log names the reply path, including a single
+log without a match), `unreadable-log` or `no-usage`. Unknown usage omits token
 counters; it never means zero. Missing, unreadable, truncated, malformed or oversized logs never
 fail the step. Reads are limited to 64 MiB of growth per log and 4 MiB per line; partial last lines
 and writes arriving after the attempt closes are excluded. km reads log metadata, counts and model

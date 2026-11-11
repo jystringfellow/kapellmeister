@@ -151,12 +151,31 @@ invalid replies or a failed write. Evidence:
 
 km reads vendor session logs because CAO 2.5.4 exposes no usage. The meter seam opens and closes a
 usage window around one run-step attempt, so CAO can replace log reading with a per-terminal usage
-field or endpoint on run-step; propose that primitive upstream. Windows use log growth, distinguish
-concurrent chairs by reply path, and serialize steps sharing a chair or an explicitly reused terminal.
+field or endpoint on run-step; propose that primitive upstream. Windows use log growth and serialize
+steps sharing a chair or an explicitly reused terminal. Opening uses the run context; queue time is
+recorded apart from duration and is excluded from the running-step watcher.
 Evidence: `TestTwoStepsOnOneReusedTerminalEachGetOnlyTheirOwnUsage`,
 `TestConcurrentStepsInOneWorktreeAreAttributedByTheirReplyPath`,
-`TestStepsQueuedForOneChairDoNotCountEachOthersUsage` and
-`TestRunRecordsEachStepsOwnUsageForClaudeCodexAndUnknownAgentsAndTotalsThemInResultJSON`.
+`TestStepsQueuedForOneChairDoNotCountEachOthersUsage`,
+`TestAStepQueuedBehindAnotherOnItsChairRecordsTheWaitAsQueueMSAndNotAsDuration`,
+`TestAStepStillQueuedForItsChairIsNotWatchedAsRunning` and
+`TestCancellingTheRunWhileAStepWaitsForItsChairEndsTheWaitWithoutRunningTheStep`.
+
+## 2026-11-11: Wrong usage is worse than unknown
+
+Exactly one growing log must name the reply path, even when only one grew. Claude message ids are
+counted once per transcript across windows; unknown windows commit no ids. Claude subagent logs
+under `<session-id>/subagents/` share their parent session's window and need no reply-path match.
+A real Claude log had 489 parent output tokens and 502 separate subagent output tokens, so omitting
+subagents would under-count usage. Parent and subagent ids commit together only for known windows.
+Evidence:
+`TestOneGrownLogThatDoesNotNameTheReplyPathIsUnknownAsAmbiguous`,
+`TestAStepWithoutAReplyPathNeverGetsUsageFromAGrownLog`,
+`TestAClaudeMessageStraddlingTwoWindowsOnOneTerminalIsCountedOnlyOnce` and
+`TestAClaudeMessageIsCountedAgainWhenTheEarlierWindowWasUnknown`,
+`TestAClaudeStepsUsageIncludesItsSubagentTranscripts`,
+`TestClaudeSubagentUsageIsAttributedOnlyThroughItsParentReplyPath` and
+`TestAnUnknownClaudeSubagentWindowCommitsNoMessageIDs`.
 
 ## 2026-11-11: Lessons reach chairs only through checked-in, reviewed files
 
