@@ -439,6 +439,34 @@ bare last line supplies the verdict; these replies produce no corresponding `cla
 Classified verdicts omit `verdict_source`. A review's `classify-review` and verdict records can
 interleave with other reviewers' progress and telemetry while their reviews are still running.
 
+Steps also record `usage` from Claude Code and Codex session logs when readable. A known usage has
+`known: true`, separate `input_tokens`, `output_tokens`, `cache_write_tokens` and `cache_read_tokens`,
+and a `models` map with the same counters for each model named in the log. Claude input excludes
+cache reads and writes. Codex input has cached reads subtracted; its reported cache writes are kept
+separate without subtracting them from input (the real logs inspected reported zero cache writes).
+Output includes reasoning tokens. km records tokens, without converting them to money.
+
+Usage covers complete log lines appended during one step attempt, including the reply wait. Earlier
+steps on a reused occupant are excluded, and each nudge has its own usage. Windows for steps sharing
+a chair or an explicitly reused terminal are serialized. Claude streamed messages are counted once
+by message id, using the last usage; Codex cumulative counts are differenced for the attempt. Claude
+logs are found under `CLAUDE_CONFIG_DIR` (default `~/.claude`); Codex logs under `CODEX_HOME` (default
+`~/.codex`), in today's and yesterday's session directories, matched to the worktree. If several
+logs grow, exactly one must name the step's reply path in its appended lines.
+
+Unavailable usage has `known: false` and a `reason`: `unsupported-provider` (Copilot CLI and
+Antigravity), `no-log`, `ambiguous-log`, `unreadable-log` or `no-usage`. Unknown usage omits token
+counters; it never means zero. Missing, unreadable, truncated, malformed or oversized logs never
+fail the step. Reads are limited to 64 MiB of growth per log and 4 MiB per line; partial last lines
+and writes arriving after the attempt closes are excluded. km reads log metadata, counts and model
+names, and checks reply paths in memory; it never stores prompts, replies or file contents from
+these logs. Non-step records omit usage, and older records without usage remain readable.
+
+`result.json` includes `usage` summed over known steps, with per-model counters and `unknown_steps`
+when any steps have unknown usage. Its `known` is true when at least one step has known usage; totals
+can therefore be incomplete when `unknown_steps` is nonzero. Without a configured usage meter,
+records and results omit usage.
+
 A step record's `chair` carries its `address`, `section.chair@ensemble`, when the run plays an ensemble
 file or `km play` plays a standing ensemble; with plain `[chairs]` or an `[ensembles.NAME]` table the
 address is omitted. In a run from an ensemble file, `blocked` and `unblocked` name a chair by that address;

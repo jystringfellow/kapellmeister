@@ -339,7 +339,7 @@ func runCommand(args []string) error {
 		}
 	}()
 	sum, err := runEnsemble(ctx, ensembleRun{
-		RunID: runID, StateDir: runDir, Ensemble: *ensemble,
+		RunID: runID, StateDir: runDir, Ensemble: *ensemble, Meter: loop.NewLogMeter(),
 		Config: loop.Config{
 			ScratchDir: scratch, RunID: runID, Task: text, Worktree: wt, Chairs: seated, GateWhen: s.GateWhen,
 			BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, CheckCommand: checkCmd, Policy: &policy,
@@ -656,6 +656,7 @@ func firstNonEmpty(values ...string) string {
 }
 
 type ensembleRun struct {
+	Meter    loop.UsageMeter
 	Ensemble string
 	Watcher  loop.Watcher
 	Command  string
@@ -695,7 +696,7 @@ func runEnsemble(ctx context.Context, p ensembleRun) (ensembleSummary, error) {
 		return ensembleSummary{}, err
 	}
 	fmt.Fprintf(p.Progress, "km %s %s\n  worktree  %s\n  state     %s\n", firstNonEmpty(p.Command, "run"), p.RunID, p.Config.Worktree, p.StateDir)
-	eng := &loop.Engine{Watcher: p.Watcher, Config: p.Config, Stepper: p.Stepper, Verify: p.Verify, Records: telemetry, Progress: p.Progress}
+	eng := &loop.Engine{Meter: p.Meter, Watcher: p.Watcher, Config: p.Config, Stepper: p.Stepper, Verify: p.Verify, Records: telemetry, Progress: p.Progress}
 	start := time.Now()
 	res, err := eng.Run(ctx)
 	if err != nil {
