@@ -147,6 +147,17 @@ invalid replies or a failed write. Evidence:
 `TestARunCommandKeepsItsExitCodeWhenTheLessonsStepFailsOrIsOff`,
 `TestAFailedLessonsWriteDoesNotFailTheRun` and `TestKmNeverReadsLessonsJSONBack`.
 
+## 2026-11-11: Read token usage behind a per-step window
+
+km reads vendor session logs because CAO 2.5.4 exposes no usage. The meter seam opens and closes a
+usage window around one run-step attempt, so CAO can replace log reading with a per-terminal usage
+field or endpoint on run-step; propose that primitive upstream. Windows use log growth, distinguish
+concurrent chairs by reply path, and serialize steps sharing a chair or an explicitly reused terminal.
+Evidence: `TestTwoStepsOnOneReusedTerminalEachGetOnlyTheirOwnUsage`,
+`TestConcurrentStepsInOneWorktreeAreAttributedByTheirReplyPath`,
+`TestStepsQueuedForOneChairDoNotCountEachOthersUsage` and
+`TestRunRecordsEachStepsOwnUsageForClaudeCodexAndUnknownAgentsAndTotalsThemInResultJSON`.
+
 ## 2026-11-11: Lessons reach chairs only through checked-in, reviewed files
 
 Lessons come only from files committed under `.kapellmeister/learned/`, read once at the run's

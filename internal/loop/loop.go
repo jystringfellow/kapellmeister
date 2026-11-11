@@ -147,6 +147,7 @@ type Config struct {
 }
 
 type Record struct {
+	Usage         *Usage         `json:"usage,omitempty"`
 	Lessons       *LessonsRecord `json:"lessons,omitempty"`
 	PID           int            `json:"pid,omitempty"`
 	Command       string         `json:"command,omitempty"`
@@ -189,6 +190,7 @@ const (
 )
 
 type Result struct {
+	Usage    *Usage         `json:"usage,omitempty"`
 	Lessons  *LessonsReport `json:"lessons,omitempty"`
 	Proposed []Lesson       `json:"-"`
 	RunID    string         `json:"run_id"`
@@ -200,6 +202,8 @@ type Result struct {
 }
 
 type Engine struct {
+	Meter     UsageMeter
+	usage     Usage
 	gateRound int
 	Watcher   Watcher
 	watch     watchState
@@ -221,11 +225,22 @@ func RunDirRel(runID string) string {
 	return filepath.Join(".kapellmeister", "runs", runID)
 }
 
-func (e *Engine) Run(ctx context.Context) (Result, error) {
+func (e *Engine) Run(ctx context.Context) (res Result, err error) {
+	e.mu.Lock()
+	e.usage = Usage{}
+	e.mu.Unlock()
+	defer func() {
+		if e.Meter != nil {
+			e.mu.Lock()
+			total := e.usage
+			e.mu.Unlock()
+			res.Usage = &total
+		}
+	}()
 	stopWatcher := e.startWatcher(ctx)
 	defer stopWatcher()
 	e.gateRound = 0
-	res, err := e.play(ctx)
+	res, err = e.play(ctx)
 	if e.Config.Lessons {
 		proposed, report := e.proposeLessons(ctx, res)
 		res.Proposed, res.Lessons = proposed, &report
@@ -619,6 +634,10 @@ func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 	e.progress("→ %s %s%s", strings.TrimSpace(label(s.Name, s.Round)+" "+s.ChairName), chair, tierNote(s.Assignment))
 	start := time.Now()
 	finishWatch := e.watchStep(s)
+	var closeUsage func() Usage
+	if e.Meter != nil {
+		closeUsage = e.Meter.Open(s)
+	}
 	out, err := e.Stepper.Run(ctx, s)
 	finishWatch()
 	rec.DurationMS = time.Since(start).Milliseconds()
@@ -628,6 +647,10 @@ func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 		var waited time.Duration
 		reply, waited, err = e.awaitReply(ctx, s.ReplyPath)
 		rec.ReplyChars, rec.ReplyWaitMS = len(reply), waited.Milliseconds()
+	}
+	if closeUsage != nil {
+		usage := closeUsage()
+		rec.Usage = &usage
 	}
 	if err != nil {
 		rec.Error = err.Error()
@@ -908,6 +931,9 @@ func (e *Engine) gitOutput(args ...string) (string, error) {
 func (e *Engine) record(rec Record) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if rec.Usage != nil {
+		e.usage.add(*rec.Usage)
+	}
 	if e.Records == nil {
 		return
 	}
