@@ -14,7 +14,7 @@ km play SESSION [-max-rounds N] [-verify CMD] [-timeout D] [-cao URL]  # run the
 km reseat SESSION ADDRESS [-agent SPEC] [-timeout D] [-cao URL]  # replace one occupant
 km ensemble list                                # list standing ensembles
 km ensemble down SESSION                        # take one down
-km report [-json] [-since DATE] [-repository NAME] [DIR...]  # summarize run records
+km report [-json] [-since DATE] [-repository NAME] [-max-depth N] [-max-entries N] [DIR...]  # summarize run records
 km preflight -worktree DIR [-tier large]          # check each agent starts and answers
 km config [-worktree DIR] [-cao URL]              # show the effective settings and their files
 ```
@@ -508,12 +508,24 @@ with the same warning and recorded reason. The old `[run] lessons_budget` key is
 ## Report
 
 `km report [DIR...]` summarizes run records, oldest first, followed by totals by outcome,
-repository and ensemble. With no directory it reads `<state>/runs`. Each directory is searched
-at any depth, so `km report ~/kept-sandboxes` works across kept sandbox copies. A directory
+repository and ensemble. With no directory it reads `<state>/runs`. `km report ~/kept-sandboxes`
+searches across kept sandbox copies. A directory
 holding `result.json` is a run; one holding only `telemetry.jsonl` counts as unfinished. The
 search stops inside each run directory, ignores directory symlinks and never follows record-file
-symlinks. An explicitly chosen root directory may itself be a symlink. Copies with the same run
-id count once, preferring a finished copy over an unfinished or unreadable one.
+symlinks. An explicitly chosen root directory may itself be a symlink. A directory holding only
+`config.json` is searched for runs rather than counted as one. Agreeing copies of the same run id
+count once, preferring a finished copy over an unfinished or unreadable one, then the first path
+in lexical order. Copies that disagree on a known start, repository or finished outcome are listed
+separately; stderr names both paths and the differing fields. JSON marks their rows `conflict: true`,
+and the table counts conflicting rows. Missing values cannot hide disagreement in other copies.
+
+Searches are bounded because kept sandbox copies are untrusted. `-max-depth N` defaults to 64;
+the root is level 0, and directories at the limit are not opened. `-max-entries N` defaults to
+1,000,000 files and directories across the search, read in batches; it accepts 1 through 16,777,216.
+Depth must be at least 1. Descent sorts the entries read by name. When a budget is exhausted, the
+report continues with what it found, exits successfully and names the unsearched directories on
+stderr. Depth diagnostics show at most 20 paths, then a count; entry diagnostics name the first
+unsearched directory and count the rest. The table also prints the number of unsearched directories.
 
 Started comes from the first telemetry record's timestamp, shown in UTC; it is unknown without
 usable telemetry. Missing repository or ensemble fields show as `unknown`, as with an older km,
@@ -525,40 +537,60 @@ other directories are still searched. Directory handles keep searches and record
 following a symlink even if a directory is renamed during the report.
 The command only reads the supplied directories.
 
+`TOKENS` shows recorded input/output usage in compact form (`1.2M/340k`); input excludes cache.
+Long table cells are shortened with `…`; JSON keeps their full values. Usage comes only from
+`result.json`, and is `unknown` for older or unfinished runs, unmeasured usage, missing counters,
+wrong types or counters outside 0 through 2^36. Measured zero usage remains zero. A partly measured
+run (`unknown_steps > 0`, for example one with chairs whose tool keeps no usage log) shows what was
+measured as a lower bound, `≥1.2M/340k`, and JSON carries its `unknown_steps`. Overall, ensemble and
+repository totals sum measured usage, mark the sum `≥` when any run in it is partly measured, and
+say how many runs were partly measured and how many had no usage; a group with none measured shows
+`unknown`.
+
 `-since 2026-11-09` keeps runs started at or after midnight UTC on that date; RFC3339 timestamps
 are also accepted. Runs without a known start are excluded by this filter.
 `-repository github.com/acme/app` matches the recorded repository exactly and excludes unknown
 repositories. Both filters can be combined, before or after directories. `-json` emits the same
 ordered runs and totals as a JSON document, omitting unrecorded fields from individual runs.
+Every run has `usage`: either `{"known": false}` or `known: true` with `input_tokens`, `output_tokens`,
+`cache_read_tokens` and `cache_write_tokens`. Totals add `usage`, `ensemble_usage` and
+`repository_usage`, each with all four counters plus `known_runs` and `unknown_runs`. Zero totals
+with no known runs mean no measured usage, not a measured zero. `not_searched` holds up to 100
+`{path, reason}` entries (`depth` or `entries`); `not_searched_total` counts all skipped directories.
 Nonprinting characters are escaped in JSON too, preserving their values when decoded.
 With no matches the table says `no runs found`; JSON contains an empty runs array and zero totals.
 
 For example, `km report ~/kept-sandboxes` can print:
 
 ```text
-STARTED              REPOSITORY           ENSEMBLE  OUTCOME     ROUNDS   TOOK
-2026-11-09 14:02:11  github.com/acme/app  thorough  approved    2        18m31s
-2026-11-10 09:40:52  github.com/acme/app  unknown   failed      1        4m2s
-2026-11-10 16:15:03  unknown              unknown   unfinished  unknown  unknown
+STARTED              REPOSITORY           ENSEMBLE  OUTCOME     ROUNDS   TOOK     TOKENS
+2026-11-09 14:02:11  github.com/acme/app  thorough  approved    2        18m31s   1.2M/340k
+2026-11-10 09:40:52  github.com/acme/app  unknown   failed      1        4m2s     unknown
+2026-11-10 16:15:03  unknown              unknown   unfinished  unknown  unknown  unknown
 
 runs: 3
+usage: in 1.2M out 340k (2 without usage)
 by outcome
   approved    1
   failed      1
   unfinished  1
 by repository
-  github.com/acme/app  2
-  unknown              1
+  github.com/acme/app  2  in 1.2M out 340k (1 without usage)
+  unknown              1  unknown (1 without usage)
 by ensemble
-  unknown   2
-  thorough  1
+  unknown   2  unknown (2 without usage)
+  thorough  1  in 1.2M out 340k
 ```
 
 ## Telemetry
 
 Run records (`config.json`, `telemetry.jsonl`, `result.json` and `replies/`) live in
 `<state dir>/runs/<run id>/`. Tester scratch lives separately in `<state dir>/scratch/<run id>/`
-and is left in place after the run.
+and is left in place after the run. Once `telemetry.jsonl` is created, `km run` and `km play`
+write a start record and leave `result.json` on normal completion, failure or interruption, including
+errors recording configuration, engine setup or the final git summary. Failures record their reason;
+a panic records a failed result and is raised again. If writing the result itself fails, stderr
+reports it. A process killed outright cannot finalize its record and remains unfinished.
 
 Each run writes `telemetry.jsonl` under `~/.kapellmeister/state/runs/<run>/`: one record per step with its chair, tier, effort, tier source (`default`,
 `pinned`, `sized`, `escalated` or `explicit`), the model CAO reported, durations and verdicts, plus `size`
