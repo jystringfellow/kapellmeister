@@ -25,7 +25,7 @@ import (
 )
 
 const usage = `usage:
-  km run -repo DIR (-task TEXT | -task-file FILE) [-ensemble NAME] [flags]   one ensemble
+  km run -repo DIR [-base BRANCH] (-task TEXT | -task-file FILE) [-ensemble NAME] [flags]   one ensemble
   km audition -worktree DIR [-ensemble NAME] [-keep]       boot the ensemble, cue every chair once, tear down
   km rehearse -worktree DIR (-task TEXT | -task-file FILE) [-ensemble NAME]  brief the ensemble and leave it standing
   km play SESSION [-max-rounds N] [-verify CMD] [-timeout D] [-cao URL]  run the score on a standing ensemble
@@ -93,7 +93,7 @@ func commonFlags(fs *flag.FlagSet) common {
 	return common{
 		fs:         fs,
 		repo:       fs.String("repo", "", "repository clone to branch worktrees from"),
-		base:       fs.String("base", "origin/main", "ref each detached worktree starts at"),
+		base:       fs.String("base", "", "branch on the remote to start the worktree from (default main); not with -worktree"),
 		task:       fs.String("task", "", "task text"),
 		taskFile:   fs.String("task-file", "", "file holding the task text"),
 		verify:     fs.String("verify", "", "command kapellmeister runs in the worktree before planning and after each implementation round; defaults to [test] verify in .kapellmeister/config.toml, then an executable .kapellmeister/verify"),
@@ -266,6 +266,15 @@ func runCommand(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	set := flagsSet(fs)
+	if set["base"] {
+		if set["worktree"] {
+			return errors.New("-base and -worktree do not go together: -worktree plays on the checkout it is given")
+		}
+		if err := validBaseBranch(*c.base); err != nil {
+			return err
+		}
+	}
 	text, err := taskText(*c.task, *c.taskFile)
 	if err != nil {
 		return err
@@ -278,6 +287,7 @@ func runCommand(args []string) error {
 		return err
 	}
 	wt := *worktree
+	baseBranch := ""
 	if wt == "" {
 		if *c.repo == "" {
 			return errors.New("-repo or -worktree is required")
@@ -285,7 +295,12 @@ func runCommand(args []string) error {
 		if err := fetchRepo(*c.repo); err != nil {
 			return err
 		}
-		if wt, err = addWorktree(*c.repo, *c.base); err != nil {
+		baseBranch = firstNonEmpty(*c.base, "main")
+		commit, err := resolveBase(*c.repo, baseBranch)
+		if err != nil {
+			return err
+		}
+		if wt, err = addWorktree(*c.repo, commit); err != nil {
 			return err
 		}
 	}
@@ -342,7 +357,7 @@ func runCommand(args []string) error {
 		}
 	}()
 	sum, err := runEnsemble(ctx, ensembleRun{
-		RunID: runID, StateDir: runDir, Ensemble: *ensemble, Meter: loop.NewLogMeter(),
+		RunID: runID, StateDir: runDir, Ensemble: *ensemble, BaseBranch: baseBranch, Meter: loop.NewLogMeter(),
 		Config: loop.Config{
 			ScratchDir: scratch, RunID: runID, Task: text, Worktree: wt, Chairs: seated, GateWhen: s.GateWhen,
 			Lessons: s.Lessons, LessonsTimeout: s.LessonsTimeout,
@@ -667,16 +682,17 @@ func firstNonEmpty(values ...string) string {
 }
 
 type ensembleRun struct {
-	Meter    loop.UsageMeter
-	Ensemble string
-	Watcher  loop.Watcher
-	Command  string
-	RunID    string
-	StateDir string
-	Config   loop.Config
-	Stepper  loop.Stepper
-	Verify   loop.Verifier
-	Progress io.Writer
+	Meter      loop.UsageMeter
+	BaseBranch string
+	Ensemble   string
+	Watcher    loop.Watcher
+	Command    string
+	RunID      string
+	StateDir   string
+	Config     loop.Config
+	Stepper    loop.Stepper
+	Verify     loop.Verifier
+	Progress   io.Writer
 }
 
 type ensembleSummary struct {
@@ -685,6 +701,7 @@ type ensembleSummary struct {
 	DiffStat   string `json:"diff_stat"`
 	Ensemble   string `json:"ensemble,omitempty"`
 	Repository string `json:"repository,omitempty"`
+	BaseBranch string `json:"base_branch,omitempty"`
 	Base       string `json:"base"`
 	Head       string `json:"head,omitempty"`
 	HeadMoved  bool   `json:"head_moved,omitempty"`
@@ -713,7 +730,11 @@ func runEnsemble(ctx context.Context, p ensembleRun) (ensembleSummary, error) {
 	if err := writeJSON(filepath.Join(p.StateDir, "config.json"), p.Config); err != nil {
 		return ensembleSummary{}, err
 	}
-	fmt.Fprintf(p.Progress, "km %s %s\n  worktree  %s\n  state     %s\n", firstNonEmpty(p.Command, "run"), p.RunID, p.Config.Worktree, p.StateDir)
+	fmt.Fprintf(p.Progress, "km %s %s\n  worktree  %s\n", firstNonEmpty(p.Command, "run"), p.RunID, p.Config.Worktree)
+	if p.BaseBranch != "" {
+		fmt.Fprintf(p.Progress, "  base      %s @ %s\n", p.BaseBranch, base)
+	}
+	fmt.Fprintf(p.Progress, "  state     %s\n", p.StateDir)
 	eng := &loop.Engine{Meter: p.Meter, Watcher: p.Watcher, Config: p.Config, Stepper: p.Stepper, Verify: p.Verify, Records: telemetry, Progress: p.Progress}
 	start := time.Now()
 	res, err := eng.Run(ctx)
@@ -743,7 +764,7 @@ func runEnsemble(ctx context.Context, p ensembleRun) (ensembleSummary, error) {
 			res.Lessons = &loop.LessonsReport{Reason: "writing lessons.json: " + err.Error()}
 		}
 	}
-	sum := ensembleSummary{Result: res, DurationMS: time.Since(start).Milliseconds(), DiffStat: stat, Ensemble: p.Ensemble, Repository: repository, Base: base}
+	sum := ensembleSummary{Result: res, DurationMS: time.Since(start).Milliseconds(), DiffStat: stat, Ensemble: p.Ensemble, Repository: repository, Base: base, BaseBranch: p.BaseBranch}
 	if head != base {
 		sum.Head, sum.HeadMoved = head, true
 	}
@@ -885,10 +906,14 @@ func addWorktree(repo, base string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if wt, err = filepath.EvalSymlinks(wt); err != nil {
+	resolved, err := filepath.EvalSymlinks(wt)
+	if err != nil {
+		os.RemoveAll(wt)
 		return "", err
 	}
-	if out, err := exec.Command("git", "-C", repo, "worktree", "add", "--detach", wt, base).CombinedOutput(); err != nil {
+	wt = resolved
+	if out, err := exec.Command("git", "-C", repo, "worktree", "add", "--detach", "--", wt, base).CombinedOutput(); err != nil {
+		os.RemoveAll(wt)
 		return "", fmt.Errorf("git worktree add: %w: %s", err, out)
 	}
 	return wt, nil
