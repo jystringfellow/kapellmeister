@@ -131,6 +131,9 @@ type Config struct {
 	Lessons        bool
 	LessonsTimeout time.Duration
 	LearnedBudget  int
+	TesterEnvFile  string
+	CAOURL         string
+	StateDir       string
 	ScratchDir     string
 	BlockerPoll    time.Duration
 	GateWhen       string
@@ -301,7 +304,7 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 		go func() {
 			path := e.rel("test-plan.md")
 			_, err := e.step(testCtx, Step{Name: "test-plan", Chair: *cfg.Chairs.Tester,
-				Prompt: testPlanPrompt(cfg.Task, plan, path, cfg.ScratchDir, e.testerTimeout(), os.Getpid(), e.lessonsFor("test-plan", *cfg.Chairs.Tester)), ReplyPath: path})
+				Prompt: testPlanPrompt(cfg.Task, plan, path, cfg.ScratchDir, e.testerTimeout(), os.Getpid(), e.lessonsFor("test-plan", *cfg.Chairs.Tester), cfg.CAOURL, cfg.StateDir, cfg.TesterEnvFile), ReplyPath: path})
 			testPlanDone <- err
 		}()
 		defer func() {
@@ -479,7 +482,7 @@ func (e *Engine) testRound(ctx context.Context, round int, plan, summary string,
 	defer e.reportLeftRunning(round)
 	errs, err := e.readOnlySteps(ctx, []Step{{
 		Name: "test", Round: round, Chair: *e.Config.Chairs.Tester,
-		Prompt:    testPrompt(e.Config.Task, plan, e.rel("test-plan.md"), summary, e.Config.VerifyCommand, verify, verifyPath, e.Config.ScratchDir, path, e.testerTimeout(), os.Getpid(), e.lessonsFor("test", *e.Config.Chairs.Tester)),
+		Prompt:    testPrompt(e.Config.Task, plan, e.rel("test-plan.md"), summary, e.Config.VerifyCommand, verify, verifyPath, e.Config.ScratchDir, path, e.testerTimeout(), os.Getpid(), e.lessonsFor("test", *e.Config.Chairs.Tester), e.Config.CAOURL, e.Config.StateDir, e.Config.TesterEnvFile),
 		ReplyPath: path,
 	}})
 	if err != nil {

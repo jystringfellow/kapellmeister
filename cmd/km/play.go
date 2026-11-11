@@ -78,6 +78,13 @@ func playCommand(args []string) error {
 	if err != nil {
 		return err
 	}
+	testerEnv := ""
+	if chairs.Tester != nil {
+		testerEnv, err = writeTesterEnv(scratch, s.CAOURL)
+		if err != nil {
+			return err
+		}
+	}
 	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	client := cao.NewClient(s.CAOURL)
@@ -93,7 +100,7 @@ func playCommand(args []string) error {
 	sum, err := runEnsemble(ctx, ensembleRun{
 		Command: "play", RunID: runID, StateDir: runDir, Ensemble: standing.Ensemble, Meter: loop.NewLogMeter(),
 		Config: loop.Config{
-			ScratchDir: scratch, RunID: runID, Task: text, Worktree: standing.Worktree, Chairs: chairs, GateWhen: firstNonEmpty(standing.GateWhen, s.GateWhen),
+			ScratchDir: scratch, TesterEnvFile: testerEnv, CAOURL: s.CAOURL, StateDir: loop.StateDir(), RunID: runID, Task: text, Worktree: standing.Worktree, Chairs: chairs, GateWhen: firstNonEmpty(standing.GateWhen, s.GateWhen),
 			Lessons: s.Lessons, LessonsTimeout: s.LessonsTimeout,
 			LearnedBudget: s.LearnedBudget, BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, CheckCommand: checkCmd,
 		},

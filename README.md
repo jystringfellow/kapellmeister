@@ -127,6 +127,16 @@ inherits that mode. km copies `permissionMode`, `allowedTools` and `codexProfile
 and Codex bases when generating effort profiles, and reinstalls existing variants when any of these
 fields differ.
 An unset `allowedTools` stays unset; an explicit empty list stays empty.
+Before an installation, km creates and deletes a temporary `km-probe-*` profile through CAO's API
+and verifies its exact content in the local `CAO_HOME_DIR` (default
+`~/.aws/cli-agent-orchestrator`). It refuses to install if that proof fails, including when the
+server uses a different home or denies the profile write routes. Point `-cao` at the local CAO,
+or set `CAO_HOME_DIR` to the selected server's home. No probe is made when no installation is needed.
+km also refuses to replace an existing local chair profile with different content while another
+unfinished run in `KAPELLMEISTER_STATE_DIR` is alive under `km status`'s process checks. The error
+names the profile and run, and no pending variant is written or installed. A run never blocks
+itself; missing or unchanged profiles remain allowed. Wait for the other run to finish, or use a
+separate CAO home and km state directory for nested work.
 
 When any chair has an unguarded label, km prints one closing note counting those chairs.
 km reports permissions and never refuses to run because of a permission mode. The `blocked:` lines
@@ -363,7 +373,18 @@ test step, including failure, timeout or interruption, km reports each distinct 
 km never signals these processes. It silently skips non-regular `pids` files (including FIFOs) and
 files larger than 1 MiB. The concurrent test-plan step
 relies on its prompt to forbid file changes because implementation is editing at the same time.
-Without a tester, gate approval finishes the run as usual.
+For runs with a tester, km writes `<scratch>/env.sh`. Both tester briefings require sourcing it
+in the same shell before starting any nested `km`, `cao-server`, `cao` or `tmux`, and forbid writes
+to the conductor's CAO URL and km state directory, including its CAO home, profiles and tmux server.
+The file sets `KAPELLMEISTER_HOME`, `KAPELLMEISTER_STATE_DIR`, `CAO_HOME_DIR` and `TMUX_TMPDIR` to
+separate directories under scratch. It sets `CAO_API_HOST=127.0.0.1`, a free `CAO_API_PORT` distinct
+from 9889 and the conductor's port, and the matching `CAO_API_BASE_URL` for nested km. It unsets
+`TMUX`, `TMUX_PANE` and `CAO_TERMINAL_ID` so nested commands cannot inherit the conductor's server
+or chair identity. The chosen port can become occupied before use; a nested server then reports a
+bind error. If the scratch path is too long for a tmux socket, km warns and sourcing the file fails
+without changing the environment; use a shorter `KAPELLMEISTER_STATE_DIR`. The tester must not start
+these commands if sourcing fails, and must record and stop any nested server's PID.
+Without a tester, gate approval finishes the run as usual; no environment file is written.
 
 After the score ends, km asks the gate for lessons when it has given a verdict, whether or not
 it approved the run. The question is: from this run's plan, reviews and verdicts, what would have

@@ -313,3 +313,28 @@ func TestPidsFilesLargerThanOneMiBAreSkipped(t *testing.T) {
 		})
 	}
 }
+
+func TestTheTesterBriefingNamesTheConductorsCAOURLAndStateDirectoryAsOffLimitsAndTheEnvFileToSource(t *testing.T) {
+	e, f := testerEngine(t)
+	e.Config.CAOURL = "http://127.0.0.1:19889"
+	e.Config.StateDir = "/conductor/state"
+	e.Config.TesterEnvFile = filepath.Join(e.Config.ScratchDir, "env.sh")
+	run(t, e)
+	for _, name := range []string{"test-plan", "test"} {
+		p := testerSteps(f, name)[0].Prompt
+		for _, want := range []string{e.Config.CAOURL, e.Config.StateDir, e.Config.TesterEnvFile, "off limits for writes", "before starting any", "km", "cao-server", "cao", "tmux", "if sourcing fails", "CAO home", "profiles", "tmux server", "never signal or kill", "pids"} {
+			if !strings.Contains(p, want) {
+				t.Errorf("%s lacks %q: %s", name, want, p)
+			}
+		}
+	}
+	for _, name := range []string{"plan", "implement", "review", "gate", "classify"} {
+		for _, step := range testerSteps(f, name) {
+			for _, value := range []string{e.Config.CAOURL, e.Config.StateDir, e.Config.TesterEnvFile} {
+				if strings.Contains(step.Prompt, value) {
+					t.Errorf("%s names tester isolation: %s", name, step.Prompt)
+				}
+			}
+		}
+	}
+}
