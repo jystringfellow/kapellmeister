@@ -34,6 +34,8 @@ type TestConfig struct {
 }
 
 type RunConfig struct {
+	Lessons          *bool  `toml:"lessons"`
+	LessonsTimeout   string `toml:"lessons_timeout"`
 	BlockerPoll      string `toml:"blocker_poll"`
 	Rounds           *int   `toml:"rounds"`
 	VerifyRetries    *int   `toml:"verify_retries"`
@@ -118,6 +120,8 @@ type FileConfig struct {
 }
 
 type Settings struct {
+	Lessons          bool                `json:"lessons"`
+	LessonsTimeout   time.Duration       `json:"lessons_timeout"`
 	BlockerPoll      time.Duration       `json:"blocker_poll"`
 	GateWhen         string              `json:"gate_when"`
 	Files            []string            `json:"files"`
@@ -179,6 +183,8 @@ func UserConfigPath(home string) string {
 
 func DefaultSettings() Settings {
 	return Settings{
+		Lessons:          true,
+		LessonsTimeout:   DefaultLessonsTimeout,
 		BlockerPoll:      20 * time.Second,
 		GateWhen:         GateWhenAny,
 		CAOURL:           "http://127.0.0.1:9889",
@@ -313,6 +319,12 @@ func refuseSections(cfg loadedConfig, name string, sections []string, home strin
 
 func (s *Settings) applyRun(layer loadedConfig) error {
 	r := layer.Run
+	if r.Lessons != nil {
+		s.Lessons = *r.Lessons
+	}
+	if layer.md.IsDefined("run", "lessons_timeout") && r.LessonsTimeout == "" {
+		return fmt.Errorf("%s: run.lessons_timeout: must be above 0", layer.name)
+	}
 	if r.Rounds != nil {
 		if *r.Rounds < 1 {
 			return fmt.Errorf("%s: run.rounds: must be at least 1", layer.name)
@@ -330,6 +342,7 @@ func (s *Settings) applyRun(layer loadedConfig) error {
 		value string
 		into  *time.Duration
 	}{
+		{"lessons_timeout", r.LessonsTimeout, &s.LessonsTimeout},
 		{"blocker_poll", r.BlockerPoll, &s.BlockerPoll},
 		{"timeout", r.Timeout, &s.Timeout},
 		{"reply_grace", r.ReplyGrace, &s.ReplyGrace},
@@ -341,6 +354,9 @@ func (s *Settings) applyRun(layer loadedConfig) error {
 		parsed, err := time.ParseDuration(d.value)
 		if err != nil || parsed < 0 {
 			return fmt.Errorf("%s: run.%s: %q is not a duration such as \"40m\"", layer.name, d.key, d.value)
+		}
+		if d.key == "lessons_timeout" && parsed == 0 {
+			return fmt.Errorf("%s: run.lessons_timeout: must be above 0", layer.name)
 		}
 		*d.into = parsed
 	}

@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/jystringfellow/kapellmeister/internal/cao"
@@ -316,4 +318,41 @@ func TestPreflightAgainstCAODeletesTheChosenNameWhenSeatingReturnsNoIdentity(t *
 			}
 		})
 	}
+}
+
+type stepperTransport func(*http.Request) (*http.Response, error)
+
+func (f stepperTransport) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+func TestALessonsTerminalIsInspectedAfterItsStepDeadlineExpires(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		client := cao.NewClient("http://cao.invalid")
+		client.HTTP.Transport = stepperTransport(func(req *http.Request) (*http.Response, error) {
+			if err := req.Context().Err(); err != nil {
+				return nil, err
+			}
+			text := ""
+			switch req.Method + " " + req.URL.Path {
+			case "POST /terminals/run-step":
+				<-ctx.Done()
+				text = `{"terminal_id":"lessons-terminal","status":"completed"}`
+			case "GET /terminals/lessons-terminal":
+				deadline, ok := req.Context().Deadline()
+				if !ok || deadline.Sub(time.Now()) != 15*time.Second {
+					t.Errorf("inspection deadline = %s, present = %v", deadline, ok)
+				}
+				text = `{"id":"lessons-terminal","model":"gate-model","model_honored":true}`
+			default:
+				t.Errorf("unexpected request: %s %s", req.Method, req.URL.Path)
+				return nil, errors.New("unexpected request")
+			}
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(text))}, nil
+		})
+		out, err := (CAOStepper{Client: client}).Run(ctx, Step{Name: "lessons", Timeout: time.Second})
+		if err != nil || ctx.Err() != context.DeadlineExceeded || out.TerminalID != "lessons-terminal" || out.ReportedModel != "gate-model" || out.ModelHonored == nil || !*out.ModelHonored {
+			t.Fatalf("result = %+v, error = %v, context = %v", out, err, ctx.Err())
+		}
+	})
 }

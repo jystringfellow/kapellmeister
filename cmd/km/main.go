@@ -345,6 +345,7 @@ func runCommand(args []string) error {
 		RunID: runID, StateDir: runDir, Ensemble: *ensemble,
 		Config: loop.Config{
 			ScratchDir: scratch, RunID: runID, Task: text, Worktree: wt, Chairs: seated, GateWhen: s.GateWhen,
+			Lessons: s.Lessons, LessonsTimeout: s.LessonsTimeout,
 			BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, CheckCommand: checkCmd, Policy: &policy,
 		},
 		Watcher: loop.CAOWatcher{Client: client, Session: podium.SessionName},
@@ -420,8 +421,8 @@ func configCommand(args []string) error {
 	}
 	s.CAOURL = firstNonEmpty(*caoURL, s.CAOURL)
 	printSources(os.Stdout, s)
-	fmt.Printf("cao    %s\nstate  %s\nrun    rounds %d, verify retries %d, step timeout %s, reply grace %s, preflight %s, blocker poll %s\n",
-		s.CAOURL, loop.StateDir(), s.Rounds, s.VerifyRetries, s.Timeout, s.ReplyGrace, s.PreflightTimeout, s.BlockerPoll)
+	fmt.Printf("cao    %s\nstate  %s\nrun    rounds %d, verify retries %d, step timeout %s, reply grace %s, preflight %s, blocker poll %s, lessons %s\n",
+		s.CAOURL, loop.StateDir(), s.Rounds, s.VerifyRetries, s.Timeout, s.ReplyGrace, s.PreflightTimeout, s.BlockerPoll, lessonsSetting(s))
 	printChairs(os.Stdout, s)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -448,6 +449,13 @@ func configCommand(args []string) error {
 	}
 	printPermissionNote(os.Stdout, unguarded)
 	return nil
+}
+
+func lessonsSetting(s loop.Settings) string {
+	if !s.Lessons {
+		return "off"
+	}
+	return "on, limit " + s.LessonsTimeout.String()
 }
 
 func printChairs(w io.Writer, s loop.Settings) {
@@ -681,6 +689,13 @@ type ensembleSummary struct {
 	HeadMoved  bool   `json:"head_moved,omitempty"`
 }
 
+type recordedLesson struct {
+	RunID      string `json:"run_id"`
+	Repository string `json:"repository"`
+	Ensemble   string `json:"ensemble"`
+	loop.Lesson
+}
+
 func runEnsemble(ctx context.Context, p ensembleRun) (ensembleSummary, error) {
 	base, err := gitOutput(p.Config.Worktree, "rev-parse", "HEAD")
 	if err != nil {
@@ -716,7 +731,18 @@ func runEnsemble(ctx context.Context, p ensembleRun) (ensembleSummary, error) {
 		return ensembleSummary{}, err
 	}
 	origin, _ := gitOutput(p.Config.Worktree, "config", "--get", "remote.origin.url")
-	sum := ensembleSummary{Result: res, DurationMS: time.Since(start).Milliseconds(), DiffStat: stat, Ensemble: p.Ensemble, Repository: repositoryOf(origin), Base: base}
+	repository := repositoryOf(origin)
+	if res.Lessons != nil {
+		lessons := make([]recordedLesson, 0, len(res.Proposed))
+		for _, lesson := range res.Proposed {
+			lessons = append(lessons, recordedLesson{RunID: p.RunID, Repository: repository, Ensemble: p.Ensemble, Lesson: lesson})
+		}
+		if err := writeJSON(filepath.Join(p.StateDir, "lessons.json"), lessons); err != nil {
+			fmt.Fprintln(os.Stderr, "km: writing lessons.json:", err)
+			res.Lessons = &loop.LessonsReport{Reason: "writing lessons.json: " + err.Error()}
+		}
+	}
+	sum := ensembleSummary{Result: res, DurationMS: time.Since(start).Milliseconds(), DiffStat: stat, Ensemble: p.Ensemble, Repository: repository, Base: base}
 	if head != base {
 		sum.Head, sum.HeadMoved = head, true
 	}
@@ -893,9 +919,18 @@ func copyDir(src, dst string) error {
 		if e.IsDir() {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(src, e.Name()))
-		if err != nil {
-			return err
+		var data []byte
+		if e.Name() == "lessons-reply.json" {
+			text, err := loop.ReadLessonsReply(filepath.Join(src, e.Name()))
+			if err != nil {
+				continue
+			}
+			data = []byte(text)
+		} else {
+			data, err = os.ReadFile(filepath.Join(src, e.Name()))
+			if err != nil {
+				return err
+			}
 		}
 		if err := os.WriteFile(filepath.Join(dst, e.Name()), data, 0o644); err != nil {
 			return err
