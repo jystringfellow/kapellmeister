@@ -15,6 +15,7 @@ km reseat SESSION ADDRESS [-agent SPEC] [-timeout D] [-cao URL]  # replace one o
 km ensemble list                                # list standing ensembles
 km ensemble down SESSION                        # take one down
 km report [-json] [-since DATE] [-repository NAME] [DIR...]  # summarize run records
+km status [-json] [DIR...]                                 # show runs in progress
 km preflight -worktree DIR [-tier large]          # check each agent starts and answers
 km config [-worktree DIR] [-cao URL]              # show the effective settings and their files
 ```
@@ -432,13 +433,14 @@ printing the outcome and diff-stat. Missing or unknown subcommands exit 2.
 `km report [DIR...]` summarizes run records, oldest first, followed by totals by outcome,
 repository and ensemble. With no directory it reads `<state>/runs`. Each directory is searched
 at any depth, so `km report ~/kept-sandboxes` works across kept sandbox copies. A directory
-holding `result.json` is a run; one holding only `telemetry.jsonl` counts as unfinished. The
+holding `result.json` is a run; one holding only `telemetry.jsonl` or `current.json` counts as unfinished. The
 search stops inside each run directory, ignores directory symlinks and never follows record-file
 symlinks. An explicitly chosen root directory may itself be a symlink. Copies with the same run
 id count once, preferring a finished copy over an unfinished or unreadable one.
 
-Started comes from the first telemetry record's timestamp, shown in UTC; it is unknown without
-usable telemetry. Missing repository or ensemble fields show as `unknown`, as with an older km,
+Started comes from the first telemetry record's timestamp, shown in UTC. For unfinished runs,
+`current.json` supplies the start, repository and ensemble when available; otherwise the start
+is unknown without usable telemetry. Missing repository or ensemble fields show as `unknown`, as with an older km,
 plain chairs that omit the ensemble, or a repository without a hosted origin. Unfinished runs
 have unknown rounds and duration. Malformed records are diagnosed on stderr and counted as
 unreadable without stopping the report. Text values are escaped for safe terminal output.
@@ -474,6 +476,30 @@ by repository
 by ensemble
   unknown   2
   thorough  1
+```
+
+## Status
+
+`km status [DIR...]` lists runs that have started and have no `result.json`. With no directory
+it reads `<state>/runs`; explicit directories are searched at any depth, sharing report's search,
+deduplication and safe record reading. Status rejects a supplied root that is itself a symlink,
+though the path above it may pass through one,
+escapes control characters and only reads. With no runs in progress it says so and exits 0.
+`-json` emits `{"runs":[...]}`, including every playing step and its elapsed milliseconds;
+an empty result is `{"runs":[]}`.
+
+Each row shows the start in UTC, repository, ensemble, round, step, chair, elapsed time and
+liveness. When steps overlap, the row shows the longest-running step and `+N` for the others.
+Between steps, elapsed time is measured since the last update. `alive` means the owning km
+process is still running; `abandoned` means it is gone or its PID has been reused. `unknown`
+means liveness cannot be checked, including records copied from another machine and runs from
+before current-state recording. Other missing fields show as `unknown`.
+
+```text
+$ km status
+RUN                     STARTED              REPOSITORY             ENSEMBLE  ROUND  STEP        CHAIR                       FOR     LIVENESS
+20261111-041502-a1b2c3  2026-11-11 04:15:02  github.com/acme/other  thorough  1/3    implement   leads.implementer@thorough  41m5s   abandoned
+20261111-054930-e7c69e  2026-11-11 05:49:30  github.com/acme/app    thorough  2/3    review +1   review.security@thorough    3m12s   alive
 ```
 
 ## Telemetry
