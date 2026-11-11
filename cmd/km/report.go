@@ -2,19 +2,19 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"text/tabwriter"
 	"time"
 	"unicode"
@@ -25,28 +25,39 @@ import (
 )
 
 type reportRun struct {
-	RunID      string     `json:"run_id"`
-	Path       string     `json:"path"`
-	Started    *time.Time `json:"started,omitempty"`
-	Repository string     `json:"repository,omitempty"`
-	Ensemble   string     `json:"ensemble,omitempty"`
-	Outcome    string     `json:"outcome,omitempty"`
-	Rounds     *int       `json:"rounds,omitempty"`
-	DurationMS *int64     `json:"duration_ms,omitempty"`
-	Reason     string     `json:"reason,omitempty"`
+	RunID      string      `json:"run_id"`
+	Path       string      `json:"path"`
+	Started    *time.Time  `json:"started,omitempty"`
+	Repository string      `json:"repository,omitempty"`
+	Ensemble   string      `json:"ensemble,omitempty"`
+	Outcome    string      `json:"outcome,omitempty"`
+	Rounds     *int        `json:"rounds,omitempty"`
+	DurationMS *int64      `json:"duration_ms,omitempty"`
+	Reason     string      `json:"reason,omitempty"`
+	Usage      reportUsage `json:"usage"`
+	Conflict   bool        `json:"conflict,omitempty"`
 	quality    int
+	state      *runState
+	roughStart bool
+	hasResult  bool
+	hasStarted bool
 }
 
 type reportTotals struct {
-	Runs         int            `json:"runs"`
-	Outcomes     map[string]int `json:"outcomes"`
-	Repositories map[string]int `json:"repositories"`
-	Ensembles    map[string]int `json:"ensembles"`
+	Usage           reportUsageTotal            `json:"usage"`
+	EnsembleUsage   map[string]reportUsageTotal `json:"ensemble_usage"`
+	RepositoryUsage map[string]reportUsageTotal `json:"repository_usage"`
+	Runs            int                         `json:"runs"`
+	Outcomes        map[string]int              `json:"outcomes"`
+	Repositories    map[string]int              `json:"repositories"`
+	Ensembles       map[string]int              `json:"ensembles"`
 }
 
 type runReport struct {
-	Runs   []reportRun  `json:"runs"`
-	Totals reportTotals `json:"totals"`
+	NotSearched      []reportNotSearched `json:"not_searched"`
+	NotSearchedTotal int                 `json:"not_searched_total"`
+	Runs             []reportRun         `json:"runs"`
+	Totals           reportTotals        `json:"totals"`
 }
 
 func reportCommand(args []string, stdout, stderr io.Writer) error {
@@ -55,26 +66,14 @@ func reportCommand(args []string, stdout, stderr io.Writer) error {
 	asJSON := flags.Bool("json", false, "print runs and totals as JSON")
 	sinceText := flags.String("since", "", "keep runs started on or after a UTC date or RFC3339 timestamp")
 	repository := flags.String("repository", "", "keep runs from this exact repository")
-	var options, dirs []string
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if arg == "--" {
-			dirs = append(dirs, args[i+1:]...)
-			break
-		}
-		if arg == "-" || !strings.HasPrefix(arg, "-") {
-			dirs = append(dirs, arg)
-			continue
-		}
-		options = append(options, arg)
-		name := strings.TrimLeft(arg, "-")
-		if (name == "since" || name == "repository") && i+1 < len(args) {
-			i++
-			options = append(options, args[i])
-		}
-	}
+	maxDepth := flags.Int("max-depth", 64, "maximum directory levels below each root")
+	maxEntries := flags.Int("max-entries", 1000000, "maximum directory entries read (at most 16777216)")
+	options, dirs := splitRecordArgs(args, "since", "repository", "max-depth", "max-entries")
 	if err := flags.Parse(options); err != nil {
 		return err
+	}
+	if *maxDepth < 1 || *maxEntries < 1 || *maxEntries > 1<<24 {
+		return errors.New("report: -max-depth must be at least 1; -max-entries must be between 1 and 16777216")
 	}
 	set := flagsSet(flags)
 	var since time.Time
@@ -92,16 +91,17 @@ func reportCommand(args []string, stdout, stderr io.Writer) error {
 	if defaultDir {
 		dirs = []string{filepath.Join(loop.StateDir(), "runs")}
 	}
-	runs, diagnostics, err := findRuns(dirs, defaultDir)
+	runs, scan, err := findRuns(dirs, defaultDir, *maxDepth, *maxEntries, false)
 	if err != nil {
 		return fmt.Errorf("report: %s", plain(err.Error()))
 	}
-	for _, diagnostic := range diagnostics {
+	for _, diagnostic := range scan.diagnostics {
 		fmt.Fprintln(stderr, diagnostic)
 	}
 	report := runReport{
-		Runs:   []reportRun{},
-		Totals: reportTotals{Outcomes: map[string]int{}, Repositories: map[string]int{}, Ensembles: map[string]int{}},
+		Runs:        []reportRun{},
+		NotSearched: scan.notSearched, NotSearchedTotal: scan.notSearchedTotal,
+		Totals: reportTotals{EnsembleUsage: map[string]reportUsageTotal{}, RepositoryUsage: map[string]reportUsageTotal{}, Outcomes: map[string]int{}, Repositories: map[string]int{}, Ensembles: map[string]int{}},
 	}
 	for _, run := range runs {
 		if set["since"] && (run.Started == nil || run.Started.Before(since)) {
@@ -112,6 +112,9 @@ func reportCommand(args []string, stdout, stderr io.Writer) error {
 		}
 		report.Runs = append(report.Runs, run)
 		report.Totals.Runs++
+		report.Totals.Usage.add(run.Usage)
+		addReportGroupUsage(report.Totals.EnsembleUsage, reportKnown(run.Ensemble), run.Usage)
+		addReportGroupUsage(report.Totals.RepositoryUsage, reportKnown(run.Repository), run.Usage)
 		report.Totals.Outcomes[reportKnown(run.Outcome)]++
 		report.Totals.Repositories[reportKnown(run.Repository)]++
 		report.Totals.Ensembles[reportKnown(run.Ensemble)]++
@@ -127,7 +130,10 @@ func reportCommand(args []string, stdout, stderr io.Writer) error {
 		if a.Started != nil && !a.Started.Equal(*b.Started) {
 			return a.Started.Before(*b.Started)
 		}
-		return a.RunID < b.RunID
+		if a.RunID != b.RunID {
+			return a.RunID < b.RunID
+		}
+		return a.Path < b.Path
 	})
 	if *asJSON {
 		return printReportJSON(stdout, report)
@@ -135,76 +141,25 @@ func reportCommand(args []string, stdout, stderr io.Writer) error {
 	return printReport(stdout, report)
 }
 
-func findRuns(dirs []string, defaultDir bool) (map[string]reportRun, []string, error) {
-	runs := map[string]reportRun{}
-	var diagnostics []string
-	for _, dir := range dirs {
-		root, err := filepath.EvalSymlinks(dir)
-		if defaultDir && errors.Is(err, fs.ErrNotExist) {
+func splitRecordArgs(args []string, valueFlags ...string) (options, dirs []string) {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			dirs = append(dirs, args[i+1:]...)
+			break
+		}
+		if arg == "-" || !strings.HasPrefix(arg, "-") {
+			dirs = append(dirs, arg)
 			continue
 		}
-		if err != nil {
-			return nil, nil, err
-		}
-		info, err := os.Stat(root)
-		if err != nil {
-			return nil, nil, err
-		}
-		if !info.IsDir() {
-			return nil, nil, fmt.Errorf("%s: not a directory", dir)
-		}
-		file, err := os.OpenFile(root, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_DIRECTORY, 0)
-		if err != nil {
-			return nil, nil, err
-		}
-		err = scanReportDirectory(file, runs, &diagnostics)
-		file.Close()
-		if err != nil {
-			return nil, nil, err
+		options = append(options, arg)
+		name := strings.TrimLeft(arg, "-")
+		if slices.Contains(valueFlags, name) && i+1 < len(args) {
+			i++
+			options = append(options, args[i])
 		}
 	}
-	return runs, diagnostics, nil
-}
-
-func scanReportDirectory(dir *os.File, runs map[string]reportRun, diagnostics *[]string) error {
-	entries, err := dir.ReadDir(-1)
-	if err != nil {
-		return err
-	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
-	result, telemetry := false, false
-	for _, entry := range entries {
-		result = result || entry.Name() == "result.json"
-		telemetry = telemetry || entry.Name() == "telemetry.jsonl"
-	}
-	if result || telemetry {
-		run, messages := readReportRun(dir, result, telemetry)
-		*diagnostics = append(*diagnostics, messages...)
-		keepReportRun(runs, run)
-		return nil
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		path := filepath.Join(dir.Name(), entry.Name())
-		child, err := openReportEntry(dir, entry.Name(), unix.O_DIRECTORY)
-		if err == nil {
-			err = scanReportDirectory(child, runs, diagnostics)
-			child.Close()
-		}
-		if err != nil {
-			*diagnostics = append(*diagnostics, "km: report: "+plain(path)+": "+plain(err.Error()))
-			keepReportRun(runs, reportRun{RunID: entry.Name(), Path: path, Outcome: "unreadable"})
-		}
-	}
-	return nil
-}
-
-func keepReportRun(runs map[string]reportRun, run reportRun) {
-	if previous, exists := runs[run.RunID]; !exists || run.quality > previous.quality {
-		runs[run.RunID] = run
-	}
+	return options, dirs
 }
 
 func openReportEntry(dir *os.File, name string, flags int) (*os.File, error) {
@@ -218,9 +173,10 @@ func openReportEntry(dir *os.File, name string, flags int) (*os.File, error) {
 	return os.NewFile(uintptr(fd), path), nil
 }
 
-func readReportRun(dir *os.File, hasResult, hasTelemetry bool) (reportRun, []string) {
-	run := reportRun{RunID: filepath.Base(dir.Name()), Path: dir.Name(), Outcome: "unreadable"}
+func readReportRun(dir *os.File, hasResult, hasTelemetry, hasCurrent, hasConfig bool) (reportRun, []string) {
+	run := reportRun{RunID: filepath.Base(dir.Name()), Path: dir.Name(), Outcome: "unreadable", hasResult: hasResult, hasStarted: hasTelemetry || hasCurrent}
 	var diagnostics []string
+	hasRecordedID := false
 	diagnose := func(path string, err error) {
 		diagnostics = append(diagnostics, "km: report: "+plain(path)+": "+plain(err.Error()))
 	}
@@ -228,9 +184,14 @@ func readReportRun(dir *os.File, hasResult, hasTelemetry bool) (reportRun, []str
 		path := filepath.Join(dir.Name(), "result.json")
 		data, err := readReportFile(dir, "result.json", false)
 		var recorded *struct {
-			ensembleSummary
-			Rounds     *int   `json:"rounds"`
-			DurationMS *int64 `json:"duration_ms"`
+			RunID      string          `json:"run_id"`
+			Repository string          `json:"repository"`
+			Ensemble   string          `json:"ensemble"`
+			Outcome    string          `json:"outcome"`
+			Reason     string          `json:"reason"`
+			Usage      json.RawMessage `json:"usage"`
+			Rounds     *int            `json:"rounds"`
+			DurationMS *int64          `json:"duration_ms"`
 		}
 		if err == nil {
 			err = json.Unmarshal(data, &recorded)
@@ -244,33 +205,90 @@ func readReportRun(dir *os.File, hasResult, hasTelemetry bool) (reportRun, []str
 		}
 		if recorded.RunID != "" {
 			run.RunID = recorded.RunID
+			hasRecordedID = true
 		}
 		run.Repository, run.Ensemble = recorded.Repository, recorded.Ensemble
 		run.Outcome, run.Reason = recorded.Outcome, recorded.Reason
 		run.Rounds, run.DurationMS = recorded.Rounds, recorded.DurationMS
+		run.Usage = readReportUsage(recorded.Usage)
 		run.quality = 2
 	}
-	if hasTelemetry {
+	if !hasResult && hasCurrent {
+		data, err := readReportFile(dir, "current.json", false)
+		var state *runState
+		if err == nil {
+			err = json.Unmarshal(data, &state)
+			if err == nil && (state == nil || state.Started.IsZero()) {
+				err = errors.New("expected a current state with a start time")
+			}
+		}
+		if err != nil {
+			diagnose(filepath.Join(dir.Name(), "current.json"), err)
+		} else {
+			run.state = state
+			run.Repository, run.Ensemble = state.Repository, state.Ensemble
+			started := state.Started.UTC()
+			run.Started, run.roughStart = &started, true
+			if state.RunID != "" {
+				run.RunID = state.RunID
+				hasRecordedID = true
+			}
+			run.Outcome, run.quality = "unfinished", 1
+		}
+	}
+	emptyTelemetry := false
+	if hasTelemetry && run.state == nil {
 		path := filepath.Join(dir.Name(), "telemetry.jsonl")
 		data, err := readReportFile(dir, "telemetry.jsonl", true)
 		var record loop.Record
 		if err == nil {
-			err = json.Unmarshal(data, &record)
-			if err == nil && record.At.IsZero() {
-				err = errors.New("first telemetry record has no start time")
+			emptyTelemetry = len(data) == 0
+			if !emptyTelemetry {
+				err = json.Unmarshal(data, &record)
+				if err == nil && record.At.IsZero() {
+					err = errors.New("first telemetry record has no start time")
+				}
 			}
 		}
 		if err != nil {
 			diagnose(path, err)
 			return run, diagnostics
 		}
-		started := record.At.UTC()
-		run.Started = &started
+		if !emptyTelemetry {
+			started := record.At.UTC()
+			run.Started = &started
+		}
 		if !hasResult {
 			run.Outcome, run.quality = "unfinished", 1
 		}
 	}
+	if hasConfig && !hasRecordedID {
+		data, err := readReportFile(dir, "config.json", false)
+		var config struct{ RunID string }
+		if err == nil {
+			err = json.Unmarshal(data, &config)
+		}
+		if err != nil {
+			diagnose(filepath.Join(dir.Name(), "config.json"), err)
+		} else if config.RunID != "" {
+			run.RunID = config.RunID
+		}
+	}
+	if emptyTelemetry && run.Started == nil {
+		run.Started, run.roughStart = startFromRunID(run.RunID), true
+	}
 	return run, diagnostics
+}
+
+func startFromRunID(id string) *time.Time {
+	if len(id) != 22 || id[15] != '-' {
+		return nil
+	}
+	started, err := time.Parse("20060102-150405", id[:15])
+	if err != nil {
+		return nil
+	}
+	return &started
 }
 
 const reportFileLimit = 1 << 20
@@ -299,13 +317,26 @@ func readReportFile(dir *os.File, name string, firstLine bool) ([]byte, error) {
 	reader := io.LimitReader(file, reportFileLimit+1)
 	var data []byte
 	if firstLine {
-		data, err = bufio.NewReader(reader).ReadBytes('\n')
-		if errors.Is(err, io.EOF) {
-			err = nil
+		lines := bufio.NewReader(reader)
+		consumed := 0
+		for {
+			data, err = lines.ReadBytes('\n')
+			consumed += len(data)
+			if consumed > reportFileLimit {
+				return nil, errors.New("record exceeds 1 MiB")
+			}
+			if err != nil && !errors.Is(err, io.EOF) {
+				return nil, err
+			}
+			if len(bytes.TrimSpace(data)) > 0 {
+				return data, nil
+			}
+			if errors.Is(err, io.EOF) {
+				return nil, nil
+			}
 		}
-	} else {
-		data, err = io.ReadAll(reader)
 	}
+	data, err = io.ReadAll(reader)
 	if err != nil {
 		return nil, err
 	}
@@ -335,7 +366,7 @@ func plain(value string) string {
 	return out.String()
 }
 
-func printReportJSON(stdout io.Writer, report runReport) error {
+func printReportJSON(stdout io.Writer, report any) error {
 	data, err := json.Marshal(report)
 	if err != nil {
 		return err
@@ -357,11 +388,13 @@ func printReportJSON(stdout io.Writer, report runReport) error {
 
 func printReport(stdout io.Writer, report runReport) error {
 	if len(report.Runs) == 0 {
-		_, err := fmt.Fprintln(stdout, "no runs found")
-		return err
+		if _, err := fmt.Fprintln(stdout, "no runs found"); err != nil {
+			return err
+		}
+		return printReportNotSearched(stdout, report)
 	}
 	w := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "STARTED\tREPOSITORY\tENSEMBLE\tOUTCOME\tROUNDS\tTOOK")
+	fmt.Fprintln(w, "STARTED\tREPOSITORY\tENSEMBLE\tOUTCOME\tROUNDS\tTOOK\tTOKENS")
 	for _, run := range report.Runs {
 		started, rounds, took := "unknown", "unknown", "unknown"
 		if run.Started != nil {
@@ -373,12 +406,29 @@ func printReport(stdout io.Writer, report runReport) error {
 		if run.DurationMS != nil {
 			took = (time.Duration(*run.DurationMS) * time.Millisecond).Round(time.Second).String()
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", plain(started), plain(reportKnown(run.Repository)), plain(reportKnown(run.Ensemble)), plain(reportKnown(run.Outcome)), plain(rounds), plain(took))
+		tokens := "unknown"
+		if run.Usage.Known {
+			tokens = compactTokens(run.Usage.InputTokens) + "/" + compactTokens(run.Usage.OutputTokens)
+			if run.Usage.UnknownSteps > 0 {
+				tokens = "≥" + tokens
+			}
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", reportCell(started, 19), reportCell(reportKnown(run.Repository), 20), reportCell(reportKnown(run.Ensemble), 8), reportCell(reportKnown(run.Outcome), 16), reportCell(rounds, 7), reportCell(took, 7), plain(tokens))
 	}
 	if err := w.Flush(); err != nil {
 		return err
 	}
 	fmt.Fprintf(w, "\nruns: %d\n", report.Totals.Runs)
+	conflicts := 0
+	for _, run := range report.Runs {
+		if run.Conflict {
+			conflicts++
+		}
+	}
+	if conflicts > 0 {
+		fmt.Fprintf(w, "conflicts: %d\n", conflicts)
+	}
+	fmt.Fprintf(w, "usage: %s\n", plain(reportUsageText(report.Totals.Usage)))
 	for _, group := range []struct {
 		name   string
 		counts map[string]int
@@ -395,11 +445,34 @@ func printReport(stdout io.Writer, report runReport) error {
 			return names[i] < names[j]
 		})
 		for _, name := range names {
-			fmt.Fprintf(w, "  %s\t%d\n", plain(name), group.counts[name])
+			suffix := ""
+			if group.name == "ensemble" {
+				suffix = "  " + reportUsageText(report.Totals.EnsembleUsage[name])
+			}
+			if group.name == "repository" {
+				suffix = "  " + reportUsageText(report.Totals.RepositoryUsage[name])
+			}
+			fmt.Fprintf(w, "  %s\t%d%s\n", plain(name), group.counts[name], plain(suffix))
 		}
 		if err := w.Flush(); err != nil {
 			return err
 		}
 	}
-	return nil
+	return printReportNotSearched(stdout, report)
+}
+
+func reportCell(text string, width int) string {
+	value := []rune(plain(text))
+	if len(value) > width {
+		return string(value[:width-1]) + "…"
+	}
+	return string(value)
+}
+
+func printReportNotSearched(w io.Writer, report runReport) error {
+	if report.NotSearchedTotal == 0 {
+		return nil
+	}
+	_, err := fmt.Fprintf(w, "not searched: %d directories (see stderr)\n", report.NotSearchedTotal)
+	return err
 }

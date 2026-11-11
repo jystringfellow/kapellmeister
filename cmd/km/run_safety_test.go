@@ -414,23 +414,23 @@ func TestARunDirectoryWrittenByAnOlderKmStillHoldingScratchStillReads(t *testing
 	if err := writeJSON(filepath.Join(dir, "result.json"), map[string]any{"run_id": "older", "outcome": loop.Approved}); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(filepath.Join(dir, "config.json"))
-	if err != nil {
+	writeFile(t, filepath.Join(dir, "telemetry.jsonl"), "{\"at\":\"2026-11-09T14:00:00Z\"}\n")
+	reportFixture(t, scratch, "phantom", "", "app", "quick", "failed")
+	out, diagnostics := captureReport(t, "-json", dir)
+	var document struct {
+		Runs []reportRun `json:"runs"`
+	}
+	if err := json.Unmarshal([]byte(out), &document); err != nil {
 		t.Fatal(err)
 	}
-	var cfg loop.Config
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	if len(document.Runs) != 1 || document.Runs[0].RunID != "older" || document.Runs[0].Outcome != loop.Approved || diagnostics != "" {
+		t.Fatalf("%s\n%s", out, diagnostics)
+	}
+	if data, err := os.ReadFile(filepath.Join(scratch, "fixture.txt")); err != nil || string(data) != "retained\n" {
+		t.Fatalf("scratch = %q %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(scratch, "phantom", "result.json")); err != nil {
 		t.Fatal(err)
-	}
-	if cfg.RunID != "older" || cfg.ScratchDir != scratch {
-		t.Errorf("older config = %+v", cfg)
-	}
-	gotDir, result := onlyRunResult(t)
-	if gotDir != dir || result["run_id"] != "older" || result["outcome"] != loop.Approved {
-		t.Errorf("older result = %s %v", gotDir, result)
-	}
-	if data, err := os.ReadFile(filepath.Join(cfg.ScratchDir, "fixture.txt")); err != nil || string(data) != "retained\n" {
-		t.Errorf("older scratch = %q %v", data, err)
 	}
 }
 

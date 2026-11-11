@@ -204,6 +204,13 @@ type Result struct {
 	RunDir   string         `json:"run_dir"`
 }
 
+type ActiveStep struct {
+	Step      string    `json:"step"`
+	ChairName string    `json:"chair_name,omitempty"`
+	Chair     string    `json:"chair"`
+	Started   time.Time `json:"started"`
+}
+
 type Engine struct {
 	Meter     UsageMeter
 	usage     Usage
@@ -215,8 +222,11 @@ type Engine struct {
 	Verify    Verifier
 	Records   io.Writer
 	Progress  io.Writer
+	Playing   func(round int, active []ActiveStep)
 
 	lessons map[lessonKey]chairLessons
+	active  []*ActiveStep
+	round   int
 	mu      sync.Mutex
 	size    string
 	bump    int
@@ -676,6 +686,8 @@ func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 			return StepResult{}, err
 		}
 	}
+	finish := e.beginStep(s.Round, ActiveStep{Step: s.Name, ChairName: s.ChairName, Chair: s.Chair.Address})
+	defer finish()
 	start := time.Now()
 	finishWatch := e.watchStep(s)
 	out, err := e.Stepper.Run(ctx, s)
@@ -885,6 +897,8 @@ func firstVerdict(texts ...string) string {
 }
 
 func (e *Engine) runVerify(ctx context.Context, round int, path string) (VerifyResult, error) {
+	finish := e.beginStep(round, ActiveStep{Step: fmt.Sprintf("verify-%d", round)})
+	defer finish()
 	if e.Verify == nil || e.Config.VerifyCommand == "" {
 		v := VerifyResult{Output: "no verify command configured\n"}
 		return v, os.WriteFile(filepath.Join(e.Config.Worktree, path), []byte(v.Output), 0o644)
@@ -972,6 +986,37 @@ func (e *Engine) gitOutput(args ...string) (string, error) {
 		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, &stderr)
 	}
 	return string(out), nil
+}
+
+func (e *Engine) beginStep(round int, step ActiveStep) func() {
+	e.mu.Lock()
+	step.Started = time.Now().UTC()
+	e.active = append(e.active, &step)
+	e.notifyPlaying(round)
+	e.mu.Unlock()
+	return func() {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		for i, active := range e.active {
+			if active == &step {
+				e.active = append(e.active[:i], e.active[i+1:]...)
+				break
+			}
+		}
+		e.notifyPlaying(round)
+	}
+}
+
+func (e *Engine) notifyPlaying(round int) {
+	e.round = max(e.round, round)
+	if e.Playing == nil {
+		return
+	}
+	active := make([]ActiveStep, 0, len(e.active))
+	for _, step := range e.active {
+		active = append(active, *step)
+	}
+	e.Playing(e.round, active)
 }
 
 func (e *Engine) record(rec Record) {

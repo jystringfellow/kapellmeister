@@ -201,6 +201,9 @@ func TestRunDeletesItsSessionOnSuccessFailureAndInterrupt(t *testing.T) {
 			if outcome == "failure" || outcome == "interrupt" {
 				want = loop.Failed
 			}
+			if outcome == "interrupt" && !strings.Contains(result.Reason, "interrupt") && !strings.Contains(result.Reason, "canceled") {
+				t.Fatalf("interrupt reason = %q", result.Reason)
+			}
 			if result.Outcome != want {
 				t.Fatalf("outcome = %s, want %s", result.Outcome, want)
 			}

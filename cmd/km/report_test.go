@@ -71,23 +71,23 @@ func TestReportPrintsOneRowPerRunOldestFirstThenTotalsByOutcomeRepositoryAndEnse
 		lines = append(lines, strings.Join(strings.Fields(line), " "))
 	}
 	want := []string{
-		"STARTED REPOSITORY ENSEMBLE OUTCOME ROUNDS TOOK",
-		"2026-11-09 14:00:00 host/owner/app thorough approved 2 18m31s",
-		"2026-11-10 14:00:00 host/owner/app thorough failed 2 18m31s",
-		"2026-11-11 14:00:00 host/owner/other quick rounds_exhausted 2 18m31s",
-		"2026-11-12 14:00:00 host/owner/other quick untested 2 18m31s",
-		"", "runs: 4", "by outcome", "approved 1", "failed 1", "rounds_exhausted 1", "untested 1",
-		"by repository", "host/owner/app 2", "host/owner/other 2", "by ensemble", "quick 2", "thorough 2",
+		"STARTED REPOSITORY ENSEMBLE OUTCOME ROUNDS TOOK TOKENS",
+		"2026-11-09 14:00:00 host/owner/app thorough approved 2 18m31s unknown",
+		"2026-11-10 14:00:00 host/owner/app thorough failed 2 18m31s unknown",
+		"2026-11-11 14:00:00 host/owner/other quick rounds_exhausted 2 18m31s unknown",
+		"2026-11-12 14:00:00 host/owner/other quick untested 2 18m31s unknown",
+		"", "runs: 4", "usage: unknown (4 without usage)", "by outcome", "approved 1", "failed 1", "rounds_exhausted 1", "untested 1",
+		"by repository", "host/owner/app 2 unknown (2 without usage)", "host/owner/other 2 unknown (2 without usage)", "by ensemble", "quick 2 unknown (2 without usage)", "thorough 2 unknown (2 without usage)",
 	}
 	if !reflect.DeepEqual(lines, want) {
 		t.Fatalf("report:\n%s\nwant lines: %q", out, want)
 	}
 }
 
-func TestReportCountsARunThatAppearsInTwoDirectoriesOnce(t *testing.T) {
+func TestReportStillCountsIdenticalCopiesOfARunOnce(t *testing.T) {
 	a, b := recordRoot(t), recordRoot(t)
 	first := reportFixture(t, a, "same", "2026-11-09T14:00:00Z", "app", "first", "approved")
-	reportFixture(t, filepath.Join(b, "sandbox", "state", "runs"), "same", "2026-11-09T14:00:00Z", "app", "second", "failed")
+	reportFixture(t, filepath.Join(b, "sandbox", "state", "runs"), "same", "2026-11-09T14:00:00Z", "app", "first", "approved")
 	rows := reportRows(t, a, b, a)
 	if len(rows) != 1 || rows[0].(map[string]any)["path"] != first || rows[0].(map[string]any)["outcome"] != "approved" {
 		t.Fatalf("runs = %v", rows)
@@ -166,6 +166,18 @@ func TestReportJSONPrintsTheSameRunsAndTotalsAsTheTable(t *testing.T) {
 		},
 		"totals": map[string]any{"runs": float64(2), "outcomes": map[string]any{"approved": float64(1), "failed": float64(1)}, "repositories": map[string]any{"app": float64(1), "unknown": float64(1)}, "ensembles": map[string]any{"thorough": float64(1), "unknown": float64(1)}},
 	}
+	want["not_searched"] = []any{}
+	want["not_searched_total"] = float64(0)
+	for _, row := range want["runs"].([]any) {
+		row.(map[string]any)["usage"] = map[string]any{"known": false}
+	}
+	unknownTotal := func(n int) map[string]any {
+		return map[string]any{"known_runs": float64(0), "unknown_runs": float64(n), "input_tokens": float64(0), "output_tokens": float64(0), "cache_read_tokens": float64(0), "cache_write_tokens": float64(0)}
+	}
+	totals := want["totals"].(map[string]any)
+	totals["usage"] = unknownTotal(2)
+	totals["ensemble_usage"] = map[string]any{"thorough": unknownTotal(1), "unknown": unknownTotal(1)}
+	totals["repository_usage"] = map[string]any{"app": unknownTotal(1), "unknown": unknownTotal(1)}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("JSON = %#v, want %#v", got, want)
 	}
@@ -227,7 +239,7 @@ func TestReportEscapesControlCharactersInEveryValueItPrints(t *testing.T) {
 			}
 		}
 	}
-	if lines := strings.Split(strings.Split(out, "\n\n")[0], "\n"); len(lines) != 3 || len(strings.Fields(lines[1])) != 7 {
+	if lines := strings.Split(strings.Split(out, "\n\n")[0], "\n"); len(lines) != 3 || len(strings.Fields(lines[1])) != 8 {
 		t.Fatalf("row broken: %q", out)
 	}
 	jsonOut, _ := captureReport(t, "-json", root)
@@ -401,11 +413,15 @@ func TestReportReadsOnlyRecordedResultFieldsAndTakesItsStartFromTelemetry(t *tes
 }
 
 func TestReportKeepsAFinishedResultWhenItsTelemetryIsUnusable(t *testing.T) {
-	for _, body := range []string{"{", "", "{}", `{"at":"yesterday"}`, strings.Repeat("x", (1<<20)+1)} {
+	for _, body := range []string{"{", "{}", `{"at":"yesterday"}`, strings.Repeat("x", (1<<20)+1)} {
 		t.Run(fmt.Sprint(len(body), body[:min(8, len(body))]), func(t *testing.T) {
 			root := recordRoot(t)
 			dir := reportFixture(t, root, "finished", "", "app", "thorough", "approved")
 			writeFile(t, filepath.Join(dir, "telemetry.jsonl"), body)
+			_, diagnostics := captureReport(t, root)
+			if !strings.Contains(diagnostics, filepath.Join(dir, "telemetry.jsonl")) {
+				t.Fatal(diagnostics)
+			}
 			row := reportRows(t, root)[0].(map[string]any)
 			if row["outcome"] != "approved" || row["started"] != nil {
 				t.Fatal(row)
@@ -455,7 +471,7 @@ func TestReportOrdersTiedAndUnknownStartsByRunIDAndTotalsByCountThenName(t *test
 	}
 	out, _ := captureReport(t, root)
 	flat := strings.Join(strings.Fields(out), " ")
-	for _, section := range []string{"by outcome failed 3 approved 2", "by repository z 3 a 2", "by ensemble z 3 a 2"} {
+	for _, section := range []string{"by outcome failed 3 approved 2", "by repository z 3 unknown (3 without usage) a 2 unknown (2 without usage)", "by ensemble z 3 unknown (3 without usage) a 2 unknown (2 without usage)"} {
 		if !strings.Contains(flat, section) {
 			t.Fatalf("missing %s in %s", section, out)
 		}
@@ -614,6 +630,233 @@ func TestReportNeverReadsOutsideRunsWhileADirectoryIsSwappedForASymlink(t *testi
 		}
 		if !strings.Contains(out, "good") {
 			t.Fatalf("report lost stable run: %s", out)
+		}
+	}
+}
+
+func reportWithoutTelemetryRecords(t *testing.T, root, id, body string) string {
+	t.Helper()
+	dir := filepath.Join(root, id)
+	data, err := json.Marshal(loop.Config{RunID: id, Worktree: "/scratch/app", MaxRounds: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "config.json"), string(data))
+	writeFile(t, filepath.Join(dir, "telemetry.jsonl"), body)
+	return dir
+}
+
+func TestReportCountsARunWithEmptyTelemetryAsUnfinishedWithNothingOnStderr(t *testing.T) {
+	root := recordRoot(t)
+	reportWithoutTelemetryRecords(t, root, "first-step", "")
+	out, diagnostics := captureReport(t, "-json", root)
+	var report runReport
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatal(err)
+	}
+	if diagnostics != "" || len(report.Runs) != 1 || report.Totals.Outcomes["unfinished"] != 1 {
+		t.Fatalf("report = %s, diagnostics = %s", out, diagnostics)
+	}
+	run := report.Runs[0]
+	if run.Started != nil || run.Repository != "" || run.Ensemble != "" || run.Rounds != nil || run.DurationMS != nil {
+		t.Fatalf("run = %+v", run)
+	}
+}
+
+func TestReportCountsARunWhoseTelemetryHoldsOnlyBlankLinesAsUnfinishedWithNothingOnStderr(t *testing.T) {
+	root := recordRoot(t)
+	reportWithoutTelemetryRecords(t, root, "first-step", "\n\n  \n\t\r\n \t")
+	out, diagnostics := captureReport(t, root)
+	if diagnostics != "" || !strings.Contains(strings.Join(strings.Fields(out), " "), "unknown unknown unknown unfinished unknown unknown") {
+		t.Fatalf("report = %s, diagnostics = %s", out, diagnostics)
+	}
+}
+
+func TestReportTakesTheStartOfAnUnfinishedRunWithoutTelemetryFromItsRunID(t *testing.T) {
+	for _, tc := range []struct {
+		id      string
+		started any
+	}{
+		{"20261110-143005-a1b2c3", "2026-11-10T14:30:05Z"},
+		{"first-step", nil},
+		{"20261310-250000-aaaaaa", nil},
+		{"20261110-143005", nil},
+		{"20261110-143005-", nil},
+	} {
+		t.Run(tc.id, func(t *testing.T) {
+			root := recordRoot(t)
+			reportWithoutTelemetryRecords(t, root, tc.id, "")
+			row := reportRows(t, root)[0].(map[string]any)
+			if row["started"] != tc.started {
+				t.Fatalf("run = %v, want start %v", row, tc.started)
+			}
+			if tc.started != nil {
+				out, diagnostics := captureReport(t, root, "-since", "2026-11-10")
+				if diagnostics != "" || !strings.Contains(out, "2026-11-10 14:30:05") || !strings.Contains(out, "runs: 1") {
+					t.Fatalf("report = %s, diagnostics = %s", out, diagnostics)
+				}
+				if rows := reportRows(t, root, "-since", "2026-11-10T14:30:06Z"); len(rows) != 0 {
+					t.Fatal(rows)
+				}
+			}
+		})
+	}
+}
+
+func TestReportReadsTheRunIDFromConfigJSONOfARunWithoutTelemetryRecords(t *testing.T) {
+	root := recordRoot(t)
+	dir := reportWithoutTelemetryRecords(t, root, "kept-copy", "")
+	data, err := json.Marshal(loop.Config{RunID: "20261110-143005-a1b2c3", Worktree: "/scratch/app", Chairs: loop.Chairs{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "config.json"), string(data))
+	row := reportRows(t, root)[0].(map[string]any)
+	if row["run_id"] != "20261110-143005-a1b2c3" || row["started"] != "2026-11-10T14:30:05Z" || row["repository"] != nil || row["ensemble"] != nil {
+		t.Fatal(row)
+	}
+}
+
+func TestReportDiagnosesAMalformedConfigJSONButStillCountsTheRunAsUnfinished(t *testing.T) {
+	for _, body := range []string{"{", strings.Repeat(" ", (1<<20)+1)} {
+		t.Run(fmt.Sprint(len(body)), func(t *testing.T) {
+			root := recordRoot(t)
+			dir := reportWithoutTelemetryRecords(t, root, "20261110-143005-a1b2c3", "")
+			writeFile(t, filepath.Join(dir, "config.json"), body)
+			out, diagnostics := captureReport(t, root)
+			if !strings.Contains(diagnostics, filepath.Join(dir, "config.json")) || !strings.Contains(out, "unfinished") || !strings.Contains(out, "2026-11-10 14:30:05") {
+				t.Fatalf("report = %s, diagnostics = %s", out, diagnostics)
+			}
+		})
+	}
+}
+
+func TestReportPrefersCurrentJSONOverTheRunIDForTheStartOfARunWithEmptyTelemetry(t *testing.T) {
+	root := recordRoot(t)
+	id := "20261110-143005-a1b2c3"
+	dir := reportWithoutTelemetryRecords(t, root, id, "")
+	s := statusFixture(t, root, id)
+	writeFile(t, filepath.Join(dir, "config.json"), `{"RunID":"20261109-120000-aaaaaa"}`)
+	out, diagnostics := captureReport(t, "-json", root)
+	var report runReport
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatal(err)
+	}
+	if diagnostics != "" || len(report.Runs) != 1 {
+		t.Fatalf("report = %s, diagnostics = %s", out, diagnostics)
+	}
+	run := report.Runs[0]
+	if run.RunID != id || run.Started == nil || !run.Started.Equal(s.Started) || run.Repository != s.Repository || run.Ensemble != s.Ensemble {
+		t.Fatalf("run = %+v", run)
+	}
+}
+
+func TestReportUsesTheValidLinesOfTelemetryWhoseLastLineWasCutOffMidWrite(t *testing.T) {
+	root := recordRoot(t)
+	dir := filepath.Join(root, "unfinished")
+	valid := "{\"at\":\"2026-11-09T14:00:00Z\"}\n{\"at\":\"2026-11-09T14:00:01Z\"}\n"
+	writeFile(t, filepath.Join(dir, "telemetry.jsonl"), valid)
+	before, diagnostics := captureReport(t, "-json", root)
+	if diagnostics != "" {
+		t.Fatal(diagnostics)
+	}
+	writeFile(t, filepath.Join(dir, "telemetry.jsonl"), valid+`{"at":"2026-11-0`)
+	after, diagnostics := captureReport(t, "-json", root)
+	if after != before || diagnostics != "" {
+		t.Fatalf("report = %s, want %s, diagnostics = %s", after, before, diagnostics)
+	}
+	row := reportRows(t, root)[0].(map[string]any)
+	if row["outcome"] != "unfinished" || row["started"] != "2026-11-09T14:00:00Z" {
+		t.Fatal(row)
+	}
+}
+
+func TestReportSkipsBlankLinesBeforeTheFirstTelemetryRecord(t *testing.T) {
+	root := recordRoot(t)
+	writeFile(t, filepath.Join(root, "first", "telemetry.jsonl"), "\n \t\r\n{\"at\":\"2026-11-09T14:00:00Z\"}\n")
+	out, diagnostics := captureReport(t, root)
+	if diagnostics != "" || !strings.Contains(strings.Join(strings.Fields(out), " "), "2026-11-09 14:00:00 unknown unknown unfinished") {
+		t.Fatalf("report = %s, diagnostics = %s", out, diagnostics)
+	}
+}
+
+func TestReportStillCountsTelemetryWithRealUnparseableContentAsUnreadableAndNamesItsPathOnStderr(t *testing.T) {
+	for _, body := range []string{`{"at":`, "not JSON\n", "\n\nnot JSON", "{}"} {
+		t.Run(body, func(t *testing.T) {
+			root := recordRoot(t)
+			dir := reportWithoutTelemetryRecords(t, root, "20261110-143005-a1b2c3", body)
+			out, diagnostics := captureReport(t, "-json", root)
+			var report runReport
+			if err := json.Unmarshal([]byte(out), &report); err != nil {
+				t.Fatal(err)
+			}
+			if len(report.Runs) != 1 || report.Totals.Outcomes["unreadable"] != 1 || !strings.Contains(diagnostics, filepath.Join(dir, "telemetry.jsonl")) {
+				t.Fatalf("report = %s, diagnostics = %s", out, diagnostics)
+			}
+			run := report.Runs[0]
+			if run.Started != nil || run.Repository != "" || run.Ensemble != "" || run.Rounds != nil || run.DurationMS != nil {
+				t.Fatalf("run = %+v", run)
+			}
+		})
+	}
+}
+
+func TestReportKeepsAFinishedResultAndSaysNothingWhenItsTelemetryIsEmpty(t *testing.T) {
+	for _, id := range []string{"finished", "20261110-143005-a1b2c3"} {
+		t.Run(id, func(t *testing.T) {
+			root := recordRoot(t)
+			dir := reportFixture(t, root, id, "", "app", "thorough", "approved")
+			writeFile(t, filepath.Join(dir, "telemetry.jsonl"), "")
+			writeFile(t, filepath.Join(dir, "config.json"), `{"RunID":"other"}`)
+			out, diagnostics := captureReport(t, "-json", root)
+			if diagnostics != "" {
+				t.Fatal(diagnostics)
+			}
+			var report runReport
+			if err := json.Unmarshal([]byte(out), &report); err != nil {
+				t.Fatal(err)
+			}
+			run := report.Runs[0]
+			if run.Outcome != "approved" || run.RunID != id || run.Repository != "app" || run.Ensemble != "thorough" {
+				t.Fatalf("run = %+v", run)
+			}
+			if id == "finished" && run.Started != nil || id != "finished" && (run.Started == nil || run.Started.Format(time.RFC3339) != "2026-11-10T14:30:05Z") {
+				t.Fatalf("start = %v", run.Started)
+			}
+		})
+	}
+}
+
+func TestReportLimitsTheBytesConsumedBeforeTheFirstNonBlankTelemetryLine(t *testing.T) {
+	for _, body := range []string{
+		strings.Repeat("\n", (1<<20)+1),
+		strings.Repeat("\n", 1<<20) + "{\"at\":\"2026-11-09T14:00:00Z\"}\n",
+	} {
+		t.Run(fmt.Sprint(len(body)), func(t *testing.T) {
+			root := recordRoot(t)
+			dir := reportWithoutTelemetryRecords(t, root, "first", body)
+			out, diagnostics := captureReport(t, root)
+			if !strings.Contains(out, "unreadable") || !strings.Contains(diagnostics, filepath.Join(dir, "telemetry.jsonl")) || !strings.Contains(diagnostics, "record exceeds 1 MiB") {
+				t.Fatalf("report = %s, diagnostics = %s", out, diagnostics)
+			}
+		})
+	}
+}
+
+func TestReportPrefersAnEmptyTelemetryCopyOverAnUnreadableCopyAndAFinishedCopyOverBoth(t *testing.T) {
+	a, b, c := recordRoot(t), recordRoot(t), recordRoot(t)
+	id := "20261110-143005-a1b2c3"
+	writeFile(t, filepath.Join(a, id, "telemetry.jsonl"), "{")
+	reportWithoutTelemetryRecords(t, b, id, "")
+	reportFixture(t, c, id, "", "app", "thorough", "approved")
+	for _, dirs := range [][]string{{a, b}, {b, a}, {a, b, c}, {c, b, a}} {
+		rows := reportRows(t, dirs...)
+		want := "unfinished"
+		if len(dirs) == 3 {
+			want = "approved"
+		}
+		if len(rows) != 1 || rows[0].(map[string]any)["outcome"] != want {
+			t.Fatal(rows)
 		}
 	}
 }

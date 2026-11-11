@@ -33,7 +33,8 @@ const usage = `usage:
   km reseat SESSION ADDRESS [-agent SPEC] [-timeout D] [-cao URL]  replace one chair's occupant
   km ensemble list                                         list standing ensembles
   km ensemble down [-cao URL] SESSION                       take down a standing ensemble
-  km report [-json] [-since DATE] [-repository NAME] [DIR...]   summarize finished runs
+  km report [-json] [-since DATE] [-repository NAME] [-max-depth N] [-max-entries N] [DIR...]   summarize run records
+  km status [-json] [-max-depth N] [-max-entries N] [DIR...]   show the runs in progress
   km cue done -queue FILE CUE [NOTE]                         close a cue (chairs run this)
   km preflight -worktree DIR [-agents LIST] [-tier T]       check each agent starts and answers
   km config [-worktree DIR]                                  show the effective settings and the files they come from`
@@ -63,6 +64,8 @@ func execute(args []string, stderr io.Writer) int {
 		err = ensembleCommand(args[1:], os.Stdout)
 	case "report":
 		err = reportCommand(args[1:], os.Stdout, stderr)
+	case "status":
+		err = statusCommand(args[1:], os.Stdout, stderr)
 	case "cue":
 		err = cueCommand(args[1:])
 	case "preflight":
@@ -725,7 +728,7 @@ type recordedLesson struct {
 	loop.Lesson
 }
 
-func runEnsemble(ctx context.Context, p ensembleRun) (ensembleSummary, error) {
+func runEnsemble(ctx context.Context, p ensembleRun) (sum ensembleSummary, runErr error) {
 	base, err := gitOutput(p.Config.Worktree, "rev-parse", "HEAD")
 	if err != nil {
 		return ensembleSummary{}, err
@@ -738,6 +741,41 @@ func runEnsemble(ctx context.Context, p ensembleRun) (ensembleSummary, error) {
 		return ensembleSummary{}, err
 	}
 	defer telemetry.Close()
+	start := time.Now()
+	origin, _ := gitOutput(p.Config.Worktree, "config", "--get", "remote.origin.url")
+	repository := repositoryOf(origin)
+	var res loop.Result
+	resultWritten := false
+	defer func() {
+		caught := recover()
+		if !resultWritten {
+			reason := "run ended without a result"
+			if runErr != nil {
+				reason = runErr.Error()
+			}
+			if ctx.Err() != nil {
+				reason = "interrupted: " + ctx.Err().Error() + ": " + reason
+			}
+			if caught != nil {
+				reason = fmt.Sprintf("panic: %v", caught)
+			}
+			res.RunID, res.Worktree = p.RunID, p.Config.Worktree
+			if res.RunDir == "" {
+				res.RunDir = filepath.Join(p.Config.Worktree, loop.RunDirRel(p.RunID))
+			}
+			res.Outcome, res.Reason = loop.Failed, reason
+			sum = ensembleSummary{Result: res, DurationMS: time.Since(start).Milliseconds(), Ensemble: p.Ensemble, Repository: repository, Base: base, BaseBranch: p.BaseBranch}
+			if err := writeJSON(filepath.Join(p.StateDir, "result.json"), sum); err != nil {
+				fmt.Fprintln(os.Stderr, "km: writing result.json:", err)
+			}
+		}
+		if caught != nil {
+			panic(caught)
+		}
+	}()
+	if err := json.NewEncoder(telemetry).Encode(loop.Record{At: start.UTC(), RunID: p.RunID, Step: "start"}); err != nil {
+		return ensembleSummary{}, err
+	}
 	if err := writeJSON(filepath.Join(p.StateDir, "config.json"), p.Config); err != nil {
 		return ensembleSummary{}, err
 	}
@@ -747,8 +785,23 @@ func runEnsemble(ctx context.Context, p ensembleRun) (ensembleSummary, error) {
 	}
 	fmt.Fprintf(p.Progress, "  state     %s\n", p.StateDir)
 	eng := &loop.Engine{Meter: p.Meter, Watcher: p.Watcher, Config: p.Config, Stepper: p.Stepper, Verify: p.Verify, Records: telemetry, Progress: p.Progress}
-	start := time.Now()
-	res, err := eng.Run(ctx)
+	host, _ := os.Hostname()
+	token, _ := processStart(os.Getpid())
+	began := start.UTC()
+	state := runState{RunID: p.RunID, Command: firstNonEmpty(p.Command, "run"), Ensemble: p.Ensemble, Repository: repository, Started: began, Updated: began, MaxRounds: p.Config.MaxRounds, PID: os.Getpid(), Host: host, ProcessStart: token, Playing: []loop.ActiveStep{}}
+	warned := false
+	publish := func() {
+		if err := writeRunState(p.StateDir, state); err != nil && !warned {
+			fmt.Fprintln(os.Stderr, "km: recording current state:", plain(err.Error()))
+			warned = true
+		}
+	}
+	publish()
+	eng.Playing = func(round int, active []loop.ActiveStep) {
+		state.Round, state.Playing, state.Updated = round, active, time.Now().UTC()
+		publish()
+	}
+	res, err = eng.Run(ctx)
 	if err != nil {
 		return ensembleSummary{}, err
 	}
@@ -763,8 +816,6 @@ func runEnsemble(ctx context.Context, p ensembleRun) (ensembleSummary, error) {
 	if err != nil {
 		return ensembleSummary{}, err
 	}
-	origin, _ := gitOutput(p.Config.Worktree, "config", "--get", "remote.origin.url")
-	repository := repositoryOf(origin)
 	if res.Lessons != nil {
 		lessons := make([]recordedLesson, 0, len(res.Proposed))
 		for _, lesson := range res.Proposed {
@@ -775,13 +826,14 @@ func runEnsemble(ctx context.Context, p ensembleRun) (ensembleSummary, error) {
 			res.Lessons = &loop.LessonsReport{Reason: "writing lessons.json: " + err.Error()}
 		}
 	}
-	sum := ensembleSummary{Result: res, DurationMS: time.Since(start).Milliseconds(), DiffStat: stat, Ensemble: p.Ensemble, Repository: repository, Base: base, BaseBranch: p.BaseBranch}
+	sum = ensembleSummary{Result: res, DurationMS: time.Since(start).Milliseconds(), DiffStat: stat, Ensemble: p.Ensemble, Repository: repository, Base: base, BaseBranch: p.BaseBranch}
 	if head != base {
 		sum.Head, sum.HeadMoved = head, true
 	}
 	if err := writeJSON(filepath.Join(p.StateDir, "result.json"), sum); err != nil {
 		return sum, err
 	}
+	resultWritten = true
 	return sum, nil
 }
 
@@ -936,7 +988,7 @@ func addWorktree(repo, base string) (string, error) {
 func newRunID() string {
 	b := make([]byte, 3)
 	_, _ = rand.Read(b)
-	return time.Now().Format("20060102-150405") + "-" + hex.EncodeToString(b)
+	return time.Now().UTC().Format("20060102-150405") + "-" + hex.EncodeToString(b)
 }
 
 func writeJSON(path string, v any) error {
