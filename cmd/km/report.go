@@ -179,22 +179,11 @@ func openRecordRoot(path string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	dir, err := os.OpenFile("/", os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
+	parent, err := filepath.EvalSymlinks(filepath.Dir(absolute))
 	if err != nil {
 		return nil, err
 	}
-	for _, name := range strings.Split(strings.TrimPrefix(absolute, "/"), "/") {
-		if name == "" {
-			continue
-		}
-		child, err := openReportEntry(dir, name, unix.O_DIRECTORY)
-		dir.Close()
-		if err != nil {
-			return nil, err
-		}
-		dir = child
-	}
-	return dir, nil
+	return os.OpenFile(filepath.Join(parent, filepath.Base(absolute)), os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
 }
 
 func scanReportDirectory(dir *os.File, runs map[string]reportRun, diagnostics *[]string) error {

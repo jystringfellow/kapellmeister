@@ -244,6 +244,18 @@ func TestStatusNeverFollowsASymbolicLink(t *testing.T) {
 	}
 }
 
+func TestStatusReadsADirectoryReachedThroughALinkAboveIt(t *testing.T) {
+	real, links := t.TempDir(), t.TempDir()
+	statusFixture(t, filepath.Join(real, "runs"), "reached")
+	if err := os.Symlink(real, filepath.Join(links, "kept")); err != nil {
+		t.Fatal(err)
+	}
+	rows := statusRows(t, filepath.Join(links, "kept", "runs"))
+	if len(rows) != 1 || rows[0].RunID != "reached" {
+		t.Fatal(rows)
+	}
+}
+
 func TestStatusOnlyReads(t *testing.T) {
 	root := t.TempDir()
 	statusFixture(t, root, "readonly")

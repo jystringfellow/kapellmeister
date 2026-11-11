@@ -492,7 +492,8 @@ by ensemble
 
 `km status [DIR...]` lists runs that have started and have no `result.json`. With no directory
 it reads `<state>/runs`; explicit directories are searched at any depth, sharing report's search,
-deduplication and safe record reading. Status rejects symlinks even in a supplied root path,
+deduplication and safe record reading. Status rejects a supplied root that is itself a symlink,
+though the path above it may pass through one,
 escapes control characters and only reads. With no runs in progress it says so and exits 0.
 Runs with empty or blank-only telemetry are listed like other runs in progress, without diagnostics.
 `-json` emits `{"runs":[...]}`, including every playing step and its elapsed milliseconds;
