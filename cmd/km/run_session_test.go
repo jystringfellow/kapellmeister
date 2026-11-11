@@ -124,6 +124,16 @@ func runSessionArgs(t *testing.T, f *runCAO) (string, []string) {
 	writeFile(t, filepath.Join(s.Worktree, loop.ConfigFile), "[test]\nverify = 'true'\n[run]\npreflight_timeout = '0'\nreply_grace = '1ms'\nrounds = 2\n[sizing]\nmode = 'off'\n")
 	srv := f.serve(t)
 	args := []string{"-task", "probe", "-worktree", s.Worktree, "-cao", srv.URL}
+	args = append(args, runRoleArgs()...)
+	wt, err := worktreeDir(s.Worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return wt, args
+}
+
+func runRoleArgs() []string {
+	var args []string
 	for _, part := range loop.AllRoles() {
 		spec := "p:" + part + ":m"
 		if part == "reviewer" {
@@ -131,11 +141,7 @@ func runSessionArgs(t *testing.T, f *runCAO) (string, []string) {
 		}
 		args = append(args, "-"+part, spec)
 	}
-	wt, err := worktreeDir(s.Worktree)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return wt, args
+	return args
 }
 
 func TestRunCreatesOnePodiumSessionAndPassesItOnEveryNewRunStep(t *testing.T) {

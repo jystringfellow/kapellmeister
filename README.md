@@ -7,7 +7,7 @@ until the gate and any tester approve or the rounds run out. Every run works in 
 worktree and leaves its change uncommitted for you to ship.
 
 ```sh
-km run -repo ~/Code/app -task-file task.md [-ensemble thorough]  # one ensemble
+km run -repo ~/Code/app [-base BRANCH] -task-file task.md [-ensemble thorough]  # one ensemble
 km audition -worktree DIR [-ensemble thorough]   # can this ensemble play? no real work
 km rehearse -worktree DIR -task-file task.md [-ensemble thorough]  # brief and leave standing
 km play SESSION [-max-rounds N] [-verify CMD] [-timeout D] [-cao URL]  # run the score
@@ -17,6 +17,17 @@ km ensemble down SESSION                        # take one down
 km preflight -worktree DIR [-tier large]          # check each agent starts and answers
 km config [-worktree DIR] [-cao URL]              # show the effective settings and their files
 ```
+
+`km run -repo` starts a fresh worktree from `origin/main` by default. To stack work on an
+unmerged branch, name that branch with `-base`:
+
+```sh
+km run -repo ~/Code/app -base feature/parser -task-file next.md
+```
+
+The branch is fetched from `origin`; a missing branch fails before any chair starts.
+`-base` takes a branch name such as `feature/parser`, and cannot be combined with `-worktree`,
+which plays on the checkout it is given. `km play` uses its standing ensemble's recorded checkout.
 
 Chairs default to claude plans, codex implements, copilot reviews, claude gates and classifies.
 Override any chair with `-planner`, `-implementer`, `-reviewer`, `-gate`, `-classifier` or the optional
@@ -449,7 +460,10 @@ standing ensemble's for `km play`; omitted for plain `[chairs]`) and the `reposi
 `origin` remote as `host/owner/name`, without scheme, credentials, port or `.git`. It is omitted when
 there is no `origin` or it names no host, such as a local path.
 
-`result.json` also records the worktree's starting commit as `base`. Its `diff_stat`
+`result.json` also records the worktree's starting commit as `base`. For `km run -repo`,
+`base_branch` names the branch fetched from `origin` (`main` by default), and `base` is the commit
+it resolved to; the opening output names both. `base_branch` is omitted for `-worktree` runs and
+`km play`. Older records without `base_branch` remain readable. Its `diff_stat`
 compares the final tree against that base, including untracked non-ignored files and changes committed
 during the run. Generating this report uses a temporary index and leaves the worktree's index unchanged.
 If HEAD moves, the result also records `head` and `head_moved: true`, and km prints
