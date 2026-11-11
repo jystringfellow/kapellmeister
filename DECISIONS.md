@@ -201,11 +201,13 @@ checked-in budget `learned_budget` to distinguish it from gate collection's `les
 
 ## 2026-11-11: Report never shows unmeasured usage as zero
 
-Report uses only complete, known usage from result.json. Partly measured totals would under-count;
-invalid or missing counters are unknown. Ensemble and repository totals exclude unknown runs and
+Report uses only usage recorded in result.json. A partly measured run, such as one with chairs whose
+tool keeps no usage log, shows what was measured as a lower bound marked `≥`, because treating it as
+unknown hid the usage of every run that seats such a chair; invalid or missing counters are unknown. Ensemble and repository totals exclude unknown runs and
 count them explicitly. Search depth and entry budgets bound work on untrusted kept sandbox copies;
 skipped paths remain visible. Evidence:
-`TestReportShowsUnknownUsageForARunWithoutUsageWithUnknownUsageOrWithPartlyMeasuredUsageNeverZero`,
+`TestReportShowsUnknownUsageForARunWithoutUsageOrWithUnknownUsageNeverZero`,
+`TestReportShowsPartlyMeasuredUsageAsALowerBoundAndSaysHowManyRunsArePartlyMeasured`,
 `TestReportTotalsByEnsembleAndRepositorySumOnlyKnownUsageAndCountRunsLeftOut`,
 `TestReportStopsBelowTheDepthLimitSaysWhatItSkippedAndCarriesOn`,
 `TestReportStopsAtTheEntryLimitSaysWhatItSkippedAndCarriesOn` and

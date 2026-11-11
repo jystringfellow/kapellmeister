@@ -539,11 +539,13 @@ The command only reads the supplied directories.
 
 `TOKENS` shows recorded input/output usage in compact form (`1.2M/340k`); input excludes cache.
 Long table cells are shortened with `…`; JSON keeps their full values. Usage comes only from
-`result.json`, and is `unknown` for older or unfinished runs, unmeasured usage, partly measured runs
-(`unknown_steps > 0`), missing counters, wrong types or counters outside 0 through 2^36. Partly
-measured usage would under-count, so it is never shown as zero or added to totals. Measured zero
-usage remains zero. Overall, ensemble and repository totals sum only known usage and say how many
-runs were left out; a group with none measured shows `unknown`.
+`result.json`, and is `unknown` for older or unfinished runs, unmeasured usage, missing counters,
+wrong types or counters outside 0 through 2^36. Measured zero usage remains zero. A partly measured
+run (`unknown_steps > 0`, for example one with chairs whose tool keeps no usage log) shows what was
+measured as a lower bound, `≥1.2M/340k`, and JSON carries its `unknown_steps`. Overall, ensemble and
+repository totals sum measured usage, mark the sum `≥` when any run in it is partly measured, and
+say how many runs were partly measured and how many had no usage; a group with none measured shows
+`unknown`.
 
 `-since 2026-11-09` keeps runs started at or after midnight UTC on that date; RFC3339 timestamps
 are also accepted. Runs without a known start are excluded by this filter.

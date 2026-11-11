@@ -329,6 +329,9 @@ func printReport(stdout io.Writer, report runReport) error {
 		tokens := "unknown"
 		if run.Usage.Known {
 			tokens = compactTokens(run.Usage.InputTokens) + "/" + compactTokens(run.Usage.OutputTokens)
+			if run.Usage.UnknownSteps > 0 {
+				tokens = "≥" + tokens
+			}
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", reportCell(started, 19), reportCell(reportKnown(run.Repository), 20), reportCell(reportKnown(run.Ensemble), 8), reportCell(reportKnown(run.Outcome), 16), reportCell(rounds, 7), reportCell(took, 7), plain(tokens))
 	}

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 type reportTokens struct {
@@ -13,12 +14,14 @@ type reportTokens struct {
 }
 
 type reportUsage struct {
-	Known bool `json:"known"`
+	Known        bool `json:"known"`
+	UnknownSteps int  `json:"unknown_steps,omitempty"`
 	*reportTokens
 }
 
 type reportUsageTotal struct {
 	KnownRuns   int `json:"known_runs"`
+	PartialRuns int `json:"partial_runs,omitempty"`
 	UnknownRuns int `json:"unknown_runs"`
 	reportTokens
 }
@@ -32,11 +35,13 @@ func readReportUsage(data json.RawMessage) reportUsage {
 	if json.Unmarshal(fields["known"], &known) != nil || !known {
 		return reportUsage{}
 	}
+	unknownSteps := 0
 	if raw, ok := fields["unknown_steps"]; ok {
 		var steps *int
-		if json.Unmarshal(raw, &steps) != nil || steps == nil || *steps != 0 {
+		if json.Unmarshal(raw, &steps) != nil || steps == nil || *steps < 0 {
 			return reportUsage{}
 		}
+		unknownSteps = *steps
 	}
 	tokens := reportTokens{}
 	for name, target := range map[string]*int64{"input_tokens": &tokens.InputTokens, "output_tokens": &tokens.OutputTokens, "cache_read_tokens": &tokens.CacheReadTokens, "cache_write_tokens": &tokens.CacheWriteTokens} {
@@ -46,7 +51,7 @@ func readReportUsage(data json.RawMessage) reportUsage {
 		}
 		*target = *value
 	}
-	return reportUsage{Known: true, reportTokens: &tokens}
+	return reportUsage{Known: true, UnknownSteps: unknownSteps, reportTokens: &tokens}
 }
 
 func (total *reportUsageTotal) add(usage reportUsage) {
@@ -55,6 +60,9 @@ func (total *reportUsageTotal) add(usage reportUsage) {
 		return
 	}
 	total.KnownRuns++
+	if usage.UnknownSteps > 0 {
+		total.PartialRuns++
+	}
 	total.InputTokens += usage.InputTokens
 	total.OutputTokens += usage.OutputTokens
 	total.CacheReadTokens += usage.CacheReadTokens
@@ -94,10 +102,21 @@ func trimTokenDecimal(n float64) string {
 func reportUsageText(total reportUsageTotal) string {
 	text := "unknown"
 	if total.KnownRuns > 0 {
-		text = "in " + compactTokens(total.InputTokens) + " out " + compactTokens(total.OutputTokens)
+		bound := ""
+		if total.PartialRuns > 0 {
+			bound = "≥"
+		}
+		text = "in " + bound + compactTokens(total.InputTokens) + " out " + bound + compactTokens(total.OutputTokens)
+	}
+	var notes []string
+	if total.PartialRuns > 0 {
+		notes = append(notes, fmt.Sprintf("%d partly measured", total.PartialRuns))
 	}
 	if total.UnknownRuns > 0 {
-		text += fmt.Sprintf(" (%d without usage)", total.UnknownRuns)
+		notes = append(notes, fmt.Sprintf("%d without usage", total.UnknownRuns))
+	}
+	if len(notes) > 0 {
+		text += " (" + strings.Join(notes, ", ") + ")"
 	}
 	return text
 }

@@ -42,9 +42,9 @@ func TestReportShowsEachRunsRecordedTokenUsageInTheTableAndJSON(t *testing.T) {
 	}
 }
 
-func TestReportShowsUnknownUsageForARunWithoutUsageWithUnknownUsageOrWithPartlyMeasuredUsageNeverZero(t *testing.T) {
+func TestReportShowsUnknownUsageForARunWithoutUsageOrWithUnknownUsageNeverZero(t *testing.T) {
 	for name, usage := range map[string]string{
-		"absent": "", "unknown": `{"known":false}`, "partial": strings.TrimSuffix(knownReportUsage, "}") + `,"unknown_steps":1}`,
+		"absent": "", "unknown": `{"known":false}`, "negative partial": strings.TrimSuffix(knownReportUsage, "}") + `,"unknown_steps":-1}`,
 		"negative": strings.Replace(knownReportUsage, "1200000", "-1", 1), "string": strings.Replace(knownReportUsage, "1200000", `"12"`, 1),
 		"too large": strings.Replace(knownReportUsage, "1200000", "68719476737", 1), "missing": `{"known":true}`, "null counter": strings.Replace(knownReportUsage, "1200000", "null", 1),
 		"null partial": strings.TrimSuffix(knownReportUsage, "}") + `,"unknown_steps":null}`, "unfinished": "",
@@ -244,5 +244,31 @@ func TestReportNeverLetsAnIncompleteCopyHideDisagreementBetweenOtherCopies(t *te
 	rows := reportRows(t, root)
 	if len(rows) != 2 || !strings.Contains(diag, first) || !strings.Contains(diag, second) {
 		t.Fatalf("%s\n%s", out, diag)
+	}
+}
+
+func TestReportShowsPartlyMeasuredUsageAsALowerBoundAndSaysHowManyRunsArePartlyMeasured(t *testing.T) {
+	root := recordRoot(t)
+	partial := strings.TrimSuffix(knownReportUsage, "}") + `,"unknown_steps":2}`
+	reportUsageFixture(t, root, "a", "app", "quick", partial)
+	reportUsageFixture(t, root, "b", "app", "quick", knownReportUsage)
+	reportUsageFixture(t, root, "c", "app", "quick", "")
+	out, diagnostics := captureReport(t, root)
+	if diagnostics != "" || !strings.Contains(out, "≥1.2M/340k") {
+		t.Fatalf("%s\n%s", out, diagnostics)
+	}
+	rows := reportRows(t, root)
+	if usage := rows[0].(map[string]any)["usage"].(map[string]any); usage["known"] != true || usage["unknown_steps"] != float64(2) || usage["input_tokens"] != float64(1200000) {
+		t.Fatalf("partly measured usage = %v", usage)
+	}
+	if usage := rows[1].(map[string]any)["usage"].(map[string]any); usage["unknown_steps"] != nil {
+		t.Fatalf("fully measured usage = %v", usage)
+	}
+	overall := reportJSON(t, root)["totals"].(map[string]any)["usage"].(map[string]any)
+	if overall["known_runs"] != float64(2) || overall["partial_runs"] != float64(1) || overall["unknown_runs"] != float64(1) || overall["input_tokens"] != float64(2400000) {
+		t.Fatalf("totals = %v", overall)
+	}
+	if normalized := strings.Join(strings.Fields(out), " "); !strings.Contains(normalized, "usage: in ≥2.4M out ≥680k (1 partly measured, 1 without usage)") {
+		t.Fatalf("totals line missing: %s", out)
 	}
 }
