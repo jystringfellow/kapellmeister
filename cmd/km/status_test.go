@@ -392,3 +392,27 @@ func TestStatusSaysUnknownWithoutARecordedProcessIdentity(t *testing.T) {
 		}
 	}
 }
+
+func TestStatusListsARunWithEmptyTelemetryAsInProgressWithNothingOnStderr(t *testing.T) {
+	for _, body := range []string{"", "\n \t\n"} {
+		t.Run(body, func(t *testing.T) {
+			root := t.TempDir()
+			id := "20261110-143005-a1b2c3"
+			reportWithoutTelemetryRecords(t, root, id, body)
+			out, diagnostics := captureStatus(t, "-json", root)
+			var doc struct {
+				Runs []statusRun `json:"runs"`
+			}
+			if err := json.Unmarshal([]byte(out), &doc); err != nil {
+				t.Fatal(err)
+			}
+			if diagnostics != "" || len(doc.Runs) != 1 {
+				t.Fatalf("status = %s, diagnostics = %s", out, diagnostics)
+			}
+			run := doc.Runs[0]
+			if run.RunID != id || run.Started == nil || run.Started.Format(time.RFC3339) != "2026-11-10T14:30:05Z" || run.Liveness != "unknown" || len(run.Playing) != 0 {
+				t.Fatalf("run = %+v", run)
+			}
+		})
+	}
+}

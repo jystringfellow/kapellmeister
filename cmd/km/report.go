@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -202,14 +203,15 @@ func scanReportDirectory(dir *os.File, runs map[string]reportRun, diagnostics *[
 		return err
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
-	result, telemetry, current := false, false, false
+	result, telemetry, current, config := false, false, false, false
 	for _, entry := range entries {
 		result = result || entry.Name() == "result.json"
 		telemetry = telemetry || entry.Name() == "telemetry.jsonl"
 		current = current || entry.Name() == "current.json"
+		config = config || entry.Name() == "config.json"
 	}
 	if result || telemetry || current {
-		run, messages := readReportRun(dir, result, telemetry, current)
+		run, messages := readReportRun(dir, result, telemetry, current, config)
 		*diagnostics = append(*diagnostics, messages...)
 		keepReportRun(runs, run)
 		return nil
@@ -249,9 +251,10 @@ func openReportEntry(dir *os.File, name string, flags int) (*os.File, error) {
 	return os.NewFile(uintptr(fd), path), nil
 }
 
-func readReportRun(dir *os.File, hasResult, hasTelemetry, hasCurrent bool) (reportRun, []string) {
+func readReportRun(dir *os.File, hasResult, hasTelemetry, hasCurrent, hasConfig bool) (reportRun, []string) {
 	run := reportRun{RunID: filepath.Base(dir.Name()), Path: dir.Name(), Outcome: "unreadable", hasResult: hasResult, hasStarted: hasTelemetry || hasCurrent}
 	var diagnostics []string
+	hasRecordedID := false
 	diagnose := func(path string, err error) {
 		diagnostics = append(diagnostics, "km: report: "+plain(path)+": "+plain(err.Error()))
 	}
@@ -275,6 +278,7 @@ func readReportRun(dir *os.File, hasResult, hasTelemetry, hasCurrent bool) (repo
 		}
 		if recorded.RunID != "" {
 			run.RunID = recorded.RunID
+			hasRecordedID = true
 		}
 		run.Repository, run.Ensemble = recorded.Repository, recorded.Ensemble
 		run.Outcome, run.Reason = recorded.Outcome, recorded.Reason
@@ -299,31 +303,64 @@ func readReportRun(dir *os.File, hasResult, hasTelemetry, hasCurrent bool) (repo
 			run.Started = &started
 			if state.RunID != "" {
 				run.RunID = state.RunID
+				hasRecordedID = true
 			}
 			run.Outcome, run.quality = "unfinished", 1
 		}
 	}
+	emptyTelemetry := false
 	if hasTelemetry && run.state == nil {
 		path := filepath.Join(dir.Name(), "telemetry.jsonl")
 		data, err := readReportFile(dir, "telemetry.jsonl", true)
 		var record loop.Record
 		if err == nil {
-			err = json.Unmarshal(data, &record)
-			if err == nil && record.At.IsZero() {
-				err = errors.New("first telemetry record has no start time")
+			emptyTelemetry = len(data) == 0
+			if !emptyTelemetry {
+				err = json.Unmarshal(data, &record)
+				if err == nil && record.At.IsZero() {
+					err = errors.New("first telemetry record has no start time")
+				}
 			}
 		}
 		if err != nil {
 			diagnose(path, err)
 			return run, diagnostics
 		}
-		started := record.At.UTC()
-		run.Started = &started
+		if !emptyTelemetry {
+			started := record.At.UTC()
+			run.Started = &started
+		}
 		if !hasResult {
 			run.Outcome, run.quality = "unfinished", 1
 		}
 	}
+	if hasConfig && !hasRecordedID {
+		data, err := readReportFile(dir, "config.json", false)
+		var config struct{ RunID string }
+		if err == nil {
+			err = json.Unmarshal(data, &config)
+		}
+		if err != nil {
+			diagnose(filepath.Join(dir.Name(), "config.json"), err)
+		} else if config.RunID != "" {
+			run.RunID = config.RunID
+		}
+	}
+	if emptyTelemetry && run.Started == nil {
+		run.Started = startFromRunID(run.RunID)
+	}
 	return run, diagnostics
+}
+
+func startFromRunID(id string) *time.Time {
+	if len(id) != 22 || id[15] != '-' {
+		return nil
+	}
+	started, err := time.Parse("20060102-150405", id[:15])
+	if err != nil {
+		return nil
+	}
+	return &started
 }
 
 const reportFileLimit = 1 << 20
@@ -352,13 +389,26 @@ func readReportFile(dir *os.File, name string, firstLine bool) ([]byte, error) {
 	reader := io.LimitReader(file, reportFileLimit+1)
 	var data []byte
 	if firstLine {
-		data, err = bufio.NewReader(reader).ReadBytes('\n')
-		if errors.Is(err, io.EOF) {
-			err = nil
+		lines := bufio.NewReader(reader)
+		consumed := 0
+		for {
+			data, err = lines.ReadBytes('\n')
+			consumed += len(data)
+			if consumed > reportFileLimit {
+				return nil, errors.New("record exceeds 1 MiB")
+			}
+			if err != nil && !errors.Is(err, io.EOF) {
+				return nil, err
+			}
+			if len(bytes.TrimSpace(data)) > 0 {
+				return data, nil
+			}
+			if errors.Is(err, io.EOF) {
+				return nil, nil
+			}
 		}
-	} else {
-		data, err = io.ReadAll(reader)
 	}
+	data, err = io.ReadAll(reader)
 	if err != nil {
 		return nil, err
 	}

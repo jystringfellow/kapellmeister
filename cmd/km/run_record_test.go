@@ -418,3 +418,19 @@ func TestCurrentJSONIsReplacedAtomically(t *testing.T) {
 		t.Fatalf("not replaced atomically: %s", body)
 	}
 }
+
+func TestANewRunIDCarriesTheUTCTimeItWasMade(t *testing.T) {
+	previous := time.Local
+	time.Local = time.FixedZone("non-UTC", 9*60*60)
+	t.Cleanup(func() { time.Local = previous })
+	before := time.Now().UTC().Truncate(time.Second)
+	id := newRunID()
+	after := time.Now().UTC()
+	if len(id) != 22 {
+		t.Fatalf("run id = %q", id)
+	}
+	started, err := time.Parse("20060102-150405", id[:15])
+	if err != nil || started.Before(before) || started.After(after) {
+		t.Fatalf("run id = %q, start = %v, want between %v and %v, error = %v", id, started, before, after, err)
+	}
+}

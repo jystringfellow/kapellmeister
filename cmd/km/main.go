@@ -889,7 +889,7 @@ func addWorktree(repo, base string) (string, error) {
 func newRunID() string {
 	b := make([]byte, 3)
 	_, _ = rand.Read(b)
-	return time.Now().Format("20060102-150405") + "-" + hex.EncodeToString(b)
+	return time.Now().UTC().Format("20060102-150405") + "-" + hex.EncodeToString(b)
 }
 
 func writeJSON(path string, v any) error {
