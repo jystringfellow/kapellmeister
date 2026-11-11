@@ -33,11 +33,17 @@ type reportScan struct {
 	firstEntrySkipped string
 }
 
-func findRuns(dirs []string, defaultDir bool, maxDepth, maxEntries int) ([]reportRun, *reportScan, error) {
+func findRuns(dirs []string, defaultDir bool, maxDepth, maxEntries int, refuseLinkedRoots bool) ([]reportRun, *reportScan, error) {
 	scan := &reportScan{maxDepth: maxDepth, maxEntries: maxEntries, visited: map[string]bool{}, skipped: map[string]bool{}, notSearched: []reportNotSearched{}}
 	roots := map[string]bool{}
 	for _, dir := range dirs {
-		root, err := filepath.EvalSymlinks(dir)
+		var root string
+		var err error
+		if refuseLinkedRoots {
+			root, err = unlinkedRoot(dir)
+		} else {
+			root, err = filepath.EvalSymlinks(dir)
+		}
 		if defaultDir && errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
@@ -89,6 +95,26 @@ func findRuns(dirs []string, defaultDir bool, maxDepth, maxEntries int) ([]repor
 	runs, messages := resolveReportCopies(scan.copies)
 	scan.diagnostics = append(scan.diagnostics, messages...)
 	return runs, scan, nil
+}
+
+func unlinkedRoot(path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	parent, err := filepath.EvalSymlinks(filepath.Dir(absolute))
+	if err != nil {
+		return "", err
+	}
+	root := filepath.Join(parent, filepath.Base(absolute))
+	info, err := os.Lstat(root)
+	if err != nil {
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return "", &os.PathError{Op: "open", Path: path, Err: unix.ELOOP}
+	}
+	return root, nil
 }
 
 func (scan *reportScan) skip(path, reason string) {
@@ -144,13 +170,15 @@ func (scan *reportScan) directory(dir *os.File, depth int) error {
 		}
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
-	result, telemetry := false, false
+	result, telemetry, current, config := false, false, false, false
 	for _, entry := range entries {
 		result = result || entry.Name() == "result.json"
 		telemetry = telemetry || entry.Name() == "telemetry.jsonl"
+		current = current || entry.Name() == "current.json"
+		config = config || entry.Name() == "config.json"
 	}
-	if result || telemetry {
-		run, messages := readReportRun(dir, result, telemetry)
+	if result || telemetry || current {
+		run, messages := readReportRun(dir, result, telemetry, current, config)
 		scan.diagnostics = append(scan.diagnostics, messages...)
 		scan.copies = append(scan.copies, run)
 		return nil
@@ -186,7 +214,7 @@ func (scan *reportScan) directory(dir *os.File, depth int) error {
 
 func reportDisagreements(a, b reportRun) []string {
 	var fields []string
-	if a.Started != nil && b.Started != nil && !a.Started.Equal(*b.Started) {
+	if a.Started != nil && b.Started != nil && !a.roughStart && !b.roughStart && !a.Started.Equal(*b.Started) {
 		fields = append(fields, "started "+a.Started.String()+" vs "+b.Started.String())
 	}
 	if a.Repository != "" && b.Repository != "" && a.Repository != b.Repository {
@@ -206,6 +234,12 @@ func resolveReportCopies(copies []reportRun) ([]reportRun, []string) {
 		}
 		if a.quality != b.quality {
 			return a.quality > b.quality
+		}
+		if (a.state != nil) != (b.state != nil) {
+			return a.state != nil
+		}
+		if a.state != nil && !a.state.Updated.Equal(b.state.Updated) {
+			return a.state.Updated.After(b.state.Updated)
 		}
 		return a.Path < b.Path
 	})

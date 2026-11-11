@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -35,6 +37,10 @@ type reportRun struct {
 	Usage      reportUsage `json:"usage"`
 	Conflict   bool        `json:"conflict,omitempty"`
 	quality    int
+	state      *runState
+	roughStart bool
+	hasResult  bool
+	hasStarted bool
 }
 
 type reportTotals struct {
@@ -62,24 +68,7 @@ func reportCommand(args []string, stdout, stderr io.Writer) error {
 	repository := flags.String("repository", "", "keep runs from this exact repository")
 	maxDepth := flags.Int("max-depth", 64, "maximum directory levels below each root")
 	maxEntries := flags.Int("max-entries", 1000000, "maximum directory entries read (at most 16777216)")
-	var options, dirs []string
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if arg == "--" {
-			dirs = append(dirs, args[i+1:]...)
-			break
-		}
-		if arg == "-" || !strings.HasPrefix(arg, "-") {
-			dirs = append(dirs, arg)
-			continue
-		}
-		options = append(options, arg)
-		name := strings.TrimLeft(arg, "-")
-		if (name == "since" || name == "repository" || name == "max-depth" || name == "max-entries") && i+1 < len(args) {
-			i++
-			options = append(options, args[i])
-		}
-	}
+	options, dirs := splitRecordArgs(args, "since", "repository", "max-depth", "max-entries")
 	if err := flags.Parse(options); err != nil {
 		return err
 	}
@@ -102,7 +91,7 @@ func reportCommand(args []string, stdout, stderr io.Writer) error {
 	if defaultDir {
 		dirs = []string{filepath.Join(loop.StateDir(), "runs")}
 	}
-	runs, scan, err := findRuns(dirs, defaultDir, *maxDepth, *maxEntries)
+	runs, scan, err := findRuns(dirs, defaultDir, *maxDepth, *maxEntries, false)
 	if err != nil {
 		return fmt.Errorf("report: %s", plain(err.Error()))
 	}
@@ -152,6 +141,27 @@ func reportCommand(args []string, stdout, stderr io.Writer) error {
 	return printReport(stdout, report)
 }
 
+func splitRecordArgs(args []string, valueFlags ...string) (options, dirs []string) {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			dirs = append(dirs, args[i+1:]...)
+			break
+		}
+		if arg == "-" || !strings.HasPrefix(arg, "-") {
+			dirs = append(dirs, arg)
+			continue
+		}
+		options = append(options, arg)
+		name := strings.TrimLeft(arg, "-")
+		if slices.Contains(valueFlags, name) && i+1 < len(args) {
+			i++
+			options = append(options, args[i])
+		}
+	}
+	return options, dirs
+}
+
 func openReportEntry(dir *os.File, name string, flags int) (*os.File, error) {
 	path := filepath.Join(dir.Name(), name)
 	// Resolve one entry against its open parent so renames cannot redirect through symlinks.
@@ -163,9 +173,10 @@ func openReportEntry(dir *os.File, name string, flags int) (*os.File, error) {
 	return os.NewFile(uintptr(fd), path), nil
 }
 
-func readReportRun(dir *os.File, hasResult, hasTelemetry bool) (reportRun, []string) {
-	run := reportRun{RunID: filepath.Base(dir.Name()), Path: dir.Name(), Outcome: "unreadable"}
+func readReportRun(dir *os.File, hasResult, hasTelemetry, hasCurrent, hasConfig bool) (reportRun, []string) {
+	run := reportRun{RunID: filepath.Base(dir.Name()), Path: dir.Name(), Outcome: "unreadable", hasResult: hasResult, hasStarted: hasTelemetry || hasCurrent}
 	var diagnostics []string
+	hasRecordedID := false
 	diagnose := func(path string, err error) {
 		diagnostics = append(diagnostics, "km: report: "+plain(path)+": "+plain(err.Error()))
 	}
@@ -194,6 +205,7 @@ func readReportRun(dir *os.File, hasResult, hasTelemetry bool) (reportRun, []str
 		}
 		if recorded.RunID != "" {
 			run.RunID = recorded.RunID
+			hasRecordedID = true
 		}
 		run.Repository, run.Ensemble = recorded.Repository, recorded.Ensemble
 		run.Outcome, run.Reason = recorded.Outcome, recorded.Reason
@@ -201,27 +213,82 @@ func readReportRun(dir *os.File, hasResult, hasTelemetry bool) (reportRun, []str
 		run.Usage = readReportUsage(recorded.Usage)
 		run.quality = 2
 	}
-	if hasTelemetry {
+	if !hasResult && hasCurrent {
+		data, err := readReportFile(dir, "current.json", false)
+		var state *runState
+		if err == nil {
+			err = json.Unmarshal(data, &state)
+			if err == nil && (state == nil || state.Started.IsZero()) {
+				err = errors.New("expected a current state with a start time")
+			}
+		}
+		if err != nil {
+			diagnose(filepath.Join(dir.Name(), "current.json"), err)
+		} else {
+			run.state = state
+			run.Repository, run.Ensemble = state.Repository, state.Ensemble
+			started := state.Started.UTC()
+			run.Started, run.roughStart = &started, true
+			if state.RunID != "" {
+				run.RunID = state.RunID
+				hasRecordedID = true
+			}
+			run.Outcome, run.quality = "unfinished", 1
+		}
+	}
+	emptyTelemetry := false
+	if hasTelemetry && run.state == nil {
 		path := filepath.Join(dir.Name(), "telemetry.jsonl")
 		data, err := readReportFile(dir, "telemetry.jsonl", true)
 		var record loop.Record
 		if err == nil {
-			err = json.Unmarshal(data, &record)
-			if err == nil && record.At.IsZero() {
-				err = errors.New("first telemetry record has no start time")
+			emptyTelemetry = len(data) == 0
+			if !emptyTelemetry {
+				err = json.Unmarshal(data, &record)
+				if err == nil && record.At.IsZero() {
+					err = errors.New("first telemetry record has no start time")
+				}
 			}
 		}
 		if err != nil {
 			diagnose(path, err)
 			return run, diagnostics
 		}
-		started := record.At.UTC()
-		run.Started = &started
+		if !emptyTelemetry {
+			started := record.At.UTC()
+			run.Started = &started
+		}
 		if !hasResult {
 			run.Outcome, run.quality = "unfinished", 1
 		}
 	}
+	if hasConfig && !hasRecordedID {
+		data, err := readReportFile(dir, "config.json", false)
+		var config struct{ RunID string }
+		if err == nil {
+			err = json.Unmarshal(data, &config)
+		}
+		if err != nil {
+			diagnose(filepath.Join(dir.Name(), "config.json"), err)
+		} else if config.RunID != "" {
+			run.RunID = config.RunID
+		}
+	}
+	if emptyTelemetry && run.Started == nil {
+		run.Started, run.roughStart = startFromRunID(run.RunID), true
+	}
 	return run, diagnostics
+}
+
+func startFromRunID(id string) *time.Time {
+	if len(id) != 22 || id[15] != '-' {
+		return nil
+	}
+	started, err := time.Parse("20060102-150405", id[:15])
+	if err != nil {
+		return nil
+	}
+	return &started
 }
 
 const reportFileLimit = 1 << 20
@@ -250,13 +317,26 @@ func readReportFile(dir *os.File, name string, firstLine bool) ([]byte, error) {
 	reader := io.LimitReader(file, reportFileLimit+1)
 	var data []byte
 	if firstLine {
-		data, err = bufio.NewReader(reader).ReadBytes('\n')
-		if errors.Is(err, io.EOF) {
-			err = nil
+		lines := bufio.NewReader(reader)
+		consumed := 0
+		for {
+			data, err = lines.ReadBytes('\n')
+			consumed += len(data)
+			if consumed > reportFileLimit {
+				return nil, errors.New("record exceeds 1 MiB")
+			}
+			if err != nil && !errors.Is(err, io.EOF) {
+				return nil, err
+			}
+			if len(bytes.TrimSpace(data)) > 0 {
+				return data, nil
+			}
+			if errors.Is(err, io.EOF) {
+				return nil, nil
+			}
 		}
-	} else {
-		data, err = io.ReadAll(reader)
 	}
+	data, err = io.ReadAll(reader)
 	if err != nil {
 		return nil, err
 	}
@@ -286,7 +366,7 @@ func plain(value string) string {
 	return out.String()
 }
 
-func printReportJSON(stdout io.Writer, report runReport) error {
+func printReportJSON(stdout io.Writer, report any) error {
 	data, err := json.Marshal(report)
 	if err != nil {
 		return err

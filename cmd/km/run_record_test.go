@@ -320,3 +320,118 @@ func TestARunFromAnEnsembleFilePreflightsChairsThatShareABindingOnce(t *testing.
 		t.Errorf("preflight reviewers = %+v, want the shared binding once", unique)
 	}
 }
+
+func readCurrent(t *testing.T, dir string) runState {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, "current.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state runState
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatal(err)
+	}
+	return state
+}
+
+type observingStepper struct{ observe func(loop.Step) }
+
+func (s observingStepper) Run(ctx context.Context, step loop.Step) (loop.StepResult, error) {
+	s.observe(step)
+	return (replyingStepper{}).Run(ctx, step)
+}
+func (observingStepper) Release(context.Context, string) error { return nil }
+
+func TestARunRecordsItsEnsembleRepositoryAndProcessBeforeAnyStepEnds(t *testing.T) {
+	for _, command := range []string{"run", "play"} {
+		t.Run(command, func(t *testing.T) {
+			standing := playStanding(t)
+			setOrigin(t, standing.Worktree, "https://user:secret@host/owner/app.git")
+			dir := filepath.Join(loop.StateDir(), "runs", "live")
+			observed := false
+			stepper := observingStepper{observe: func(step loop.Step) {
+				s := readCurrent(t, dir)
+				if s.RunID != "live" || s.Ensemble != "thorough" || s.Repository != "host/owner/app" || s.Command != command || s.PID != os.Getpid() || s.ProcessStart == "" || s.Host == "" || s.Started.IsZero() {
+					t.Errorf("state = %+v", s)
+				}
+				if step.Name == "plan" {
+					observed = true
+					data, err := os.ReadFile(filepath.Join(dir, "telemetry.jsonl"))
+					lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+					if err != nil || len(lines) != 1 || !strings.Contains(lines[0], `"step":"start"`) {
+						t.Errorf("first step already ended: %s %v", data, err)
+					}
+				}
+				found := false
+				for _, active := range s.Playing {
+					if active.Step == step.Name && active.ChairName == step.ChairName && active.Chair == step.Chair.Address {
+						found = true
+					}
+				}
+				if !found {
+					t.Errorf("step %+v absent from %+v", step, s)
+				}
+			}}
+			sum, err := runEnsemble(context.Background(), ensembleRun{RunID: "live", Command: command, StateDir: dir, Ensemble: "thorough", Stepper: stepper, Progress: io.Discard, Config: loop.Config{RunID: "live", Task: "probe", Worktree: standing.Worktree, Chairs: plainChairs(), MaxRounds: 1}})
+			if err != nil || sum.Outcome != loop.Approved || !observed {
+				t.Fatalf("%+v %v observed %v", sum, err, observed)
+			}
+			s := readCurrent(t, dir)
+			if len(s.Playing) != 0 || s.Round != 1 || s.Updated.Before(s.Started) {
+				t.Fatalf("final state %+v", s)
+			}
+			rows := reportRows(t, dir)
+			if len(rows) != 1 || rows[0].(map[string]any)["outcome"] != "approved" {
+				t.Fatal(rows)
+			}
+		})
+	}
+}
+
+func TestCurrentJSONIsReplacedAtomically(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(t.TempDir(), "sentinel")
+	writeFile(t, target, "unchanged")
+	if err := os.Symlink(target, filepath.Join(dir, "current.json")); err != nil {
+		t.Fatal(err)
+	}
+	s := runState{RunID: "atomic", Started: time.Now(), Playing: []loop.ActiveStep{}}
+	if err := writeRunState(dir, s); err != nil {
+		t.Fatal(err)
+	}
+	if body, err := os.ReadFile(target); err != nil || string(body) != "unchanged" {
+		t.Fatalf("target changed: %s %v", body, err)
+	}
+	old, err := os.Open(filepath.Join(dir, "current.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer old.Close()
+	s.RunID = "replacement"
+	if err := writeRunState(dir, s); err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "atomic") || readCurrent(t, dir).RunID != "replacement" {
+		t.Fatalf("not replaced atomically: %s", body)
+	}
+}
+
+func TestANewRunIDCarriesTheUTCTimeItWasMade(t *testing.T) {
+	previous := time.Local
+	time.Local = time.FixedZone("non-UTC", 9*60*60)
+	t.Cleanup(func() { time.Local = previous })
+	before := time.Now().UTC().Truncate(time.Second)
+	id := newRunID()
+	after := time.Now().UTC()
+	if len(id) != 22 {
+		t.Fatalf("run id = %q", id)
+	}
+	started, err := time.Parse("20060102-150405", id[:15])
+	if err != nil || started.Before(before) || started.After(after) {
+		t.Fatalf("run id = %q, start = %v, want between %v and %v, error = %v", id, started, before, after, err)
+	}
+}

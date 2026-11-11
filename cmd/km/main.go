@@ -34,6 +34,7 @@ const usage = `usage:
   km ensemble list                                         list standing ensembles
   km ensemble down [-cao URL] SESSION                       take down a standing ensemble
   km report [-json] [-since DATE] [-repository NAME] [-max-depth N] [-max-entries N] [DIR...]   summarize run records
+  km status [-json] [-max-depth N] [-max-entries N] [DIR...]   show the runs in progress
   km cue done -queue FILE CUE [NOTE]                         close a cue (chairs run this)
   km preflight -worktree DIR [-agents LIST] [-tier T]       check each agent starts and answers
   km config [-worktree DIR]                                  show the effective settings and the files they come from`
@@ -63,6 +64,8 @@ func execute(args []string, stderr io.Writer) int {
 		err = ensembleCommand(args[1:], os.Stdout)
 	case "report":
 		err = reportCommand(args[1:], os.Stdout, stderr)
+	case "status":
+		err = statusCommand(args[1:], os.Stdout, stderr)
 	case "cue":
 		err = cueCommand(args[1:])
 	case "preflight":
@@ -772,6 +775,22 @@ func runEnsemble(ctx context.Context, p ensembleRun) (sum ensembleSummary, runEr
 	}
 	fmt.Fprintf(p.Progress, "  state     %s\n", p.StateDir)
 	eng := &loop.Engine{Meter: p.Meter, Watcher: p.Watcher, Config: p.Config, Stepper: p.Stepper, Verify: p.Verify, Records: telemetry, Progress: p.Progress}
+	host, _ := os.Hostname()
+	token, _ := processStart(os.Getpid())
+	began := start.UTC()
+	state := runState{RunID: p.RunID, Command: firstNonEmpty(p.Command, "run"), Ensemble: p.Ensemble, Repository: repository, Started: began, Updated: began, MaxRounds: p.Config.MaxRounds, PID: os.Getpid(), Host: host, ProcessStart: token, Playing: []loop.ActiveStep{}}
+	warned := false
+	publish := func() {
+		if err := writeRunState(p.StateDir, state); err != nil && !warned {
+			fmt.Fprintln(os.Stderr, "km: recording current state:", plain(err.Error()))
+			warned = true
+		}
+	}
+	publish()
+	eng.Playing = func(round int, active []loop.ActiveStep) {
+		state.Round, state.Playing, state.Updated = round, active, time.Now().UTC()
+		publish()
+	}
 	res, err = eng.Run(ctx)
 	if err != nil {
 		return ensembleSummary{}, err
@@ -959,7 +978,7 @@ func addWorktree(repo, base string) (string, error) {
 func newRunID() string {
 	b := make([]byte, 3)
 	_, _ = rand.Read(b)
-	return time.Now().Format("20060102-150405") + "-" + hex.EncodeToString(b)
+	return time.Now().UTC().Format("20060102-150405") + "-" + hex.EncodeToString(b)
 }
 
 func writeJSON(path string, v any) error {

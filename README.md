@@ -15,6 +15,7 @@ km reseat SESSION ADDRESS [-agent SPEC] [-timeout D] [-cao URL]  # replace one o
 km ensemble list                                # list standing ensembles
 km ensemble down SESSION                        # take one down
 km report [-json] [-since DATE] [-repository NAME] [-max-depth N] [-max-entries N] [DIR...]  # summarize run records
+km status [-json] [-max-depth N] [-max-entries N] [DIR...]  # show runs in progress
 km preflight -worktree DIR [-tier large]          # check each agent starts and answers
 km config [-worktree DIR] [-cao URL]              # show the effective settings and their files
 ```
@@ -509,15 +510,18 @@ with the same warning and recorded reason. The old `[run] lessons_budget` key is
 
 `km report [DIR...]` summarizes run records, oldest first, followed by totals by outcome,
 repository and ensemble. With no directory it reads `<state>/runs`. `km report ~/kept-sandboxes`
-searches across kept sandbox copies. A directory
-holding `result.json` is a run; one holding only `telemetry.jsonl` counts as unfinished. The
-search stops inside each run directory, ignores directory symlinks and never follows record-file
-symlinks. An explicitly chosen root directory may itself be a symlink. A directory holding only
-`config.json` is searched for runs rather than counted as one. Agreeing copies of the same run id
-count once, preferring a finished copy over an unfinished or unreadable one, then the first path
-in lexical order. Copies that disagree on a known start, repository or finished outcome are listed
-separately; stderr names both paths and the differing fields. JSON marks their rows `conflict: true`,
-and the table counts conflicting rows. Missing values cannot hide disagreement in other copies.
+searches across kept sandbox copies. A directory holding `result.json`, `telemetry.jsonl` or
+`current.json` is a run. Without a result, a run with empty or blank-only telemetry counts as
+unfinished, with nothing printed on stderr. `config.json`, when present, can supply the run id; it
+records no start, repository or ensemble. A directory holding only `config.json` is searched for
+runs rather than counted as one. The search stops inside each run directory, ignores directory
+symlinks and never follows record-file symlinks. An explicitly chosen root directory may itself be
+a symlink. Agreeing copies of the same run id count once, preferring a finished copy over an
+unfinished or unreadable one, then the first path in lexical order. Copies that disagree on a known
+start, repository or finished outcome are listed separately; stderr names both paths and the
+differing fields. JSON marks their rows `conflict: true`, and the table counts conflicting rows.
+Missing values cannot hide disagreement in other copies. A start taken from `current.json` or from
+the run id is approximate and never counts as a disagreement.
 
 Searches are bounded because kept sandbox copies are untrusted. `-max-depth N` defaults to 64;
 the root is level 0, and directories at the limit are not opened. `-max-entries N` defaults to
@@ -527,11 +531,19 @@ report continues with what it found, exits successfully and names the unsearched
 stderr. Depth diagnostics show at most 20 paths, then a count; entry diagnostics name the first
 unsearched directory and count the rest. The table also prints the number of unsearched directories.
 
-Started comes from the first telemetry record's timestamp, shown in UTC; it is unknown without
-usable telemetry. Missing repository or ensemble fields show as `unknown`, as with an older km,
-plain chairs that omit the ensemble, or a repository without a hosted origin. Unfinished runs
-have unknown rounds and duration. Malformed records are diagnosed on stderr and counted as
-unreadable without stopping the report. Text values are escaped for safe terminal output.
+Started comes from the first non-blank telemetry record's timestamp, shown in UTC. For unfinished
+runs, `current.json` supplies the start, repository and ensemble when available. When telemetry
+is empty or blank-only and no start is recorded, the start falls back to the timestamp in the
+run id (`YYYYMMDD-HHMMSS-xxxxxx`), interpreted as UTC. Older km versions generated ids in local
+time, so this fallback can be off by the host's UTC offset for those records. Missing repository
+or ensemble fields show as `unknown`, as with an older km, plain chairs that omit the ensemble,
+or a repository without a hosted origin. Unfinished runs have unknown rounds and duration.
+
+Only the first non-blank telemetry line is read. A truncated last line after valid lines is
+ignored; real content that cannot be parsed, including a lone partial first line, is diagnosed
+on stderr and counts as unreadable unless a finished result is available. A malformed result
+also counts as unreadable. Malformed `config.json` is diagnosed without changing an unfinished
+outcome. These errors do not stop the report. Text values are escaped for safe terminal output.
 Unreadable or disappearing subdirectories are also diagnosed and counted as unreadable;
 other directories are still searched. Directory handles keep searches and record reads from
 following a symlink even if a directory is renamed during the report.
@@ -582,9 +594,38 @@ by ensemble
   thorough  1  in 1.2M out 340k
 ```
 
+## Status
+
+`km status [DIR...]` lists runs that have started and have no `result.json`. With no directory
+it reads `<state>/runs`. It shares report's search, limits (`-max-depth`, `-max-entries`, same
+defaults), handling of copies and safe record reading. A run is not listed when any copy of it has
+a result, even one that disagrees with the copy in progress. Among copies still in progress, status
+shows the one that records what is playing, most recently updated first. Status rejects a root,
+given or default, that is itself a symlink, though the path above it may pass through one. It
+escapes control characters and only reads. With no runs in progress it says so and exits 0; when a
+limit cut the search short it says how many directories were not searched instead. Diagnostics go
+to stderr. Runs with empty or blank-only telemetry are listed like other runs in progress, without
+diagnostics.
+`-json` emits `{"runs":[...]}`, including every playing step and its elapsed milliseconds;
+an empty result is `{"runs":[]}`.
+
+Each row shows the start in UTC, repository, ensemble, round, step, chair, elapsed time and
+liveness. When steps overlap, the row shows the longest-running step and `+N` for the others.
+Between steps, elapsed time is measured since the last update. `alive` means the owning km
+process is still running; `abandoned` means it is gone or its PID has been reused. `unknown`
+means liveness cannot be checked, including records copied from another machine and runs from
+before current-state recording. Other missing fields show as `unknown`.
+
+```text
+$ km status
+RUN                     STARTED              REPOSITORY             ENSEMBLE  ROUND  STEP        CHAIR                       FOR     LIVENESS
+20261111-041502-a1b2c3  2026-11-11 04:15:02  github.com/acme/other  thorough  1/3    implement   leads.implementer@thorough  41m5s   abandoned
+20261111-054930-e7c69e  2026-11-11 05:49:30  github.com/acme/app    thorough  2/3    review +1   review.security@thorough    3m12s   alive
+```
+
 ## Telemetry
 
-Run records (`config.json`, `telemetry.jsonl`, `result.json` and `replies/`) live in
+Run records (`config.json`, `telemetry.jsonl`, `current.json`, `result.json` and `replies/`) live in
 `<state dir>/runs/<run id>/`. Tester scratch lives separately in `<state dir>/scratch/<run id>/`
 and is left in place after the run. Once `telemetry.jsonl` is created, `km run` and `km play`
 write a start record and leave `result.json` on normal completion, failure or interruption, including
