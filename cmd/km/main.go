@@ -13,11 +13,11 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -80,6 +80,10 @@ func execute(args []string, stderr io.Writer) int {
 		return 1
 	}
 	if err != nil {
+		var named *loop.SignalError
+		if signalled := loop.LastSignal(); signalled != nil && errors.Is(err, context.Canceled) && !errors.As(err, &named) {
+			err = fmt.Errorf("%s: %w", signalled, err)
+		}
 		fmt.Fprintln(stderr, "km:", err)
 		return 1
 	}
@@ -334,7 +338,7 @@ func runCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	client := cao.NewClient(s.CAOURL)
 	printSources(os.Stdout, s)
@@ -377,7 +381,7 @@ func runCommand(args []string) error {
 }
 
 func preflightCommand(args []string) error {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	fs := flag.NewFlagSet("preflight", flag.ContinueOnError)
 	worktree := fs.String("worktree", "", "git worktree to start the chairs in")
@@ -638,6 +642,9 @@ func preflight(ctx context.Context, client *cao.Client, worktree string, timeout
 	}
 	if ctx.Err() != nil {
 		fmt.Printf("preflight interrupted; took down %d session(s)\n", unseated)
+		if cause := loop.SignalOf(ctx); cause != nil {
+			return cause
+		}
 		return ctx.Err()
 	}
 	if err != nil {
@@ -647,10 +654,10 @@ func preflight(ctx context.Context, client *cao.Client, worktree string, timeout
 	for _, r := range results {
 		d := (time.Duration(r.DurationMS) * time.Millisecond).Round(time.Second)
 		if r.OK {
-			fmt.Printf("  ok      %s (%s)%s\n", r.Chair, d, modelNote(r))
+			fmt.Printf("  ok      %s (%s)%s\n", r.Chair, d, modelNote(r)+seatRetryNote(r))
 			continue
 		}
-		fmt.Printf("  BLOCKED %s (%s): %s\n", r.Chair, d, firstNonEmpty(r.Blocker, r.Error))
+		fmt.Printf("  BLOCKED %s (%s): %s\n", r.Chair, d, firstNonEmpty(r.Blocker, r.Error)+seatRetryNote(r))
 		hint := r.Chair.String()
 		if r.Session != "" {
 			hint += fmt.Sprintf(": resolve it with `tmux attach -t %s`, then detach with Ctrl-b d", r.Session)
@@ -661,6 +668,13 @@ func preflight(ctx context.Context, client *cao.Client, worktree string, timeout
 		return fmt.Errorf("preflight failed for %d chair(s):\n  %s", len(blocked), strings.Join(blocked, "\n  "))
 	}
 	return nil
+}
+
+func seatRetryNote(r loop.PreflightResult) string {
+	if r.SeatRetries == 0 {
+		return ""
+	}
+	return fmt.Sprintf("; seat retried %d time(s) after %s", r.SeatRetries, r.SeatRetryError)
 }
 
 func modelNote(r loop.PreflightResult) string {
@@ -743,7 +757,9 @@ func runEnsemble(ctx context.Context, p ensembleRun) (sum ensembleSummary, runEr
 			if runErr != nil {
 				reason = runErr.Error()
 			}
-			if ctx.Err() != nil {
+			if signalled := loop.SignalOf(ctx); signalled != nil {
+				reason = signalled.Error() + ": " + reason
+			} else if ctx.Err() != nil {
 				reason = "interrupted: " + ctx.Err().Error() + ": " + reason
 			}
 			if caught != nil {

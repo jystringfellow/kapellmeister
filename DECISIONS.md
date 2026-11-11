@@ -236,3 +236,50 @@ base; the result is also the completion marker that status will need. Evidence:
 `TestARunThatPanicsAfterTelemetryStartsWritesAFailedResultAndPanicsAgain`,
 `TestPlayAndRunBothLeaveAResultWhenTheRunFailsAfterItStarted` and
 `TestRunDeletesItsSessionOnSuccessFailureAndInterrupt`.
+
+## 2026-11-11: Name the signal that ended a run, and handle SIGTERM
+
+Cancellation carries its signal cause through the score while still matching `context.Canceled`.
+SIGTERM receives the same recording and cleanup as SIGINT. After gate approval, a signalled test
+step ends `untested` and says the tester did not finish and the approval stands unverified. Both
+tester briefings identify the conductor's PID and restrict signals to processes the tester started
+and recorded. Evidence: runs lost when a tester signalled the first process named km;
+`TestAnInterruptedRunPrintsAndRecordsTheSignalThatEndedIt`,
+`TestASignalDuringTheTestStepAfterGateApprovalEndsUntestedAndSaysTheApprovalStandsUnverified`,
+`TestTheTesterBriefingNamesTheConductorsPidAndForbidsSignallingItOrProcessesFoundByName`,
+`TestASignalDuringParallelReviewsNamesTheSignal` and
+`TestASignalDuringVerificationNamesTheSignalInsteadOfACommandExitFailure`.
+
+## 2026-11-11: Seat preflight chairs one at a time and back off on CAO's session-creation race
+
+Preflight serializes session creation while checks remain concurrent. Transient seat errors
+(5xx, or a 400 naming the requested session as not found) get three retries after 1, 2 and 4 seconds,
+each under a new name. A CAO call timeout is never retried, including when the launch context
+expires before the client limit and returns `context.DeadlineExceeded`. This bounds the workaround
+to session creation, behind the existing Seat seam. Evidence: CAO logs from failed preflights showed five
+creations within 100 ms and tmux object, index and missing-session failures; immediate retries
+failed in the same burst. Tests: `TestPreflightSeatsOneChairAtATimeButChecksThemTogether`,
+`TestPreflightRetriesAnHTTP500SeatWithGrowingWaitsAndRenamedSessions`,
+`TestPreflightRetriesA400ThatSaysTheSessionJustAskedForWasNotFound`,
+`TestACancelDuringASeatBackoffEndsWithoutAnotherSeat`,
+`TestPreflightDoesNotRetryAChairWhoseCAOCallTimedOut` and
+`TestPreflightDoesNotRetryASeatWhenItsLaunchContextExpires`.
+The tester reproduced the race on CAO 2.5.4: two of five concurrent session creations returned 500
+with tmux object/index errors, while three serial creations returned 201. The earlier all-201
+probe missed this intermittent failure. Concurrent terminal additions into one existing session
+passed in both probes (five and four additions). Run steps and ensemble seating use this latter
+primitive; their creation behavior stays unchanged. See `spike/SPIKE.md`, finding 26.
+
+## 2026-11-11: A second signal kills, SIGHUP is handled, and session deletions take the seating turn
+
+A review of the two entries above found gaps. km stopped listening after the first signal only when
+the command returned, so a second SIGTERM during a long teardown did nothing; it now stops listening
+at the first signal, and a second one ends the process the default way. SIGHUP is handled like
+SIGINT and SIGTERM, because km runs beside tmux and closing its pane or killing the tmux server
+sends SIGHUP. A command that is cancelled before a run starts, or whose result is written by the
+failure path, now names the signal where it said only "context canceled". In preflight, deleting a
+session takes the same one-at-a-time turn as creating one, since a deletion overlapping another
+chair's creation is the same kind of concurrent tmux change the serial seating was meant to avoid;
+retry waits carry random jitter so two km processes do not retry in step. Not covered by a test: the
+second signal, and a deletion waiting for a creation. Two km processes preflighting at once can
+still collide on their first attempts; the turn is per process.

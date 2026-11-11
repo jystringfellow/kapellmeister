@@ -192,6 +192,7 @@ const (
 )
 
 type Result struct {
+	failure  error
 	Usage    *Usage         `json:"usage,omitempty"`
 	Lessons  *LessonsReport `json:"lessons,omitempty"`
 	Proposed []Lesson       `json:"-"`
@@ -253,6 +254,12 @@ func (e *Engine) Run(ctx context.Context) (res Result, err error) {
 	defer stopWatcher()
 	e.gateRound = 0
 	res, err = e.play(ctx)
+	if res.Outcome == Failed {
+		res.Reason = cancellationReason(ctx, res.failure)
+	}
+	if cause := SignalOf(ctx); cause != nil {
+		e.record(Record{RunID: e.Config.RunID, Step: "interrupted", Error: cause.Error()})
+	}
 	if e.Config.Lessons {
 		proposed, report := e.proposeLessons(ctx, res)
 		res.Proposed, res.Lessons = proposed, &report
@@ -294,7 +301,7 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 		go func() {
 			path := e.rel("test-plan.md")
 			_, err := e.step(testCtx, Step{Name: "test-plan", Chair: *cfg.Chairs.Tester,
-				Prompt: testPlanPrompt(cfg.Task, plan, path, cfg.ScratchDir, e.testerTimeout(), e.lessonsFor("test-plan", *cfg.Chairs.Tester)), ReplyPath: path})
+				Prompt: testPlanPrompt(cfg.Task, plan, path, cfg.ScratchDir, e.testerTimeout(), os.Getpid(), e.lessonsFor("test-plan", *cfg.Chairs.Tester)), ReplyPath: path})
 			testPlanDone <- err
 		}()
 		defer func() {
@@ -401,6 +408,17 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 			testPath := e.relf("test-%d.md", round)
 			verdict, err := e.testRound(ctx, round, plan, summary, verify, verifyPath, testPath)
 			if err != nil {
+				var interrupted *testInterruptedError
+				if errors.As(err, &interrupted) {
+					res.Outcome = Untested
+					res.Reason = "change approved by the gate but the tester did not finish: " + interrupted.Signal.Error() + "; the gate's approval stands unverified"
+					if info, err := os.Stat(filepath.Join(cfg.Worktree, interrupted.Path)); err == nil && info.Mode().IsRegular() {
+						res.Reason += "; partial report: " + interrupted.Path
+					}
+					e.progress("  %s", res.Reason)
+					e.record(Record{RunID: cfg.RunID, Round: round, Step: "unverified", Detail: res.Reason})
+					return res, nil
+				}
 				var timeout *testTimeoutError
 				if errors.As(err, &timeout) {
 					res.Outcome = Untested
@@ -434,6 +452,14 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 	return res, nil
 }
 
+type testInterruptedError struct {
+	Path   string
+	Signal *SignalError
+}
+
+func (e *testInterruptedError) Error() string { return e.Signal.Error() }
+func (e *testInterruptedError) Unwrap() error { return e.Signal }
+
 type testTimeoutError struct {
 	Path string
 	Err  error
@@ -453,13 +479,16 @@ func (e *Engine) testRound(ctx context.Context, round int, plan, summary string,
 	defer e.reportLeftRunning(round)
 	errs, err := e.readOnlySteps(ctx, []Step{{
 		Name: "test", Round: round, Chair: *e.Config.Chairs.Tester,
-		Prompt:    testPrompt(e.Config.Task, plan, e.rel("test-plan.md"), summary, e.Config.VerifyCommand, verify, verifyPath, e.Config.ScratchDir, path, e.testerTimeout(), e.lessonsFor("test", *e.Config.Chairs.Tester)),
+		Prompt:    testPrompt(e.Config.Task, plan, e.rel("test-plan.md"), summary, e.Config.VerifyCommand, verify, verifyPath, e.Config.ScratchDir, path, e.testerTimeout(), os.Getpid(), e.lessonsFor("test", *e.Config.Chairs.Tester)),
 		ReplyPath: path,
 	}})
 	if err != nil {
 		return "", err
 	}
 	if errs[0] != nil {
+		if errors.Is(errs[0], context.Canceled) && SignalOf(ctx) != nil {
+			return "", &testInterruptedError{Path: path, Signal: SignalOf(ctx)}
+		}
 		if errors.Is(errs[0], context.DeadlineExceeded) && ctx.Err() == nil {
 			return "", &testTimeoutError{Path: path, Err: errs[0]}
 		}
@@ -480,6 +509,7 @@ func lastVerdictLine(text string) string {
 func (e *Engine) fail(res Result, err error) Result {
 	res.Outcome = Failed
 	res.Reason = err.Error()
+	res.failure = err
 	return res
 }
 
@@ -651,7 +681,7 @@ func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 		closeUsage, err = e.Meter.Open(ctx, s)
 		rec.QueueMS = time.Since(queued).Milliseconds()
 		if err != nil {
-			rec.Error = err.Error()
+			rec.Error = cancellationReason(ctx, err)
 			e.record(rec)
 			return StepResult{}, err
 		}
@@ -675,7 +705,7 @@ func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 		rec.Usage = &usage
 	}
 	if err != nil {
-		rec.Error = err.Error()
+		rec.Error = cancellationReason(ctx, err)
 		rec.LastMessage = tailChars(out.LastMessage, 800)
 		if sc, ok := e.Stepper.(Screener); ok && out.TerminalID != "" {
 			if _, screen, serr := sc.Screen(context.WithoutCancel(ctx), out.TerminalID); serr == nil {
@@ -684,7 +714,7 @@ func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 		}
 	}
 	e.record(rec)
-	e.progress("  %s in %s%s%s", strings.TrimSpace(s.ChairName+" "+statusOf(out, err)), secs(rec.DurationMS), waitNote(rec.ReplyWaitMS), errSuffix(err))
+	e.progress("  %s in %s%s%s", strings.TrimSpace(s.ChairName+" "+statusOf(out, err)), secs(rec.DurationMS), waitNote(rec.ReplyWaitMS), errSuffix(cancellationCause(ctx, err)))
 	return out, err
 }
 
@@ -775,21 +805,25 @@ func (e *Engine) reviewRound(ctx context.Context, round int, plan, summary strin
 	if err != nil {
 		return nil, err
 	}
-	var failures []string
+	var failures []error
 	for i, err := range errs {
 		if err == nil {
 			continue
 		}
 		reviews[i].Err, reviews[i].Verdict = err, VerdictFailed
-		failures = append(failures, fmt.Sprintf("%s: %s", reviews[i].Name, err))
+		failures = append(failures, fmt.Errorf("%s: %w", reviews[i].Name, err))
 		e.record(Record{RunID: e.Config.RunID, Round: round, Step: "verdict-review", ChairName: steps[i].ChairName,
-			Verdict: VerdictFailed, Reply: reviews[i].Path, Error: err.Error()})
+			Verdict: VerdictFailed, Reply: reviews[i].Path, Error: cancellationReason(ctx, err)})
 	}
 	if len(failures) == len(chairs) {
 		if len(chairs) == 1 {
 			return nil, errs[0]
 		}
-		return nil, fmt.Errorf("every reviewer failed: %s", strings.Join(failures, "; "))
+		combined := failures[0]
+		for _, failure := range failures[1:] {
+			combined = fmt.Errorf("%w; %w", combined, failure)
+		}
+		return nil, fmt.Errorf("every reviewer failed: %w", combined)
 	}
 	for _, err := range classifyErrs {
 		if err != nil {
@@ -875,7 +909,7 @@ func (e *Engine) runVerify(ctx context.Context, round int, path string) (VerifyR
 	code := v.ExitCode
 	rec := Record{RunID: e.Config.RunID, Round: round, Step: verifyStepName(round), DurationMS: time.Since(start).Milliseconds(), ExitCode: &code, Attempts: v.Attempts, Reply: path}
 	if err != nil {
-		rec.Error = err.Error()
+		rec.Error = cancellationReason(ctx, err)
 	}
 	e.record(rec)
 	if err != nil {
@@ -1049,6 +1083,9 @@ func CommandVerifier(command string) Verifier {
 		cmd := exec.CommandContext(ctx, "sh", "-c", command)
 		cmd.Dir = dir
 		out, err := cmd.CombinedOutput()
+		if ctx.Err() != nil {
+			return VerifyResult{Output: string(out)}, ctx.Err()
+		}
 		var exit *exec.ExitError
 		if errors.As(err, &exit) {
 			return VerifyResult{ExitCode: exit.ExitCode(), Output: string(out)}, nil

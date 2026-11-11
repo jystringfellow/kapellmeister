@@ -373,6 +373,40 @@ repo. Chairs: `km-claude` (Haiku 5.5), `km-codex` (GPT-6 Luna), `km-copilot` (Ha
     `TestOnlyAStructuredRunStepTimeoutMatchesDeadlineExceeded` exercises the response shape,
     including metadata after a long message; other statuses, kinds and endpoints do not match.
 
+26. **Session creation and terminal addition were exercised separately for the preflight race.**
+    On 2026-11-11 against CAO 2.5.4's existing local tmux server, five simultaneous
+    `POST /sessions` calls with distinct `cao-km-probe-e78caa8d1873-*` names all returned 201.
+    A second disposable session, `cao-km-probe-aeea25ed42bf-shared`, accepted five simultaneous
+    `POST /sessions/{name}/terminals` calls, all returning 201 with distinct terminal IDs. These
+    launched real `claude_code` / `km-claude` terminals in scratch directories with isolated km
+    state; no task was sent. Every chosen session was deleted by exact name, returning 200.
+    The initial probe missed the intermittent race. In the tester's subsequent 2026-11-11 check,
+    five concurrent `POST /sessions` calls on the same CAO 2.5.4 returned three 201s and two 500s:
+    `Failed to create session 'cao-kmtest-…-2': Could not find object` and
+    `Failed to create session 'cao-kmtest-…-4': list index out of range`. The failures arrived
+    after about 50 ms; successful launches took about 10 s. Three serial creations all returned
+    201. Four concurrent terminal additions to one session also all returned 201. All sessions
+    were deleted by exact name (200), and the pre-existing sessions remained. The server was
+    never restarted. Run steps use an existing podium session, and ensemble seating creates one
+    session then adds terminals. Their behavior stays unchanged: neither probe found a failure
+    for concurrent terminal additions. Preflight serializes new sessions and backs off on the
+    observed session-creation errors.
+    A live fixed `km preflight -agents claude,codex -timeout 90s` in a fresh scratch repository
+    passed both chairs (exit 0). HTTP recording showed three 201 session creations, including
+    one chair's existing readiness retry, and three matching 200 deletions. GET of each exact
+    chosen session name then returned 404. km used separate temporary home/state directories;
+    no existing ensemble or profile was changed.
+    The tester also hung a fake CAO's `POST /sessions` past the 90 s seat bound. km's launch
+    context expired before the client's own limit, so the real HTTP client returned bare
+    `context.DeadlineExceeded`, not `*cao.TimeoutError`. Checking only that concrete timeout
+    type wrongly retried the seat once. Preflight now matches `context.DeadlineExceeded` through
+    wrapping, covering both forms without retrying; failed-seat cleanup still uses the chosen
+    name. A follow-up executable check against a hanging local HTTP server confirmed one seat
+    request, one deletion of that exact name, BLOCKED with `context deadline exceeded` after
+    90 s, and exit 1 without a retry. It used an isolated scratch repository and km state.
+    `TestPreflightDoesNotRetryASeatWhenItsLaunchContextExpires` exercises the real client with
+    virtual time so CI need not wait 90 s.
+
 ## Implications for the team layer
 
 - km owns the queue of obligations, as decided: a cue is done only when its reply lands in the km

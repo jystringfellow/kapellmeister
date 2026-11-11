@@ -212,13 +212,16 @@ func TestACancelDuringAFailedCAOSeatStillDeletesTheSessionNamedByItsTerminal(t *
 }
 
 func TestPreflightAgainstCAODeletesTheChosenNameWhenSeatingReturnsNoIdentity(t *testing.T) {
+	originalBackoff := seatRetryBackoff
+	seatRetryBackoff = []time.Duration{time.Millisecond, 2 * time.Millisecond, 4 * time.Millisecond}
+	t.Cleanup(func() { seatRetryBackoff = originalBackoff })
 	for _, tc := range []struct {
 		name     string
 		cancelAt int
 		timeout  bool
 		absent   bool
 	}{
-		{name: "both launches fail after creating a session"},
+		{name: "every launch fails after creating a session"},
 		{name: "launch times out after creating a session", timeout: true},
 		{name: "cancel during first failed launch", cancelAt: 1},
 		{name: "cancel during failed retry", cancelAt: 2},
@@ -301,7 +304,10 @@ func TestPreflightAgainstCAODeletesTheChosenNameWhenSeatingReturnsNoIdentity(t *
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			attempts := 2
+			attempts := 4
+			if tc.cancelAt == 2 {
+				attempts = 2
+			}
 			if tc.timeout || tc.cancelAt == 1 {
 				attempts = 1
 			}
@@ -353,6 +359,49 @@ func TestALessonsTerminalIsInspectedAfterItsStepDeadlineExpires(t *testing.T) {
 		out, err := (CAOStepper{Client: client}).Run(ctx, Step{Name: "lessons", Timeout: time.Second})
 		if err != nil || ctx.Err() != context.DeadlineExceeded || out.TerminalID != "lessons-terminal" || out.ReportedModel != "gate-model" || out.ModelHonored == nil || !*out.ModelHonored {
 			t.Fatalf("result = %+v, error = %v, context = %v", out, err, ctx.Err())
+		}
+	})
+}
+
+func TestPreflightDoesNotRetryASeatWhenItsLaunchContextExpires(t *testing.T) {
+	dir := t.TempDir()
+	synctest.Test(t, func(t *testing.T) {
+		client := cao.NewClient("http://cao.invalid")
+		client.LaunchTimeout = 2 * time.Minute
+		var chosen, deleted []string
+		var callError error
+		client.HTTP.Transport = stepperTransport(func(req *http.Request) (*http.Response, error) {
+			switch {
+			case req.Method == "POST" && req.URL.Path == "/sessions":
+				chosen = append(chosen, req.URL.Query().Get("session_name"))
+				<-req.Context().Done()
+				callError = req.Context().Err()
+				return nil, callError
+			case req.Method == "DELETE" && strings.HasPrefix(req.URL.Path, "/sessions/"):
+				if req.Context().Err() != nil {
+					t.Errorf("cleanup context: %v", req.Context().Err())
+				}
+				deleted = append(deleted, strings.TrimPrefix(req.URL.Path, "/sessions/"))
+				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+			default:
+				t.Errorf("unexpected request: %s %s", req.Method, req.URL.Path)
+				return nil, errors.New("unexpected request")
+			}
+		})
+		results, err := Preflight(context.Background(), CAOStepper{Client: client}, dir, []Chair{{Provider: "a"}}, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if callError != context.DeadlineExceeded {
+			t.Fatalf("call error = %v", callError)
+		}
+		if len(chosen) != 1 {
+			t.Errorf("seat requests = %v, want one timed-out attempt", chosen)
+		}
+		equal(t, deleted, chosen)
+		r := results[0]
+		if r.OK || r.Retried || r.SeatRetries != 0 || r.Error != context.DeadlineExceeded.Error() || r.Unseated != 1 || len(r.TeardownErrors) != 0 {
+			t.Errorf("timed-out seat result = %+v", r)
 		}
 	})
 }

@@ -26,6 +26,7 @@ type runCAO struct {
 	polled          int
 	fake            playCAO
 	interrupt       bool
+	signal          os.Signal
 	watch           bool
 	deleteFails     bool
 	poll            chan struct{}
@@ -75,8 +76,12 @@ func (f *runCAO) serve(t *testing.T) *httptest.Server {
 			return
 		case r.Method == "POST" && r.URL.Path == "/terminals/run-step":
 			if f.interrupt {
+				signalToSend := f.signal
+				if signalToSend == nil {
+					signalToSend = syscall.SIGINT
+				}
 				io.Copy(io.Discard, r.Body)
-				if err := syscall.Kill(os.Getpid(), syscall.SIGINT); err != nil {
+				if err := syscall.Kill(os.Getpid(), signalToSend.(syscall.Signal)); err != nil {
 					t.Error(err)
 				}
 				select {
@@ -246,4 +251,46 @@ func captureRunStderr(t *testing.T, run func()) string {
 		t.Fatal(err)
 	}
 	return string(data)
+}
+
+func TestAnInterruptedRunPrintsAndRecordsTheSignalThatEndedIt(t *testing.T) {
+	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM} {
+		t.Run(sig.String(), func(t *testing.T) {
+			f := &runCAO{interrupt: true, signal: sig}
+			_, args := runSessionArgs(t, f)
+			output, err := captureStdout(t, func() error { return runCommand(args) })
+			if !errors.Is(err, errNotApproved) {
+				t.Fatalf("error %v", err)
+			}
+			want := "interrupted by SIGINT"
+			if sig == syscall.SIGTERM {
+				want = "interrupted by SIGTERM"
+			}
+			if (!strings.Contains(output, "failed after") || !strings.Contains(output, ": "+want)) || strings.Contains(output, "context canceled") {
+				t.Errorf("output: %s", output)
+			}
+			paths, _ := filepath.Glob(filepath.Join(loop.StateDir(), "runs", "*", "result.json"))
+			if len(paths) != 1 {
+				t.Fatalf("result files: %v", paths)
+			}
+			data, err := os.ReadFile(paths[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			var res loop.Result
+			if err := json.Unmarshal(data, &res); err != nil {
+				t.Fatal(err)
+			}
+			if res.Outcome != loop.Failed || res.Reason != want {
+				t.Errorf("result %+v", res)
+			}
+			data, err = os.ReadFile(filepath.Join(filepath.Dir(paths[0]), "telemetry.jsonl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(data), `"step":"interrupted"`) || !strings.Contains(string(data), want) || strings.Contains(string(data), "context canceled") {
+				t.Errorf("telemetry %s", data)
+			}
+		})
+	}
 }

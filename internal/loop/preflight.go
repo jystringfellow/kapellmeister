@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	mathrand "math/rand/v2"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -18,6 +19,8 @@ import (
 )
 
 type PreflightResult struct {
+	SeatRetries    int      `json:"seat_retries,omitempty"`
+	SeatRetryError string   `json:"seat_retry_error,omitempty"`
 	Unseated       int      `json:"unseated,omitempty"`
 	TeardownErrors []string `json:"teardown_errors,omitempty"`
 	Chair          Chair    `json:"chair"`
@@ -60,6 +63,7 @@ func Preflight(ctx context.Context, stepper interface {
 	prefix := "cao-km-preflight-" + hex.EncodeToString(nonce[:])
 	results := make([]PreflightResult, len(chairs))
 	sessions := make([][]string, len(chairs))
+	seatSlot := make(chan struct{}, 1)
 	var booting atomic.Int64
 	var wg sync.WaitGroup
 	for i, chair := range chairs {
@@ -67,7 +71,7 @@ func Preflight(ctx context.Context, stepper interface {
 		go func() {
 			defer wg.Done()
 			name := fmt.Sprintf("%s-%d", prefix, i)
-			results[i], sessions[i] = preflightChairAttempts(ctx, stepper, worktree, i, chair, timeout, name, &booting)
+			results[i], sessions[i] = preflightChairAttempts(ctx, stepper, worktree, i, chair, timeout, name, &booting, seatSlot)
 		}()
 	}
 	done := make(chan struct{})
@@ -90,11 +94,13 @@ func Preflight(ctx context.Context, stepper interface {
 func preflightChairAttempts(ctx context.Context, stepper interface {
 	Stepper
 	Seater
-}, worktree string, i int, chair Chair, timeout time.Duration, name string, booting *atomic.Int64) (PreflightResult, []string) {
+}, worktree string, i int, chair Chair, timeout time.Duration, name string, booting *atomic.Int64, seatSlot chan struct{}) (PreflightResult, []string) {
 	var sessions []string
 	var unseated int
 	var teardownErrors []string
 	unseat := func(session string) {
+		seatSlot <- struct{}{}
+		defer func() { <-seatSlot }()
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
 		if err := stepper.Unseat(cleanupCtx, session); err != nil {
@@ -104,19 +110,53 @@ func preflightChairAttempts(ctx context.Context, stepper interface {
 			unseated++
 		}
 	}
-	res, err := preflightChair(ctx, stepper, worktree, i, chair, timeout, name, booting)
-	unseated += res.Unseated
-	teardownErrors = append(teardownErrors, res.TeardownErrors...)
-	var timeoutErr *cao.TimeoutError
-	if !res.OK && res.Blocker == "" && ctx.Err() == nil && !errors.As(err, &timeoutErr) {
-		if res.Session != "" {
-			unseat(res.Session)
+
+	var res PreflightResult
+	var err error
+	seatRetries := 0
+	seatRetryError := ""
+	for attempt := 0; ; attempt++ {
+		attemptName := name
+		if attempt == 1 {
+			attemptName += "r"
+		} else if attempt > 1 {
+			attemptName += fmt.Sprintf("r%d", attempt)
 		}
-		res, _ = preflightChair(ctx, stepper, worktree, i, chair, timeout, name+"r", booting)
+		res, err = preflightChair(ctx, stepper, worktree, i, chair, timeout, attemptName, booting, seatSlot)
 		unseated += res.Unseated
 		teardownErrors = append(teardownErrors, res.TeardownErrors...)
-		res.Retried = true
+		res.Retried = attempt > 0
+		if res.OK || res.Blocker != "" || ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
+			break
+		}
+		var seatErr *seatFailure
+		transient := errors.As(err, &seatErr) && transientSeatFailure(err, attemptName)
+		if !transient && attempt >= 1 || transient && attempt >= len(seatRetryBackoff) {
+			break
+		}
+		if res.Session != "" {
+			unseat(res.Session)
+			res.Session, res.TerminalID = "", ""
+		}
+		if transient {
+			if seatRetryError == "" {
+				seatRetryError = err.Error()
+			}
+			wait := seatRetryBackoff[attempt]
+			timer := time.NewTimer(wait + time.Duration(mathrand.Int64N(int64(wait)/2+1)))
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+			case <-timer.C:
+			}
+			if ctx.Err() != nil {
+				break
+			}
+			seatRetries++
+		}
 	}
+	res.SeatRetries, res.SeatRetryError = seatRetries, seatRetryError
+
 	if res.Session != "" {
 		if res.OK && ctx.Err() == nil {
 			unseat(res.Session)
@@ -155,12 +195,21 @@ func unseatInterruptedPreflight(ctx context.Context, seater Seater, results []Pr
 func preflightChair(ctx context.Context, stepper interface {
 	Stepper
 	Seater
-}, worktree string, i int, chair Chair, timeout time.Duration, name string, booting *atomic.Int64) (PreflightResult, error) {
+}, worktree string, i int, chair Chair, timeout time.Duration, name string, booting *atomic.Int64, seatSlot chan struct{}) (PreflightResult, error) {
 	rel := filepath.Join(RunDirRel("preflight"), fmt.Sprintf("%d-%s.txt", i, chair.Provider))
 	abs := filepath.Join(worktree, rel)
 	_ = os.Remove(abs)
 	res := PreflightResult{Chair: chair}
 	if err := ctx.Err(); err != nil {
+		return res, err
+	}
+	select {
+	case seatSlot <- struct{}{}:
+	case <-ctx.Done():
+		return res, ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		<-seatSlot
 		return res, err
 	}
 	start := time.Now()
@@ -175,6 +224,9 @@ func preflightChair(ctx context.Context, stepper interface {
 	if err == nil && (seat.TerminalID == "" || seat.Session == "") {
 		err = errors.New("preflight seat returned no terminal or session")
 	}
+	if err != nil {
+		err = &seatFailure{err}
+	}
 	if err != nil && seat.Session == "" {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		if cleanupErr := stepper.Unseat(cleanupCtx, name); cleanupErr != nil {
@@ -184,6 +236,7 @@ func preflightChair(ctx context.Context, stepper interface {
 		}
 		cleanupCancel()
 	}
+	<-seatSlot
 	if ctx.Err() != nil {
 		return res, ctx.Err()
 	}
@@ -279,4 +332,21 @@ func FindBlocker(screen string) string {
 		}
 	}
 	return ""
+}
+
+var seatRetryBackoff = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}
+
+type seatFailure struct{ error }
+
+func (e *seatFailure) Unwrap() error { return e.error }
+
+func transientSeatFailure(err error, name string) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var httpErr *cao.HTTPError
+	if !errors.As(err, &httpErr) {
+		return false
+	}
+	return httpErr.Status >= 500 && httpErr.Status < 600 || httpErr.Status == 400 && strings.Contains(httpErr.Body, "Session '"+name+"' not found")
 }

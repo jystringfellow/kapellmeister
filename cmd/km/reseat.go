@@ -6,8 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"github.com/jystringfellow/kapellmeister/internal/cao"
 	"github.com/jystringfellow/kapellmeister/internal/ensemble"
@@ -63,7 +63,7 @@ func reseatCommand(args []string) error {
 	if *timeout == 0 {
 		*timeout = s.PreflightTimeout
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	client := cao.NewClient(firstNonEmpty(*caoURL, s.CAOURL))
 	m := standing.Members()[index]

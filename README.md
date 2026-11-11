@@ -42,6 +42,22 @@ whole configured reviewer list for one run. Each reviewer runs concurrently in i
 terminal and resolves its tier separately: pinned reviewers keep their tier, while unpinned
 reviewers follow sizing. Other required parts have one chair; the optional tester has at most one.
 
+## Preflight
+
+`km preflight -worktree DIR [-agents claude,codex]` seats each chair in its own temporary CAO
+session, one at a time. Checks run concurrently once their chairs are seated. Session-creation
+5xx errors and a 400 saying the requested session was not found get up to three retries, after
+1, 2 and 4 seconds plus up to half as much again at random, under distinct names ending in `r`, `r2` and `r3`. The `ok` or `BLOCKED` line
+reports `seat retried N time(s) after <first error>`. Other failures keep one immediate retry;
+CAO call timeouts, including an expired launch context, and permission blockers are not retried.
+A seat launch is bounded at 90 seconds; other seats wait for that launch to finish. Deleting a
+session also waits its turn, so a deletion never overlaps another chair's creation.
+
+km cleans up failed launches by their exact chosen session names, deletes passing chairs' sessions,
+and keeps blocked chairs' attach targets. SIGINT, SIGTERM or SIGHUP waits for any bounded launch already
+in progress, then tears down this preflight's sessions. Cancellation also stops queued seats and
+retry waits. Teardown failures are reported by session name.
+
 ## Audition
 
 `km audition -worktree DIR [-ensemble NAME]` checks that an ensemble can play without doing any
@@ -326,8 +342,9 @@ or `CHANGES` last line is taken as is; otherwise the classifier reads the report
 APPROVE yields an `approved` outcome. Any other verdict sends the test report back as the leading
 feedback, with instructions to reproduce each failure in a failing regression test before fixing
 it. Later rounds reuse the same test plan.
-A test-step timeout after gate approval ends `untested`: the change was approved but testing did
-not finish. The outcome names the partial report if it exists and preserves the worktree and its
+A test-step timeout or a SIGINT/SIGTERM during the test step after gate approval ends `untested`:
+the change was approved but testing did not finish. A signal names the signal and says the tester
+did not finish and the gate's approval stands unverified, in both the output and the run record. The outcome names the partial report if it exists and preserves the worktree and its
 uncommitted change as an approved run would. Other test-step failures, and a timeout or failure in
 any other score step, still fail the run. The test step gets the same worktree check as the gate and
 reviewers; a tester that modifies the worktree still fails the run even if it also times out.
@@ -337,7 +354,10 @@ the absolute `<state dir>/scratch/<run id>` directory, outside the worktree.
 work tree; set `KAPELLMEISTER_STATE_DIR` outside any repository. The test prompt permits git commands
 that write only in repositories the tester created inside scratch, always using `git -C <repository>`.
 The tester must append every long-running process's PID to `<scratch>/pids`, one per line, and stop
-those processes and its sessions before finishing, without touching anyone else's. After every
+those processes and its sessions before finishing, without touching anyone else's. Both tester
+briefings name the conductor's process ID and forbid signalling or killing it, or any process
+found by name (`pgrep`, `pkill`, `killall`, `ps | grep`). The tester may signal only processes it
+started itself and recorded in `<scratch>/pids`. After every
 test step, including failure, timeout or interruption, km reports each distinct listed process still alive as
 `  left running: pid <pid> (<command>)` and records its PID and command in `left-running` telemetry.
 km never signals these processes. It silently skips non-regular `pids` files (including FIFOs) and
@@ -472,8 +492,12 @@ in the selected ensemble to turn escalation off for that run. `true` or an omitt
 `escalate_after = 0`.
 
 `km run` and `km play` exit 0 only for an `approved` outcome. Every other outcome, including `untested`
-(approved but testing timed out), a failed, interrupted or rounds-exhausted run, exits 1 after
-printing the outcome and diff-stat. Missing or unknown subcommands exit 2.
+(approved but testing did not finish), a failed, interrupted or rounds-exhausted run, exits 1 after
+printing the outcome and diff-stat. SIGINT, SIGTERM and SIGHUP cancel steps and allow cleanup; a run
+ended by a signal names it, such as `interrupted by SIGINT`, in the output, `result.json` and
+telemetry. A second signal while km is cleaning up ends it at once. `km audition`, `rehearse` and
+`reseat` name the signal in their error line. Cancellation from another cause keeps its usual wording. Missing or unknown subcommands
+exit 2.
 
 ## Checked-in lessons
 
@@ -639,6 +663,9 @@ and `escalate` records for each decision. Lessons add a `lessons` step record an
 `lessons-proposed` summary (also recorded when collection is skipped); the step uses the `gate` tier. A seated tester adds `test-plan`, `test`,
 `classify-test`, `verdict-test` and any `left-running` records; both tester steps use the `test` tier. With several reviewers,
 their review, nudge, classification and verdict records include `chair_name` (`reviewer-1`, `reviewer-2`, etc.).
+A signal adds an `interrupted` record naming the signal. A signalled test step after gate approval
+also adds `unverified`, recording that the tester did not finish and the gate's approval stands
+unverified.
 A failed review has verdict `FAILED` and its error; single-reviewer records omit `chair_name`.
 `verdict-review`, `verdict-gate` and `verdict-test` records include `verdict_source: "reply"` when a
 bare last line supplies the verdict; these replies produce no corresponding `classify-*` record.

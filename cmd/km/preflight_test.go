@@ -87,3 +87,64 @@ func TestAnInterruptedPreflightReportsTeardownAndPrintsNoAttachHints(t *testing.
 		})
 	}
 }
+
+func TestPreflightPrintsWhenASeatWasRetried(t *testing.T) {
+	for _, blocked := range []bool{false, true} {
+		t.Run(fmt.Sprint("blocked=", blocked), func(t *testing.T) {
+			dir := t.TempDir()
+			attempts := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == "POST" && r.URL.Path == "/sessions":
+					attempts++
+					name := r.URL.Query().Get("session_name")
+					if attempts == 1 {
+						http.Error(w, "Could not find object", 500)
+						return
+					}
+					if attempts == 2 {
+						http.Error(w, fmt.Sprintf(`{"detail":"Session '%s' not found"}`, name), 400)
+						return
+					}
+					json.NewEncoder(w).Encode(cao.Terminal{ID: "ours", SessionName: name})
+				case r.Method == "POST" && r.URL.Path == "/terminals/run-step":
+					if blocked {
+						http.Error(w, "check failed", 400)
+						return
+					}
+					writeFile(t, filepath.Join(dir, loop.RunDirRel("preflight"), "0-a.txt"), "ready")
+					json.NewEncoder(w).Encode(cao.StepResponse{TerminalID: "ours", Status: "completed"})
+				case r.Method == "GET":
+					json.NewEncoder(w).Encode(cao.Terminal{ID: "ours"})
+				default:
+					w.Write([]byte(`{}`))
+				}
+			}))
+			defer srv.Close()
+			output, err := captureStdout(t, func() error {
+				return preflight(context.Background(), cao.NewClient(srv.URL), dir, time.Minute, loop.Chair{Provider: "a"})
+			})
+			if (err != nil) != blocked {
+				t.Errorf("error %v", err)
+			}
+			label := "ok"
+			if blocked {
+				label = "BLOCKED"
+			}
+			if !strings.Contains(output, label) || !strings.Contains(output, "seat retried 2 time(s) after") || !strings.Contains(output, "Could not find object") {
+				t.Errorf("output: %s", output)
+			}
+		})
+	}
+}
+
+func TestAnInterruptedPreflightCommandReturnsTheSignalNotContextCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(&loop.SignalError{Signal: os.Interrupt})
+	output, err := captureStdout(t, func() error {
+		return preflight(ctx, cao.NewClient("http://127.0.0.1:1"), t.TempDir(), time.Minute, loop.Chair{Provider: "a"})
+	})
+	if err == nil || err.Error() != "interrupted by SIGINT" || !errors.Is(err, context.Canceled) {
+		t.Errorf("error %v; output %s", err, output)
+	}
+}
