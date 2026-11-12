@@ -111,6 +111,9 @@ type FileConfig struct {
 	CAO  struct {
 		URL string `toml:"url"`
 	} `toml:"cao"`
+	Report struct {
+		Dirs []string `toml:"dirs"`
+	} `toml:"report"`
 	Run    RunConfig            `toml:"run"`
 	Chairs map[string]ChairSpec `toml:"chairs"`
 	Agents struct {
@@ -124,6 +127,7 @@ type FileConfig struct {
 }
 
 type Settings struct {
+	ReportDirs       []string            `json:"report_dirs,omitempty"`
 	Defined          Agents              `json:"-"`
 	BaseBranch       string              `json:"base_branch"`
 	WorktreeDir      string              `json:"worktree_dir"`
@@ -209,7 +213,7 @@ func DefaultSettings() Settings {
 }
 
 var (
-	userOnlySections = []string{"cao", "chairs", "agents", "ensembles"}
+	userOnlySections = []string{"cao", "chairs", "agents", "ensembles", "report"}
 	repoOnlySections = []string{"test"}
 )
 
@@ -243,6 +247,10 @@ func LoadSettings(home, worktree string) (Settings, error) {
 		s.Files = append(s.Files, filepath.Join(worktree, ConfigFile))
 	}
 
+	s.ReportDirs, err = user.reportDirs()
+	if err != nil {
+		return s, err
+	}
 	s.Ensembles = user.Ensembles
 	s.CAOURL = firstSet(os.Getenv(CAOURLEnv), user.CAO.URL, s.CAOURL)
 	s.Defined, err = s.Defined.With(user.Agents.Define)
@@ -334,6 +342,43 @@ func decodeConfig(data []byte, name string) (loadedConfig, error) {
 	}
 	cfg.md = md
 	return cfg, nil
+}
+
+func LoadReportDirs(home string) (dirs []string, source string, err error) {
+	path := UserConfigPath(home)
+	cfg, found, err := loadConfigFile(path, path)
+	if err != nil || !found {
+		return nil, "", err
+	}
+	dirs, err = cfg.reportDirs()
+	return dirs, path, err
+}
+
+func (cfg loadedConfig) reportDirs() ([]string, error) {
+	var dirs []string
+	seen := make(map[string]bool, len(cfg.Report.Dirs))
+	for i, dir := range cfg.Report.Dirs {
+		key := fmt.Sprintf("%s: report.dirs[%d]", cfg.name, i)
+		if strings.TrimSpace(dir) == "" {
+			return nil, fmt.Errorf("%s: must not be empty", key)
+		}
+		if strings.HasPrefix(dir, "~/") {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", key, err)
+			}
+			dir = filepath.Join(home, dir[2:])
+		}
+		if !filepath.IsAbs(dir) {
+			return nil, fmt.Errorf("%s: must be an absolute path or start with ~/", key)
+		}
+		dir = filepath.Clean(dir)
+		if !seen[dir] {
+			dirs = append(dirs, dir)
+			seen[dir] = true
+		}
+	}
+	return dirs, nil
 }
 
 func refuseRunKey(cfg loadedConfig, key, destination string) error {

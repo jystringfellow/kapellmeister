@@ -190,6 +190,7 @@ func TestStatusJSONPrintsTheSameRunsWithTheirPlayingStepsAndLiveness(t *testing.
 }
 
 func TestStatusWithNothingInProgressSaysSoAndExitsZero(t *testing.T) {
+	t.Setenv(loop.HomeEnv, t.TempDir())
 	t.Setenv(loop.StateEnv, t.TempDir())
 	if out, _ := captureStatus(t); out != "no runs in progress\n" {
 		t.Fatal(out)
@@ -292,6 +293,7 @@ func TestStatusOnlyReads(t *testing.T) {
 }
 
 func TestStatusReadsEveryDirectoryGivenAndTheDefaultStateRuns(t *testing.T) {
+	t.Setenv(loop.HomeEnv, t.TempDir())
 	a, b := t.TempDir(), t.TempDir()
 	t.Setenv(loop.StateEnv, a)
 	statusFixture(t, filepath.Join(a, "runs"), "default")
@@ -475,6 +477,7 @@ func TestStatusSaysWhenItsSearchWasCutShortAndNamesItsOwnLimit(t *testing.T) {
 }
 
 func TestStatusRefusesADefaultRunsDirectoryThatIsADanglingLink(t *testing.T) {
+	t.Setenv(loop.HomeEnv, t.TempDir())
 	state := t.TempDir()
 	t.Setenv(loop.StateEnv, state)
 	if err := os.Symlink(filepath.Join(state, "gone"), filepath.Join(loop.StateDir(), "runs")); err != nil {

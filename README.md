@@ -414,13 +414,13 @@ optional, and unknown keys are an error. To run without explicit chairs, configu
 available agent in your user config.
 
 - **`~/.kapellmeister/config.toml`** (`$KAPELLMEISTER_HOME` moves it) holds what depends on your machine and accounts:
-  `[cao]`, `[chairs]`, `[agents]`, `[ensembles]`, timeouts, and the model each tier means for you.
+  `[cao]`, `[chairs]`, `[agents]`, `[ensembles]`, `[report]`, timeouts, and the model each tier means for you.
 - **`.kapellmeister/config.toml`** in the repository holds the contract everyone working in it shares:
   `[test]`, step tiers and floors, rounds, learned budget and sizing.
 
 The repository's values win for `[run]` rounds, retries, `lessons`, `lessons_timeout` and `learned_budget`, `[steps]` and `[sizing]`; yours win
-for `[tiers]`, because only you know what your accounts can run. `[cao]`, `[chairs]`, `[agents]` and
-`[ensembles]` and `[run] worktree_dir` are machine-only; `[test]` and `[run] base` are repository-only.
+for `[tiers]`, because only you know what your accounts can run. `[cao]`, `[chairs]`, `[agents]`,
+`[ensembles]`, `[report]` and `[run] worktree_dir` are machine-only; `[test]` and `[run] base` are repository-only.
 Putting one in the wrong file is an error.
 `$CAO_API_BASE_URL` overrides `[cao] url`. State lives in `~/.kapellmeister/state` (`$KAPELLMEISTER_STATE_DIR`).
 
@@ -486,6 +486,9 @@ Select it with `km audition -worktree DIR -ensemble solo` or
 # ~/.kapellmeister/config.toml
 [cao]
 url = "http://127.0.0.1:9889"
+
+[report]
+dirs = ["~/kept-sandboxes", "~/.kapellmeister/state/runs"]
 
 [run]
 timeout = "60m"                     # each agent step
@@ -788,8 +791,39 @@ What a repository needs its ensemble to know is checked in to that repository.
 ## Report
 
 `km report [DIR...]` summarizes run records, oldest first, followed by totals by outcome,
-repository and ensemble. With no directory it reads `<state>/runs`. `km report ~/kept-sandboxes`
-searches across kept sandbox copies. A directory holding `result.json`, `telemetry.jsonl` or
+repository and ensemble. With no directory it reads `<state>/runs`, unless your user config sets
+`[report] dirs`. `km report ~/kept-sandboxes` searches across kept sandbox copies.
+
+To choose the directories a bare `km report` or `km status` searches, add this to
+`~/.kapellmeister/config.toml` (`$KAPELLMEISTER_HOME` moves this file):
+
+```toml
+[report]
+dirs = ["~/kept-sandboxes", "~/.kapellmeister/state/runs"]
+```
+
+This table belongs only in the user config; putting it in a repository config is an error.
+Directories on the command line replace the setting completely, without reading the user config.
+With a non-empty list, `<state>/runs` is searched only if listed. An absent or empty list keeps the
+usual `<state>/runs` default and adds nothing to the output. `km config` shows the configured list.
+Bare report and status commands read the user config, so malformed TOML or unknown keys there are
+errors even when no report directories are set; unrelated chair and policy settings are not validated.
+
+Each path must be absolute or start with `~/`, which expands to the user's home. Relative paths,
+a bare `~` and empty or whitespace-only entries are errors. Paths are cleaned, and exact duplicates
+are removed, keeping the first position. Overlapping directories and roots reached through symlinks
+count each run once, with the same handling of copies as named directories. A missing configured
+directory, or a path that is a file, is an error before any report is printed, just like a missing
+named directory; the error names the setting and its config file. A missing implicit `<state>/runs`
+is still silently skipped.
+
+When the setting supplies directories, text output ends with one `searched: <path>` line per
+directory in configured order, before report's `not searched:` count if present. These lines also
+appear when no runs match. JSON adds a `searched` array with the expanded, cleaned paths. The
+existing filters, parts breakdown and search limits work with configured directories too; entry
+limits apply across the whole search.
+
+A directory holding `result.json`, `telemetry.jsonl` or
 `current.json` is a run. Without a result, a run with empty or blank-only telemetry counts as
 unfinished, with nothing printed on stderr. `config.json`, when present, can supply the run id; it
 records no start, repository or ensemble. A directory holding only `config.json` is searched for
@@ -1007,17 +1041,20 @@ p         beta   1        0        0        0       0/0            0/0          
 ## Status
 
 `km status [DIR...]` lists runs that have started and have no `result.json`. With no directory
-it reads `<state>/runs`. It shares report's search, limits (`-max-depth`, `-max-entries`, same
+it uses the user config's [`[report] dirs`](#report), falling back to `<state>/runs` when the list
+is absent or empty. Named directories replace the setting. Configured searches add the same
+`searched:` lines in text and `searched` array in JSON as report.
+It shares report's search, limits (`-max-depth`, `-max-entries`, same
 defaults), handling of copies and safe record reading. A run is not listed when any copy of it has
 a result, even one that disagrees with the copy in progress. Among copies still in progress, status
 shows the one that records what is playing, most recently updated first. Status rejects a root,
-given or default, that is itself a symlink, though the path above it may pass through one. It
+given, configured or default, that is itself a symlink, though the path above it may pass through one. It
 escapes control characters and only reads. With no runs in progress it says so and exits 0; when a
 limit cut the search short it says how many directories were not searched instead. Diagnostics go
 to stderr. Runs with empty or blank-only telemetry are listed like other runs in progress, without
 diagnostics.
 `-json` emits `{"runs":[...]}`, including every playing step and its elapsed milliseconds;
-an empty result is `{"runs":[]}`.
+an empty result without configured directories is `{"runs":[]}`.
 
 Each row shows the start in UTC, repository, ensemble, round, step, chair, elapsed time and
 liveness. When steps overlap, the row shows the longest-running step and `+N` for the others.

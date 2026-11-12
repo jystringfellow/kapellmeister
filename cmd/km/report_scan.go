@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/jystringfellow/kapellmeister/internal/loop"
 	"golang.org/x/sys/unix"
 )
 
@@ -32,6 +33,29 @@ type reportScan struct {
 	depthSkipped      int
 	entrySkipped      int
 	firstEntrySkipped string
+}
+
+func recordDirs(named []string) (dirs []string, configured bool, source string, err error) {
+	if len(named) > 0 {
+		return named, false, "", nil
+	}
+	dirs, source, err = loop.LoadReportDirs(loop.Home())
+	if err != nil {
+		return nil, false, source, err
+	}
+	if len(dirs) > 0 {
+		return dirs, true, source, nil
+	}
+	return []string{filepath.Join(loop.StateDir(), "runs")}, false, "", nil
+}
+
+func printSearchedDirs(w io.Writer, dirs []string) error {
+	for _, dir := range dirs {
+		if _, err := fmt.Fprintf(w, "searched: %s\n", plain(dir)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func findRuns(dirs []string, defaultDir bool, maxDepth, maxEntries int, refuseLinkedRoots, withParts bool) ([]reportRun, *reportScan, error) {
