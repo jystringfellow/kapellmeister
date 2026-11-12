@@ -1,2 +1,1 @@
 - When the task depends on what an external tool does or writes, plan a step that produces one real instance in an isolated scratch directory. A search that finds nothing is not evidence of absence.
-- When a change lets km replace or delete something it did not create, name the ownership guard in the plan and record it in DECISIONS.md.
