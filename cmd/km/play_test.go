@@ -40,7 +40,7 @@ func playStanding(t *testing.T) ensemble.Standing {
 			t.Fatalf("git %v: %v: %s", args, err, out)
 		}
 	}
-	writeFile(t, filepath.Join(wt, loop.ConfigFile), "[test]\nverify = 'true'\ncheck = 'go test'\n[run]\nrounds = 2\nreply_grace = '1ms'\n")
+	writeFile(t, filepath.Join(wt, loop.ConfigFile), "[test]\nverify = 'true'\ncheck = 'go test'\n[run]\nlessons = true\nrounds = 2\nreply_grace = '1ms'\n")
 	s := ensemble.Standing{Ensemble: "score", Session: "cao-standing", Worktree: wt, Task: "recorded task", GateWhen: loop.GateWhenAll}
 	for i, part := range []string{"planner", "implementer", "reviewer", "reviewer", "gate", "classifier"} {
 		name := fmt.Sprintf("chair-%d", i)

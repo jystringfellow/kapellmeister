@@ -422,8 +422,24 @@ func TestTheDefaultStepTimeoutIsSixtyMinutes(t *testing.T) {
 	}
 }
 
-func TestLessonsAreOnByDefaultWithAFiveMinuteLimit(t *testing.T) {
+func TestLessonsAreOffByDefaultWithAFiveMinuteLimitWhenTurnedOn(t *testing.T) {
 	s, err := LoadSettings(t.TempDir(), t.TempDir())
+	if err != nil || s.Lessons || s.LessonsTimeout != 5*time.Minute {
+		t.Fatalf("%+v %v", s, err)
+	}
+}
+
+func TestThisRepositorysConfigTurnsLessonsOn(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(HomeEnv, home)
+	s, err := LoadSettings(home, "../..")
+	if err != nil || !s.Lessons {
+		t.Fatalf("lessons = %v, error = %v", s.Lessons, err)
+	}
+}
+
+func TestLessonsCanBeTurnedOnWithOnlyTheLessonsKey(t *testing.T) {
+	s, err := LoadSettings(writeUserConfig(t, "[run]\nlessons = true\n"), t.TempDir())
 	if err != nil || !s.Lessons || s.LessonsTimeout != 5*time.Minute {
 		t.Fatalf("%+v %v", s, err)
 	}
@@ -552,5 +568,82 @@ func TestLearnedBudgetLeavesGateLessonsSettingsUnchanged(t *testing.T) {
 	}
 	if learnedBudgetOfSettings(t, s) != 123 || s.Lessons || s.LessonsTimeout != 2*time.Second {
 		t.Fatalf("settings = %+v", s)
+	}
+}
+
+func TestRunBaseBelongsInTheRepositoryConfigAndWorktreeDirInTheUserConfig(t *testing.T) {
+	for _, key := range []string{"base", "worktree_dir"} {
+		t.Run(key, func(t *testing.T) {
+			home, repo := t.TempDir(), t.TempDir()
+			value := "develop"
+			if key == "worktree_dir" {
+				value = filepath.Join(t.TempDir(), "worktrees")
+			}
+			body := fmt.Sprintf("[run]\n%s = %q\n", key, value)
+			wrong := UserConfigPath(home)
+			right := filepath.Join(repo, ConfigFile)
+			if key == "worktree_dir" {
+				wrong, right = right, wrong
+			}
+			writeConfigAt := func(path string) {
+				t.Helper()
+				if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writeConfigAt(wrong)
+			_, err := LoadSettings(home, repo)
+			destination := "the repository's " + ConfigFile
+			if key == "worktree_dir" {
+				destination = UserConfigPath(home)
+			}
+			if err == nil || !strings.Contains(err.Error(), "run."+key+" belongs in "+destination) {
+				t.Fatalf("wrong layer error = %v", err)
+			}
+			if err := os.Remove(wrong); err != nil {
+				t.Fatal(err)
+			}
+			writeConfigAt(right)
+			s, err := LoadSettings(home, repo)
+			got := s.BaseBranch
+			if key == "worktree_dir" {
+				got = s.WorktreeDir
+			}
+			if err != nil || got != value {
+				t.Fatalf("%s = %q, error = %v", key, got, err)
+			}
+		})
+	}
+}
+
+func TestARelativeWorktreeDirectoryIsRefusedNamingItsKey(t *testing.T) {
+	_, err := LoadSettings(writeUserConfig(t, "[run]\nworktree_dir = 'relative/path'\n"), t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "run.worktree_dir") || !strings.Contains(err.Error(), "absolute") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestRepoBaseBranchReadsRunBaseAndRejectsUnknownKeysAndUserOnlySections(t *testing.T) {
+	for _, tc := range []struct {
+		body, want string
+		invalid    bool
+	}{
+		{body: "[run]\nbase = 'feature/stack'\n", want: "feature/stack"},
+		{body: "[test]\nverify = 'true'\n[run]\nlessons = true\n"},
+		{body: "[run]\nbsae = 'main'\n", invalid: true},
+		{body: "[chairs]\ngate = 'claude'\n", invalid: true},
+		{body: "[run]\nworktree_dir = '/tmp'\n", invalid: true},
+	} {
+		branch, err := RepoBaseBranch([]byte(tc.body))
+		if tc.invalid {
+			if err == nil || !strings.Contains(err.Error(), ConfigFile) {
+				t.Errorf("%q: branch %q, error %v", tc.body, branch, err)
+			}
+		} else if err != nil || branch != tc.want {
+			t.Errorf("%q: branch %q, error %v", tc.body, branch, err)
+		}
 	}
 }

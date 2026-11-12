@@ -101,7 +101,7 @@ func commonFlags(fs *flag.FlagSet) common {
 	return common{
 		fs:         fs,
 		repo:       fs.String("repo", "", "repository clone to branch worktrees from"),
-		base:       fs.String("base", "", "branch on the remote to start the worktree from (default main); not with -worktree"),
+		base:       fs.String("base", "", "branch on the remote to start the worktree from (default repository run.base, then origin/HEAD, else main); not with -worktree"),
 		task:       fs.String("task", "", "task text"),
 		taskFile:   fs.String("task-file", "", "file holding the task text"),
 		verify:     fs.String("verify", "", "command kapellmeister runs in the worktree before planning and after each implementation round; defaults to [test] verify in .kapellmeister/config.toml, then an executable .kapellmeister/verify"),
@@ -265,7 +265,7 @@ func checkPin(policy loop.Policy, part, name, spec string, chair loop.Chair) err
 	return nil
 }
 
-func runCommand(args []string) error {
+func runCommand(args []string) (runErr error) {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	c := commonFlags(fs)
 	worktree := fs.String("worktree", "", "use this existing worktree instead of creating one")
@@ -280,7 +280,7 @@ func runCommand(args []string) error {
 			return errors.New("-base and -worktree do not go together: -worktree plays on the checkout it is given")
 		}
 		if err := validBaseBranch(*c.base); err != nil {
-			return err
+			return fmt.Errorf("-base %w", err)
 		}
 	}
 	text, err := taskText(*c.task, *c.taskFile)
@@ -296,21 +296,43 @@ func runCommand(args []string) error {
 	}
 	wt := *worktree
 	baseBranch := ""
+	createdWorktree := ""
+	summarized := false
+	defer func() {
+		if runErr != nil && createdWorktree != "" && !summarized {
+			fmt.Fprintf(os.Stderr, "km: the worktree was kept at %s\n", createdWorktree)
+		}
+	}()
 	if wt == "" {
 		if *c.repo == "" {
 			return errors.New("-repo or -worktree is required")
 		}
-		if err := fetchRepo(*c.repo); err != nil {
+		if _, err := gitOutput(*c.repo, "worktree", "prune"); err != nil {
 			return err
 		}
-		baseBranch = firstNonEmpty(*c.base, "main")
-		commit, err := resolveBase(*c.repo, baseBranch)
+		var commit string
+		if set["base"] {
+			baseBranch = *c.base
+			commit, err = resolveBase(*c.repo, baseBranch)
+		} else {
+			baseBranch = defaultBaseBranch(*c.repo, os.Stdout)
+			commit, err = resolveBase(*c.repo, baseBranch)
+			if err == nil {
+				var configured string
+				configured, err = committedBaseBranch(*c.repo, commit)
+				if err == nil && configured != "" && configured != baseBranch {
+					baseBranch = configured
+					commit, err = resolveBase(*c.repo, baseBranch)
+				}
+			}
+		}
 		if err != nil {
 			return err
 		}
-		if wt, err = addWorktree(*c.repo, commit); err != nil {
+		if wt, err = addWorktree(*c.repo, commit, userSettings.WorktreeDir); err != nil {
 			return err
 		}
+		createdWorktree = wt
 	}
 	if wt, err = worktreeDir(wt); err != nil {
 		return err
@@ -377,6 +399,7 @@ func runCommand(args []string) error {
 	if err != nil {
 		return err
 	}
+	summarized = true
 	return finishRun(os.Stdout, sum)
 }
 
@@ -914,6 +937,9 @@ var errNotApproved = errors.New("run was not approved")
 
 func finishRun(w io.Writer, sum ensembleSummary) error {
 	printOutcome(w, sum)
+	if sum.Worktree != "" && (sum.Outcome == loop.Approved || sum.DiffStat != "" || sum.HeadMoved) {
+		fmt.Fprintf(w, "  changes   %s\n", sum.Worktree)
+	}
 	fmt.Fprint(w, sum.DiffStat)
 	printHeadMoved(w, sum)
 	if sum.Outcome != loop.Approved {
@@ -984,17 +1010,13 @@ func taskText(task, file string) (string, error) {
 	return "", errors.New("-task or -task-file is required")
 }
 
-func fetchRepo(repo string) error {
-	for _, args := range [][]string{{"fetch", "origin", "--prune"}, {"worktree", "prune"}} {
-		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
-			return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, out)
+func addWorktree(repo, base, dir string) (string, error) {
+	if dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return "", err
 		}
 	}
-	return nil
-}
-
-func addWorktree(repo, base string) (string, error) {
-	wt, err := os.MkdirTemp("", "wt-km-")
+	wt, err := os.MkdirTemp(dir, "wt-km-")
 	if err != nil {
 		return "", err
 	}

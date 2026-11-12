@@ -1,3 +1,7 @@
 [test]
 verify = 'test -z "$(gofmt -l .)" && go vet ./... && go test ./...'
 check  = "go test {args}"
+
+[run]
+# A person reviews proposals and checks good ones in under .kapellmeister/learned/.
+lessons = true

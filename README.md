@@ -20,8 +20,25 @@ km preflight -worktree DIR [-tier large]          # check each agent starts and 
 km config [-worktree DIR] [-cao URL]              # show the effective settings and their files
 ```
 
-`km run -repo` starts a fresh worktree from `origin/main` by default. To stack work on an
-unmerged branch, name that branch with `-base`:
+`km run -repo` leaves its detached worktree under the system temp directory (`wt-km-*`) and
+prints its path in the final summary whenever it leaves changes. Set `[run] worktree_dir` in your
+user config to choose another absolute directory (`~/` is expanded); km creates it if needed.
+The approved change stays uncommitted there. The clone's checkout stays as it was; km fetches only
+the branches needed to resolve the base and updates the worktree records, without pruning
+remote-tracking branches.
+
+The starting branch is `-base`, then `[run] base` in the repository config committed on the remote's
+default branch, then the branch recorded by Git as `origin/HEAD`. If Git does not know the remote's
+default, km uses `main` and prints a note. To set the repository's base, commit:
+
+```toml
+# .kapellmeister/config.toml
+[run]
+base = "develop"
+```
+
+An explicit `-base` skips the config lookup for the base.
+To stack work on an unmerged branch, name it with `-base`:
 
 ```sh
 km run -repo ~/Code/app -base feature/parser -task-file next.md
@@ -50,8 +67,9 @@ session, one at a time. Checks run concurrently once their chairs are seated. Se
 1, 2 and 4 seconds plus up to half as much again at random, under distinct names ending in `r`, `r2` and `r3`. The `ok` or `BLOCKED` line
 reports `seat retried N time(s) after <first error>`. Other failures keep one immediate retry;
 CAO call timeouts, including an expired launch context, and permission blockers are not retried.
-A seat launch is bounded at 90 seconds; other seats wait for that launch to finish. Deleting a
-session also waits its turn, so a deletion never overlaps another chair's creation.
+A seat launch is bounded at three-eighths of `preflight_timeout` (90s by default, at least 10s),
+and never longer than the CAO client's 90s launch bound; other seats wait for that launch to finish.
+Deleting a session also waits its turn, so a deletion never overlaps another chair's creation.
 
 km cleans up failed launches by their exact chosen session names, deletes passing chairs' sessions,
 and keeps blocked chairs' attach targets. SIGINT, SIGTERM or SIGHUP waits for any bounded launch already
@@ -264,7 +282,8 @@ optional, and unknown keys are an error.
 
 The repository's values win for `[run]` rounds, retries, `lessons`, `lessons_timeout` and `learned_budget`, `[steps]` and `[sizing]`; yours win
 for `[tiers]`, because only you know what your accounts can run. `[cao]`, `[chairs]`, `[agents]` and
-`[ensembles]` are machine-only and `[test]` is repository-only; putting one in the wrong file is an error.
+`[ensembles]` and `[run] worktree_dir` are machine-only; `[test]` and `[run] base` are repository-only.
+Putting one in the wrong file is an error.
 `$CAO_API_BASE_URL` overrides `[cao] url`. State lives in `~/.kapellmeister/state` (`$KAPELLMEISTER_STATE_DIR`).
 
 km bounds each CAO call: short calls at 30s, launches at 90s, and run-step at the step’s own timeout
@@ -280,7 +299,8 @@ timeout = "60m"                     # each agent step
 reply_grace = "15m"
 preflight_timeout = "4m"
 blocker_poll = "20s"
-lessons = true
+lessons = true                     # off by default; proposals need human review
+worktree_dir = "~/Code/worktrees"   # optional; defaults to the system temp directory
 lessons_timeout = "5m"
 learned_budget = 4000              # bytes of lesson text per chair; at least 1
 
@@ -383,8 +403,8 @@ in this repository's `AGENTS.md`, "Exercising km live", `scripts/nested-km-env` 
 `.kapellmeister/learned/tester.md`.
 Without a tester, gate approval finishes the run as usual.
 
-After the score ends, km asks the gate for lessons when it has given a verdict, whether or not
-it approved the run. The question is: from this run's plan, reviews and verdicts, what would have
+When collection is enabled, after the score ends km asks the gate for lessons when it has given
+a verdict, whether or not it approved the run. The question is: from this run's plan, reviews and verdicts, what would have
 saved a round if a chair had known it at the start? Zero lessons is a good answer. Each candidate
 names a part seated in the run (`planner`, `implementer`, `reviewer`, `gate`, `classifier`, or `tester`
 when seated), states a lesson in one or two sentences, and cites the step and finding that support it. The gate returns a JSON
@@ -399,7 +419,14 @@ worktree. The gate's reply uses the ignored `.kapellmeister/runs/<run>/lessons-r
 like other step replies; a regular reply within the size limit is copied to the state's `replies/`
 for audit, including malformed answers. Non-regular and oversized replies are not copied.
 
-Collection is on by default. Set `[run] lessons = false` in either config layer to turn it off;
+Collection is off by default. Turn it on in either the user or repository config:
+
+```toml
+[run]
+lessons = true
+```
+
+Proposals are for a person to review and, if useful, check in under `.kapellmeister/learned/`.
 `lessons_timeout = "5m"` sets its own positive time limit, covering the question, reply wait
 and nudge. Terminal inspection, diagnostic screening and release still run after a timeout with
 independent limits of 15s, 15s and 30s respectively, so cleanup can extend beyond the lessons deadline.
