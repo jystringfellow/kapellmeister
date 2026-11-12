@@ -57,7 +57,7 @@ func statusAt(args []string, stdout, stderr io.Writer, now time.Time) error {
 	if defaultDir {
 		dirs = []string{filepath.Join(loop.StateDir(), "runs")}
 	}
-	found, scan, err := findRuns(dirs, defaultDir, *maxDepth, *maxEntries, true)
+	found, scan, err := findRuns(dirs, defaultDir, *maxDepth, *maxEntries, true, false)
 	if err != nil {
 		return fmt.Errorf("status: %s", plain(err.Error()))
 	}
