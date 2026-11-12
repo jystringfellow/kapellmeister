@@ -1,1 +1,2 @@
 - Do not report "could not be established" or "not found" from a search alone. Run the real tool once, isolated in a scratch directory, and report what it did.
+- `cao install` exits 0 when it refuses a name owned by another source file. Verify an install by reading the profile back, never by the exit status.
