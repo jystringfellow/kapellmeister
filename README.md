@@ -6,6 +6,45 @@ CLI and Antigravity) through [CLI Agent Orchestrator](https://github.com/awslabs
 until the gate and any tester approve or the rounds run out. Every run works in a throwaway detached
 worktree and leaves its change uncommitted for you to ship.
 
+## Install
+
+Download the archive for your OS and architecture and `SHA256SUMS` from the same
+[GitHub release](https://github.com/jystringfellow/kapellmeister/releases). Releases support
+macOS and Linux on amd64 and arm64; Windows uses WSL2. For example, on Linux arm64,
+replace `vX.Y.Z` with the release tag:
+
+```sh
+version=vX.Y.Z
+archive="km_${version}_linux_arm64.tar.gz"
+url="https://github.com/jystringfellow/kapellmeister/releases/download/$version"
+curl -fLO "$url/$archive"
+curl -fLO "$url/SHA256SUMS"
+sha256sum -c --ignore-missing SHA256SUMS
+tar -xzf "$archive"
+mkdir -p "$HOME/.local/bin"
+cp "km_${version}_linux_arm64/km" "$HOME/.local/bin/km"
+export PATH="$HOME/.local/bin:$PATH"
+km version
+```
+
+On macOS, choose `darwin` and use `shasum -a 256 -c --ignore-missing SHA256SUMS`
+for the checksum check. You can also verify the archive's build provenance with
+`gh attestation verify "$archive" -R jystringfellow/kapellmeister`.
+
+With Go installed, the alternative is:
+
+```sh
+CGO_ENABLED=0 go install github.com/jystringfellow/kapellmeister/cmd/km@vX.Y.Z
+```
+
+Put `$(go env GOPATH)/bin` on your PATH (or the directory selected by `GOBIN`).
+`km version` prints the release version, including for `go install ...@version`.
+Workspace builds print `dev`, with the VCS revision and dirty marker when available.
+CAO, cao-server and the agent CLIs you use must also be installed; start cao-server before
+installing the base chair profiles below.
+
+## Commands
+
 ```sh
 km run -repo ~/Code/app [-base BRANCH] -task-file task.md [-ensemble thorough]  # one ensemble
 km audition -worktree DIR [-ensemble thorough]   # can this ensemble play? no real work
@@ -18,6 +57,8 @@ km report [-json] [-since DATE] [-repository NAME] [-max-depth N] [-max-entries 
 km status [-json] [-max-depth N] [-max-entries N] [DIR...]  # show runs in progress
 km preflight -worktree DIR [-agents NAME,...] [-tier large]  # check the available agents
 km config [-worktree DIR] [-cao URL]              # show the effective settings and their files
+km profiles install [-cao URL] [-replace] [AGENT ...]  # install base chair profiles
+km version                                       # print the version
 ```
 
 `km run -repo` leaves its detached worktree under the system temp directory (`wt-km-*`) and
@@ -71,6 +112,34 @@ The reviewer role can have several chairs. Use `-reviewer copilot,claude@large` 
 whole configured reviewer list for one run. Each reviewer runs concurrently in its own CAO
 terminal and resolves its tier separately: pinned reviewers keep their tier, while unpinned
 reviewers follow sizing. Other required parts have one chair; the optional tester has at most one.
+
+## Install the base chair profiles
+
+The binary carries all four base profiles; no source checkout is needed. Install the profiles
+for the built-in agents in your user config's `[agents] available` list:
+
+```sh
+km profiles install
+```
+
+Or name exactly the agents to install, independently of that list:
+
+```sh
+km profiles install claude codex copilot agy
+```
+
+Each profile gets one line: `installed`, `unchanged`, `replaced`, or `refused` with the reason.
+Repeated installs report `unchanged`. If an installed km profile differs, km leaves it untouched
+and exits nonzero. Use `km profiles install -replace claude` to deliberately replace it with this
+binary's version. A profile without km's author description is always refused, even with
+`-replace`. Agents defined with a different binding in `[agents.define]` are skipped when selected
+by `available` and refused when explicitly named; install their profiles yourself with CAO.
+
+The CAO home probe and live-run replacement protection described under Permissions apply here too.
+This command probes even when profiles are unchanged, so it cannot report on the wrong home.
+It checks every pending write before installing anything, and verifies each installed file by
+reading it back. Use `-cao URL` to select the server; `CAO_HOME_DIR` must name that server's home.
+Runs never install missing base profiles implicitly; the error names this command instead.
 
 ## Preflight
 
@@ -142,18 +211,29 @@ inspect that configuration. Without `codexProfile`, CAO defaults to `--yolo`, in
 profile. To keep a chosen Codex policy through every effort variant, set `codexProfile: safe` on
 `km-codex` (where `safe` names your configured Codex profile) and omit `*` from `allowedTools`.
 
-To keep prompts on for km's Claude chairs, add this frontmatter field to `profiles/km-claude.md`,
-keeping its other fields and body:
+To keep prompts on for km's Claude chairs, install the base and copy its installed file into a
+separate directory for editing (`CAO_HOME_DIR` defaults to `~/.aws/cli-agent-orchestrator`):
+
+```sh
+km profiles install claude
+mkdir -p "$HOME/km-profiles"
+cp "${CAO_HOME_DIR:-$HOME/.aws/cli-agent-orchestrator}/agent-store/km-claude.md" "$HOME/km-profiles/km-claude.md"
+```
+
+Add this frontmatter field to that copy, keeping its other fields and body:
 
 ```yaml
 permissionMode: default
 ```
 
-Then install the base:
+Then install the edited base when no run is using it:
 
 ```sh
-cao install profiles/km-claude.md --provider claude_code
+cao install "$HOME/km-profiles/km-claude.md" --provider claude_code
 ```
+
+`km profiles install claude` will now report `refused km-claude: content differs` and leave
+your edit intact. `-replace` deliberately restores the base carried by the binary.
 
 Every km Claude chair using `km-claude`, including generated `km-claude-<effort>` profiles,
 inherits that mode. km copies `permissionMode`, `allowedTools` and `codexProfile` from any installed
@@ -166,7 +246,8 @@ Before an installation, km creates and deletes a temporary `km-probe-*` profile 
 and verifies its exact content in the local `CAO_HOME_DIR` (default
 `~/.aws/cli-agent-orchestrator`). It refuses to install if that proof fails, including when the
 server uses a different home or denies the profile write routes. Point `-cao` at the local CAO,
-or set `CAO_HOME_DIR` to the selected server's home. No probe is made when no installation is needed.
+or set `CAO_HOME_DIR` to the selected server's home. Effort-profile generation makes no probe when no installation is needed;
+`km profiles install` always probes when it selects a base profile.
 km also refuses to replace an existing local chair profile with different content while another
 unfinished run in `KAPELLMEISTER_STATE_DIR` is alive under `km status`'s process checks. The error
 names the profile and run, and no pending variant is written or installed. A run never blocks
@@ -309,7 +390,7 @@ km bounds each CAO call: short calls at 30s, launches at 90s, and run-step at th
 plus 90s for CAO’s readiness wait; hitting a bound reports the method, path and limit.
 
 A one-vendor setup needs only this in `~/.kapellmeister/config.toml`, after installing the
-`km-claude` base with `cao install profiles/km-claude.md --provider claude_code`:
+`km-claude` base with `km profiles install claude`:
 
 ```toml
 [agents]

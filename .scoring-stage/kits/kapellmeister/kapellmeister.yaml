@@ -6,7 +6,7 @@ description: >-
   What km needs to conduct its chairs inside the sandbox: Go with a C
   toolchain for the race detector, tmux, CAO with
   cao-server started on every boot, km built from the workspace, and km's
-  base chair profiles installed in CAO. CAO's defaults launch these chairs
+  embedded base chair profiles installed in CAO by km. CAO's defaults launch these chairs
   with permission prompts off; the sandbox is the boundary.
 
 args:
@@ -84,10 +84,8 @@ capabilities:
               curl -s -o /dev/null --noproxy '*' --max-time 1 http://127.0.0.1:9889/ && break
               sleep 1
             done
-            for profile in profiles/km-*.md; do
-              provider="$(awk '/^provider:/ { print $2; exit }' "$profile")"
-              "$HOME/.local/bin/cao" install "$profile" --provider "$provider"
-            done
+            export PATH="$HOME/.local/bin:$PATH"
+            "$HOME/.local/bin/km" profiles install -replace claude codex copilot agy
           user: "1000"
           env: [WORKSPACE_DIR]
-          description: Build km from the workspace and install its chair profiles in CAO
+          description: Build km from the workspace and use km to install its embedded chair profiles in CAO
