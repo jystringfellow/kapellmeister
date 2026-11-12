@@ -40,6 +40,7 @@ func TestAuditionNeedsAWorktree(t *testing.T) {
 
 func TestAuditionRejectsAPinOnAProviderWithoutATierTableBeforeAnyCAOCall(t *testing.T) {
 	t.Setenv(loop.HomeEnv, t.TempDir())
+	writeFile(t, loop.UserConfigPath(loop.Home()), builtInAgentConfig)
 	err := auditionCommand([]string{"-worktree", t.TempDir(), "-cao", unreachableCAO, "-reviewer", "myprov:myprof@large"})
 	want := `reviewer: chair "myprov:myprof@large": no [tiers.myprov] to pin a tier against`
 	if err == nil || err.Error() != want {

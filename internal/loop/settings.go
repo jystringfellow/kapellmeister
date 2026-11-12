@@ -112,7 +112,8 @@ type FileConfig struct {
 	Run    RunConfig            `toml:"run"`
 	Chairs map[string]ChairSpec `toml:"chairs"`
 	Agents struct {
-		Available []string `toml:"available"`
+		Available []string          `toml:"available"`
+		Define    map[string]string `toml:"define"`
 	} `toml:"agents"`
 	Ensembles map[string]Ensemble            `toml:"ensembles"`
 	Tiers     map[string]map[string]TierSpec `toml:"tiers"`
@@ -121,6 +122,7 @@ type FileConfig struct {
 }
 
 type Settings struct {
+	Defined          Agents              `json:"-"`
 	LearnedBudget    int                 `json:"learned_budget"`
 	Lessons          bool                `json:"lessons"`
 	LessonsTimeout   time.Duration       `json:"lessons_timeout"`
@@ -196,11 +198,9 @@ func DefaultSettings() Settings {
 		Timeout:          60 * time.Minute,
 		ReplyGrace:       15 * time.Minute,
 		PreflightTimeout: 4 * time.Minute,
-		Chairs: map[string]string{
-			"planner": "claude", "implementer": "codex", "reviewer": "copilot", "gate": "claude", "classifier": "claude",
-		},
-		Agents: AgentNames(),
-		Policy: DefaultPolicy(),
+		Chairs:           map[string]string{},
+		Defined:          BuiltInAgents(),
+		Policy:           DefaultPolicy(),
 	}
 }
 
@@ -237,6 +237,19 @@ func LoadSettings(home, worktree string) (Settings, error) {
 
 	s.Ensembles = user.Ensembles
 	s.CAOURL = firstSet(os.Getenv(CAOURLEnv), user.CAO.URL, s.CAOURL)
+	s.Defined, err = s.Defined.With(user.Agents.Define)
+	if err != nil {
+		return s, fmt.Errorf("%s: %w", userPath, err)
+	}
+	if user.md.IsDefined("agents", "available") {
+		for _, name := range user.Agents.Available {
+			if !slices.Contains(s.Defined.Names(), name) {
+				return s, fmt.Errorf("%s: agents.available: unknown agent %q (want %s)", userPath, name, strings.Join(s.Defined.Names(), ", "))
+			}
+		}
+		s.Agents = user.Agents.Available
+	}
+	s.Chairs = DefaultChairs(s.Agents)
 	for _, role := range sortedKeys(user.Chairs) {
 		if !slices.Contains(AllRoles(), role) {
 			return s, fmt.Errorf("%s: chairs.%s: unknown role (want %s)", userPath, role, strings.Join(AllRoles(), ", "))
@@ -245,14 +258,6 @@ func LoadSettings(home, worktree string) (Settings, error) {
 			return s, fmt.Errorf("%s: chairs.%s: only reviewer takes a list of chairs", userPath, role)
 		}
 		s.Chairs[role] = user.Chairs[role].Spec
-	}
-	if user.md.IsDefined("agents", "available") {
-		for _, name := range user.Agents.Available {
-			if !slices.Contains(AgentNames(), name) {
-				return s, fmt.Errorf("%s: agents.available: unknown agent %q (want %s)", userPath, name, strings.Join(AgentNames(), ", "))
-			}
-		}
-		s.Agents = user.Agents.Available
 	}
 	for _, name := range sortedKeys(user.Ensembles) {
 		ensemble := user.Ensembles[name]

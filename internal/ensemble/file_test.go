@@ -34,7 +34,7 @@ func repoEnsemble(t *testing.T, name, body string) (home, worktree string) {
 
 func find(t *testing.T, name, home, worktree string) Spec {
 	t.Helper()
-	spec, found, err := Find(name, home, worktree)
+	spec, found, err := Find(name, home, worktree, loop.BuiltInAgents())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func find(t *testing.T, name, home, worktree string) Spec {
 
 func bind(t *testing.T, spec Spec, available []string) []Member {
 	t.Helper()
-	members, err := spec.Bind(available)
+	members, err := spec.Bind(loop.BuiltInAgents(), available)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestAChairWithNoneOfItsAgentsAvailableIsRejectedNamingTheChairAndItsAgents(
 part = "implementer"
 agents = ["codex", "agy"]
 `)
-	_, err := find(t, "solo", home, wt).Bind([]string{"claude"})
+	_, err := find(t, "solo", home, wt).Bind(loop.BuiltInAgents(), []string{"claude"})
 	if err == nil || !strings.Contains(err.Error(), "all.implementer@solo: none of codex, agy is in [agents] available (claude)") {
 		t.Fatalf("err = %v", err)
 	}
@@ -167,7 +167,7 @@ part = "implementer"
 agents = ["codex:my-codex:gpt-6-astra"]
 `
 	home, wt := repoEnsemble(t, "mine", body)
-	_, _, err := Find("mine", home, wt)
+	_, _, err := Find("mine", home, wt, loop.BuiltInAgents())
 	if err == nil || !strings.Contains(err.Error(), "sections.all.chairs.implementer.agents: \"codex:my-codex:gpt-6-astra\" is not an agent (claude, codex, copilot, agy); a repository ensemble names agents, with optional @small|@medium|@large") {
 		t.Fatalf("err = %v", err)
 	}
@@ -196,7 +196,7 @@ agents = ["claude"]
 
 func TestAnEnsembleThatIsNotDefinedIsNotFound(t *testing.T) {
 	home, wt := repoEnsemble(t, "thorough", thorough)
-	if _, found, err := Find("quick", home, wt); err != nil || found {
+	if _, found, err := Find("quick", home, wt, loop.BuiltInAgents()); err != nil || found {
 		t.Fatalf("found = %v, err = %v", found, err)
 	}
 	if names := Names(home, ""); len(names) != 0 {
@@ -216,7 +216,7 @@ func TestAMalformedEnsembleFileIsRejectedNamingTheFileAndKey(t *testing.T) {
 		{"[sections.all]\n", "sections.all: want at least one chair"},
 	} {
 		home, wt := repoEnsemble(t, "bad", tc.body)
-		_, _, err := Find("bad", home, wt)
+		_, _, err := Find("bad", home, wt, loop.BuiltInAgents())
 		if err == nil || !strings.Contains(err.Error(), filepath.Join(wt, RepoDir, "bad.toml")) || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%q: err = %v, want %q", tc.body, err, tc.want)
 		}
@@ -261,5 +261,29 @@ func TestChairsOfKeepsEveryLoopPartFromMembersOf(t *testing.T) {
 	out, err := ChairsOf(MembersOf(in))
 	if err != nil || len(out.Reviewers) != 2 {
 		t.Fatalf("chairs = %+v, err = %v", out, err)
+	}
+}
+
+func TestARepositoryEnsembleMayNameAUserDefinedAgent(t *testing.T) {
+	home, wt := repoEnsemble(t, "mine", "[sections.all.chairs.reviewer]\npart = 'reviewer'\nagents = ['mine@large']\n")
+	agents, err := loop.BuiltInAgents().With(map[string]string{"mine": "other:custom"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, found, err := Find("mine", home, wt, agents)
+	if err != nil || !found {
+		t.Fatalf("ensemble: %v", err)
+	}
+	members, err := spec.Bind(agents, []string{"mine"})
+	if err != nil || len(members) != 1 || members[0].Chair.Provider != "other" || members[0].Chair.Profile != "custom" || members[0].Chair.Tier != "large" {
+		t.Fatalf("members = %v, %v", members, err)
+	}
+}
+
+func TestARepositoryEnsembleNamingAnAgentTheUserHasNotDefinedIsRejected(t *testing.T) {
+	home, wt := repoEnsemble(t, "mine", "[sections.all.chairs.reviewer]\npart = 'reviewer'\nagents = ['missing', 'claude']\n")
+	_, _, err := Find("mine", home, wt, loop.BuiltInAgents())
+	if err == nil || !strings.Contains(err.Error(), "missing") || !strings.Contains(err.Error(), "claude, codex, copilot, agy") {
+		t.Fatalf("error = %v", err)
 	}
 }

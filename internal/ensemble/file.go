@@ -55,12 +55,12 @@ type file struct {
 
 var validName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
-func Find(name, home, worktree string) (Spec, bool, error) {
+func Find(name, home, worktree string, agents loop.Agents) (Spec, bool, error) {
 	path, portable, found := locate(name, home, worktree)
 	if !found {
 		return Spec{}, false, nil
 	}
-	spec, err := load(name, path, portable)
+	spec, err := load(name, path, portable, agents)
 	return spec, err == nil, err
 }
 
@@ -109,7 +109,7 @@ func dirs(home, worktree string) []source {
 	return out
 }
 
-func load(name, path string, portable bool) (Spec, error) {
+func load(name, path string, portable bool, agents loop.Agents) (Spec, error) {
 	spec := Spec{Name: name, Path: path, portable: portable}
 	fail := func(key, format string, args ...any) (Spec, error) {
 		return Spec{}, fmt.Errorf("%s: %s: %s", path, key, fmt.Sprintf(format, args...))
@@ -158,7 +158,7 @@ func load(name, path string, portable bool) (Spec, error) {
 				return fail(key+".agents", "want at least one agent")
 			}
 			for _, agent := range c.Agents {
-				if err := checkAgent(agent, portable); err != nil {
+				if err := checkAgent(agent, portable, agents); err != nil {
 					return fail(key+".agents", "%v", err)
 				}
 			}
@@ -192,15 +192,15 @@ func order(md toml.MetaData) ([]string, map[string][]string) {
 	return sections, chairs
 }
 
-func checkAgent(agent string, portable bool) error {
+func checkAgent(agent string, portable bool, agents loop.Agents) error {
 	base, _, err := loop.SplitTier(agent)
 	if err != nil {
 		return err
 	}
-	if portable && !slices.Contains(loop.AgentNames(), base) {
-		return fmt.Errorf("%q is not an agent (%s); a repository ensemble names agents, with optional @small|@medium|@large", agent, strings.Join(loop.AgentNames(), ", "))
+	if portable && !slices.Contains(agents.Names(), base) {
+		return fmt.Errorf("%q is not an agent (%s); a repository ensemble names agents, with optional @small|@medium|@large", agent, strings.Join(agents.Names(), ", "))
 	}
-	_, err = loop.ResolveChair(agent)
+	_, err = agents.ResolveChair(agent)
 	return err
 }
 
@@ -215,7 +215,7 @@ func duration(value string) (time.Duration, error) {
 	return d, nil
 }
 
-func (s Spec) Bind(available []string) ([]Member, error) {
+func (s Spec) Bind(agents loop.Agents, available []string) ([]Member, error) {
 	var members []Member
 	for _, section := range s.Sections {
 		for _, c := range section.Chairs {
@@ -224,7 +224,7 @@ func (s Spec) Bind(available []string) ([]Member, error) {
 			if !ok {
 				return nil, fmt.Errorf("%s: %s: none of %s is in [agents] available (%s)", s.Path, m.Address(s.Name), strings.Join(c.Agents, ", "), strings.Join(available, ", "))
 			}
-			chair, err := loop.ResolveChair(agent)
+			chair, err := agents.ResolveChair(agent)
 			if err != nil {
 				return nil, fmt.Errorf("%s: %s: %w", s.Path, m.Address(s.Name), err)
 			}

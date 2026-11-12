@@ -347,7 +347,7 @@ func TestEffortVariantsCoverEveryTierAStepCanReach(t *testing.T) {
 	}
 }
 
-func TestEffortProfilesAreGeneratedOnlyForKapellmeistersOwnBases(t *testing.T) {
+func TestAnEffortProfileIsGeneratedFromAnyBaseProfile(t *testing.T) {
 	src, err := EffortProfileSource("codex", "km-codex", "xhigh", Permissions{})
 	if err != nil {
 		t.Fatal(err)
@@ -360,8 +360,20 @@ func TestEffortProfilesAreGeneratedOnlyForKapellmeistersOwnBases(t *testing.T) {
 	if strings.Contains(src, "\nmodel:") {
 		t.Fatalf("a generated profile must not pin a model, or agy-style providers ignore the step's model:\n%s", src)
 	}
-	if _, err := EffortProfileSource("claude_code", "my-reviewer", "high", Permissions{}); err == nil || !strings.Contains(err.Error(), "my-reviewer-high") {
-		t.Fatalf("custom base should name the profile to install, got %v", err)
+	src, err = EffortProfileSource("claude_code", "my-reviewer", "high", Permissions{PermissionMode: "default", AllowedTools: []string{"Read"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"name: my-reviewer-high\n", "provider: claude_code\n", "permissionMode: default\n", `allowedTools: ["Read"]`, "claudeConfig:\n  effort: high\n"} {
+		if !strings.Contains(src, want) {
+			t.Fatalf("missing %q: %s", want, src)
+		}
+	}
+	if strings.Contains(src, "\nmodel:") {
+		t.Fatalf("pinned model: %s", src)
+	}
+	if _, err := EffortProfileSource("copilot_cli", "mine", "high", Permissions{}); err == nil {
+		t.Fatal("unsupported effort accepted")
 	}
 }
 

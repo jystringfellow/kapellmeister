@@ -337,3 +337,41 @@ prompts are unchanged. Evidence:
 `TestTheTesterEnvFileRefusesToBeSourcedWhenTheTmuxSocketPathWouldBeTooLong`,
 `TestRunAndPlayWriteTheTesterEnvFileOnlyWhenATesterIsSeated` and
 `TestTheTesterBriefingNamesTheConductorsCAOURLAndStateDirectoryAsOffLimitsAndTheEnvFileToSource`.
+
+## 2026-11-12: Bind agent names in user config and derive chairs from available agents
+
+User-only `[agents.define]` maps short names to `provider:profile`, beside the ordered
+`[agents] available` list. It reuses the chair grammar, keeps strict unknown-key checks, and avoids
+colliding with `available` when a user names an agent that. Built-ins remain defaults for definitions
+and can be overridden. Repositories may name these agents in ensemble files but cannot define them:
+profiles and accounts are machine bindings, as in the 2026-11-05 ensemble decision. Evidence:
+`TestTheUserConfigDefinesAnAgentAsProviderAndProfile`, `TestADefinitionOverridesABuiltInAgent`,
+`TestAnAgentMayBeDefinedInTheUserConfigOnly` and `TestARepositoryEnsembleMayNameAUserDefinedAgent`.
+
+Available agents have no implicit default. Ignoring duplicates, the first plans, gates and classifies,
+the second implements (or the first when alone), and the third reviews (or the first with two).
+This gives independent review whenever there is a choice. When claude, codex and copilot are all
+available, preserve their existing assignments regardless of order or extras. Explicit chairs,
+ensembles and flags override derived defaults. Missing required chairs fail before CAO. Evidence:
+`TestOneAvailableAgentPlaysEveryChair`, `TestWithTwoAgentsTheReviewerIsNotTheImplementersAgent`,
+`TestClaudeCodexAndCopilotKeepTodaysChairsInAnyOrder` and
+`TestRunRefusesWithOneLineBeforeAnyCAOCallWhenNoAgentsAndNoChairsAreConfigured`.
+
+## 2026-11-12: Generate effort variants from any installed base, protecting existing profiles
+
+An isolated CAO 2.5.4 installed `my-reviewer-high` from the user-named `my-reviewer` base and exposed
+its permissions and effort through the profile endpoint; missing bases returned 404. It refused a
+name installed from another source filename but allowed the matching filename; the refusal printed
+an error while exiting zero. CAO's filename check alone cannot protect hand-installed variants. km synchronizes matching-provider effort variants
+from any installed base, checks its generated description before replacing a stale installed variant,
+and retains the CAO home proof and live-run guards for every pending installation. Colliding variant
+names from different providers are refused. Variants inherit permissions only (`permissionMode`,
+`allowedTools`, `codexProfile`); the prompt remains km's chair instructions, and MCP, skills and other
+base fields are not copied. `inherit` uses the base without reading or installing variants. Evidence:
+`TestAUserNamedProfileGetsItsEffortVariantInstalledFromItsBase`,
+`TestAVariantKapellmeisterDidNotGenerateIsNotReplaced`,
+`TestACustomBasesVariantReplacementIsRefusedWhileAnotherRunIsAlive`,
+`TestACustomBasesVariantIsNotInstalledWhenTheServerHomeDiffers` and
+`TestAUserDefinedAgentIsSeatedAtATieredChairWithoutAnyKmProfile`.
+Keep profile generation behind its narrow seam; effort on CAO run-step and installation from supplied
+content are upstream gaps that would let km own less, following the 2026-11-05 decision.

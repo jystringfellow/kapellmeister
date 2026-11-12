@@ -13,16 +13,7 @@ var effortConfigKey = map[string]string{
 	"codex":       "codexConfig:\n  model_reasoning_effort: %s\n",
 }
 
-var generatedBases = map[string]string{
-	"claude_code": "km-claude",
-	"codex":       "km-codex",
-}
-
 func EffortProfileSource(provider, base, effort string, perms Permissions) (string, error) {
-	if generatedBases[provider] != base {
-		return "", fmt.Errorf("profile %s is not installed in CAO, and kapellmeister only generates effort profiles for %s; install a copy of %s with %s effort as %s",
-			EffortProfile(base, effort), generatedBaseList(), base, effort, EffortProfile(base, effort))
-	}
 	if !slices.Contains(effortLevels[provider], effort) {
 		return "", fmt.Errorf("%s does not support effort %q", provider, effort)
 	}
@@ -47,10 +38,6 @@ func EffortProfileSource(provider, base, effort string, perms Permissions) (stri
 	name := EffortProfile(base, effort)
 	return fmt.Sprintf("---\nname: %s\ndescription: kapellmeister chair at %s effort; kapellmeister passes the model per step\nprovider: %s\nrole: developer\n%s%s---\n\n%s",
 		name, effort, provider, permissions, fmt.Sprintf(effortConfigKey[provider], effort), chairInstructions), nil
-}
-
-func generatedBaseList() string {
-	return generatedBases["claude_code"] + " and " + generatedBases["codex"]
 }
 
 type EffortVariant struct {

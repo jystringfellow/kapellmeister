@@ -26,14 +26,15 @@ func TestWithoutConfigFilesSettingsAreTheBuiltInDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := DefaultSettings()
-	if len(s.Files) != 0 || s.CAOURL != want.CAOURL || s.Rounds != 3 || s.Timeout != 60*time.Minute || s.Chairs["implementer"] != "codex" {
+	if len(s.Files) != 0 || s.CAOURL != want.CAOURL || s.Rounds != 3 || s.Timeout != 60*time.Minute || len(s.Chairs) != 0 || len(s.Agents) != 0 {
 		t.Fatalf("settings = %+v", s)
 	}
 }
 
 func TestUserConfigSetsMachineSettingsAndTheRepoSetsItsContract(t *testing.T) {
 	t.Setenv(CAOURLEnv, "")
-	home := writeUserConfig(t, `
+	home := writeUserConfig(t, `[agents]
+available = ["claude", "codex", "copilot", "agy"]
 [cao]
 url = "http://127.0.0.1:9999"
 
@@ -196,7 +197,9 @@ func TestAnUnknownKeyInAnEnsembleIsRejectedNamingTheFileAndKey(t *testing.T) {
 }
 
 func TestAnEnsembleOverlaysChairsAndTakesTheRestFromChairsThenDefaults(t *testing.T) {
-	home := writeUserConfig(t, `[chairs]
+	home := writeUserConfig(t, `[agents]
+available = ["claude", "codex", "copilot", "agy"]
+[chairs]
 implementer = "codex@small"
 planner = "agy"
 [ensembles.thorough]
@@ -351,13 +354,13 @@ func TestAnExplicitlyEmptyGateWhenIsRejectedNamingTheFileAndKey(t *testing.T) {
 	}
 }
 
-func TestEveryKnownAgentIsAvailableUnlessTheUserConfigSaysOtherwise(t *testing.T) {
+func TestNoAgentIsAvailableUnlessTheUserConfigNamesIt(t *testing.T) {
 	s, err := LoadSettings(t.TempDir(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(s.Agents, ",") != "claude,codex,copilot,agy" {
-		t.Fatalf("agents = %v, want every known agent", s.Agents)
+	if len(s.Agents) != 0 {
+		t.Fatalf("agents = %v, want none", s.Agents)
 	}
 	s, err = LoadSettings(writeUserConfig(t, "[agents]\navailable = [\"copilot\", \"claude\"]\n"), "")
 	if err != nil {
@@ -552,5 +555,36 @@ func TestLearnedBudgetLeavesGateLessonsSettingsUnchanged(t *testing.T) {
 	}
 	if learnedBudgetOfSettings(t, s) != 123 || s.Lessons || s.LessonsTimeout != 2*time.Second {
 		t.Fatalf("settings = %+v", s)
+	}
+}
+
+func TestOneAvailableAgentPlaysEveryChair(t *testing.T) {
+	for _, name := range []string{"claude", "codex", "copilot", "agy"} {
+		s, err := LoadSettings(writeUserConfig(t, fmt.Sprintf("[agents]\navailable = [%q]\n", name)), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, role := range ChairRoles {
+			if s.Chairs[role] != name {
+				t.Errorf("%s %s = %q", name, role, s.Chairs[role])
+			}
+		}
+		if s.Chairs["tester"] != "" {
+			t.Fatal("defaulted tester")
+		}
+	}
+}
+
+func TestTheUserConfigDefinesAnAgentAsProviderAndProfile(t *testing.T) {
+	s, err := LoadSettings(writeUserConfig(t, `[agents]
+available = ["mine"]
+[agents.define]
+mine = "claude_code:my-reviewer"
+`), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Chairs["reviewer"] != "mine" {
+		t.Fatalf("chairs = %v", s.Chairs)
 	}
 }

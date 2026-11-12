@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -164,7 +165,7 @@ func chairFlags(fs *flag.FlagSet, roles ...string) map[string]*string {
 		if role == "reviewer" {
 			listHelp = "; accepts a comma-separated list replacing all configured reviewers"
 		}
-		out[role] = fs.String(role, "", role+" chair: an agent ("+strings.Join(loop.AgentNames(), ", ")+") or provider:profile[:model], with optional @small|@medium|@large (default [chairs] "+role+" in "+loop.UserConfigPath(loop.Home())+")"+listHelp)
+		out[role] = fs.String(role, "", role+" chair: an agent from km config, or provider:profile[:model], with optional @small|@medium|@large (default [chairs] "+role+" in "+loop.UserConfigPath(loop.Home())+")"+listHelp)
 	}
 	return out
 }
@@ -182,7 +183,16 @@ func chairSpecs(s loop.Settings, flags map[string]*string) map[string]string {
 	return specs
 }
 
-func resolveChairs(specs map[string]string) (loop.Chairs, error) {
+func resolveChairs(agents loop.Agents, specs map[string]string) (loop.Chairs, error) {
+	var missing []string
+	for _, role := range loop.ChairRoles {
+		if strings.TrimSpace(specs[role]) == "" {
+			missing = append(missing, role)
+		}
+	}
+	if len(missing) > 0 {
+		return loop.Chairs{}, fmt.Errorf("no chair for %s: name an agent in [agents] available (for example available = [\"claude\"]) or set [chairs] in %s", strings.Join(missing, ", "), loop.UserConfigPath(loop.Home()))
+	}
 	resolved := map[string]loop.Chair{}
 	var reviewers []loop.Chair
 	for _, role := range loop.AllRoles() {
@@ -192,7 +202,7 @@ func resolveChairs(specs map[string]string) (loop.Chairs, error) {
 		if role == "reviewer" {
 			list := loop.ChairList(specs[role])
 			for i, spec := range list {
-				chair, err := loop.ResolveChair(spec)
+				chair, err := agents.ResolveChair(spec)
 				if err != nil {
 					return loop.Chairs{}, fmt.Errorf("%s: %w", loop.ReviewerName(i, len(list)), err)
 				}
@@ -203,7 +213,7 @@ func resolveChairs(specs map[string]string) (loop.Chairs, error) {
 		if strings.Contains(specs[role], ",") {
 			return loop.Chairs{}, fmt.Errorf("%s: chair %q: only reviewer takes a list of chairs", role, specs[role])
 		}
-		chair, err := loop.ResolveChair(specs[role])
+		chair, err := agents.ResolveChair(specs[role])
 		if err != nil {
 			return loop.Chairs{}, fmt.Errorf("%s: %w", role, err)
 		}
@@ -224,7 +234,7 @@ func runChairs(s loop.Settings, ensemble string, roles map[string]*string) (loop
 			return s, loop.Chairs{}, err
 		}
 	}
-	chairs, err := resolveChairs(chairSpecs(s, roles))
+	chairs, err := resolveChairs(s.Defined, chairSpecs(s, roles))
 	return s, chairs, err
 }
 
@@ -392,7 +402,7 @@ func preflightCommand(args []string) error {
 	defer stop()
 	fs := flag.NewFlagSet("preflight", flag.ContinueOnError)
 	worktree := fs.String("worktree", "", "git worktree to start the chairs in")
-	agents := fs.String("agents", "", "agents to check (default "+strings.Join(loop.AgentNames(), ",")+")")
+	agents := fs.String("agents", "", "agents to check (default [agents] available in the user config)")
 	timeout := fs.Duration("timeout", 0, "how long each chair gets to answer (default [run] preflight_timeout, else 4m)")
 	tier := fs.String("tier", "", "check each agent on this tier's model and effort (small, medium or large) instead of its profile's own")
 	caoURL := fs.String("cao", "", "cao-server URL (default $CAO_API_BASE_URL, then [cao] url, else http://127.0.0.1:9889)")
@@ -414,7 +424,11 @@ func preflightCommand(args []string) error {
 	if set["timeout"] {
 		s.PreflightTimeout = *timeout
 	}
-	selected, err := loop.SelectAgents(firstNonEmpty(*agents, strings.Join(loop.AgentNames(), ",")))
+	names := firstNonEmpty(*agents, strings.Join(s.Agents, ","))
+	if names == "" {
+		return fmt.Errorf("no agents to preflight: name an agent in [agents] available (for example available = [\"claude\"]) in %s, or pass -agents", loop.UserConfigPath(loop.Home()))
+	}
+	selected, err := s.Defined.Select(names)
 	if err != nil {
 		return err
 	}
@@ -450,6 +464,9 @@ func configCommand(args []string) error {
 		return err
 	}
 	s.CAOURL = firstNonEmpty(*caoURL, s.CAOURL)
+	if _, err := resolveChairs(s.Defined, s.Chairs); err != nil {
+		return err
+	}
 	printSources(os.Stdout, s)
 	fmt.Printf("cao    %s\nstate  %s\nrun    rounds %d, verify retries %d, step timeout %s, reply grace %s, preflight %s, blocker poll %s, lessons %s, learned budget %d bytes\n",
 		s.CAOURL, loop.StateDir(), s.Rounds, s.VerifyRetries, s.Timeout, s.ReplyGrace, s.PreflightTimeout, s.BlockerPoll, lessonsSetting(s), s.LearnedBudget)
@@ -570,6 +587,13 @@ func ensureProfiles(ctx context.Context, client *cao.Client, p *loop.Policy, ste
 	if len(variants) == 0 {
 		return nil
 	}
+	owners := map[string]string{}
+	for _, v := range variants {
+		if owner, ok := owners[v.Name()]; ok && owner != v.Provider {
+			return fmt.Errorf("effort profile %s is shared by providers %s and %s", v.Name(), owner, v.Provider)
+		}
+		owners[v.Name()] = v.Provider
+	}
 	installed, err := client.Profiles(ctx)
 	if err != nil {
 		return fmt.Errorf("listing CAO profiles: %w", err)
@@ -583,24 +607,28 @@ func ensureProfiles(ctx context.Context, client *cao.Client, p *loop.Policy, ste
 	type pendingProfile struct{ name, provider, base, source string }
 	var pending []pendingProfile
 	for _, v := range variants {
-		if _, err := loop.EffortProfileSource(v.Provider, v.Base, v.Effort, loop.Permissions{}); err != nil {
-			if have[v.Name()] {
-				continue
-			}
-			return err
-		}
 		base, ok := bases[v.Base]
 		if !ok {
 			base, err = client.ProfilePermissions(ctx, v.Base)
 			if err != nil {
+				var httpErr *cao.HTTPError
+				if errors.As(err, &httpErr) && httpErr.Status == http.StatusNotFound {
+					return fmt.Errorf("profile %s is not installed in CAO; it is the base of effort profile %s; install it with cao install, or set effort = \"inherit\" under [tiers.%s] to use it as is", v.Base, v.Name(), v.Provider)
+				}
 				return fmt.Errorf("reading CAO profile %s: %w", v.Base, err)
 			}
 			bases[v.Base] = base
 		}
 		if have[v.Name()] {
 			variant, err := client.ProfilePermissions(ctx, v.Name())
-			if err == nil && samePermissions(base, variant) {
+			if err != nil {
+				return fmt.Errorf("reading CAO profile %s: %w", v.Name(), err)
+			}
+			if samePermissions(base, variant) {
 				continue
+			}
+			if !strings.HasPrefix(variant.Description, "kapellmeister chair at ") {
+				return fmt.Errorf("profile %s exists and was not generated by kapellmeister; km will not replace it; remove it, or set effort = \"inherit\"", v.Name())
 			}
 		}
 		source, err := loop.EffortProfileSource(v.Provider, v.Base, v.Effort, loop.Permissions{PermissionMode: base.PermissionMode, AllowedTools: base.AllowedTools, CodexProfile: base.CodexProfile})

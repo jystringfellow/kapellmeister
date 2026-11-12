@@ -157,6 +157,7 @@ func TestNoLessonsFileOrResultKeyIsWrittenWhenLessonsAreOff(t *testing.T) {
 func TestKmConfigShowsWhetherLessonsAreOn(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		s := playStanding(t)
+		writeFile(t, loop.UserConfigPath(loop.Home()), builtInAgentConfig)
 		value, want := "false", "lessons off"
 		if enabled {
 			value, want = "true", "lessons on, limit 5m0s"
