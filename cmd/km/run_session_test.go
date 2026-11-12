@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -106,7 +107,9 @@ func (f *runCAO) serve(t *testing.T) *httptest.Server {
 		}
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
-			t.Error(err)
+			if r.Context().Err() == nil {
+				t.Error(err)
+			}
 			return
 		}
 		defer resp.Body.Close()
@@ -115,6 +118,43 @@ func (f *runCAO) serve(t *testing.T) *httptest.Server {
 	}))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+func TestARunProxyAcceptsCancellationOfAnInFlightStep(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	defer close(release)
+	f := &runCAO{}
+	f.fake.noReplyPart = "lessons"
+	f.fake.afterReply = func(string, string) {
+		close(started)
+		<-release
+	}
+	srv := f.serve(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL+"/terminals/run-step", strings.NewReader(`{"prompt":".kapellmeister/runs/probe/lessons-reply.json"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		resp, err := http.DefaultClient.Do(req)
+		if resp != nil {
+			resp.Body.Close()
+		}
+		done <- err
+	}()
+	select {
+	case <-started:
+	case err := <-done:
+		t.Fatalf("request ended before reaching the step: %v", err)
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("request error = %v, want cancellation", err)
+	}
+	srv.Close()
 }
 
 func runSessionFixture(t *testing.T, f *runCAO) (string, error) {
