@@ -141,6 +141,44 @@ It checks every pending write before installing anything, and verifies each inst
 reading it back. Use `-cao URL` to select the server; `CAO_HOME_DIR` must name that server's home.
 Runs never install missing base profiles implicitly; the error names this command instead.
 
+## In a scoring-stage sandbox
+
+[scoring-stage](https://github.com/jystringfellow/scoring-stage) runs agents in Docker Sandboxes.
+This repository carries a stage book, [`book/`](book), that makes any repository's sandbox ready
+for km: it downloads a km release and checks its SHA-256, installs tmux and CAO, starts
+`cao-server` on every boot, writes `[agents] available` from the agent CLIs the sandbox has
+(unless a km user config already exists), and runs `km profiles install` for them. It chooses no
+ensemble and no chairs; those come from your config and the repository's.
+
+Install the book once, from a checkout of this repository, in `~/.scoring-stage/config.toml`:
+
+```toml
+books = ["~/Code/kapellmeister/book"]
+```
+
+A repository then names it, and says how km verifies a change:
+
+```toml
+# .scoring-stage/config.toml
+books = ["kapellmeister"]
+```
+
+```toml
+# .kapellmeister/config.toml
+[test]
+verify = "scripts/verify"
+```
+
+`stage up <repo> <slug>`, then inside the sandbox `km preflight -worktree .` and
+`km run -repo . -task-file task.md`. To try the book without installing it, pass
+`--book ~/Code/kapellmeister/book` to `stage up`.
+
+The book keeps km's run records and CAO's database and logs as takes. Add the session
+directories of the agents you use to your own takes if you want token usage to survive the
+sandbox. The kit's `km` argument and its two checksum arguments pin the release; change all three
+together. The kit in `.scoring-stage/kits/` is different: it is for working on km itself and
+builds km from the workspace.
+
 ## Preflight
 
 `km preflight -worktree DIR [-agents claude,codex]` seats each chair in its own temporary CAO
