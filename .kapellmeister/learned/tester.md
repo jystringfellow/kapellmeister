@@ -2,3 +2,5 @@
 - Before any scenario that runs km, cao, cao-server or tmux, follow AGENTS.md "Exercising km live" and use `scripts/nested-km-env`.
 - Probe stale and concurrent state and CAO misbehaving; create scratch repositories under the scratch directory.
 - Keep scratch files, build output and server state under scratch; clean up processes and sessions you started.
+- A nested cao-server starts with an empty CAO home. Run `cao install profiles/km-claude.md` in the sourced nested shell before the first audition or run.
+- In a sandbox a nested CAO may fail session creation with `Could not find object`, so no nested chair seats. Treat it as environmental: show seating by the launch requests recorded at a proxy, and isolation by preflight, refusals and before/after records. Do not retry live runs.
