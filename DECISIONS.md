@@ -356,3 +356,24 @@ repositories do not do. Tests:
 `TestTheEnvFileMovesKmCaoAndTmuxUnderTheScratchDirectoryAndClearsWhatTheChairInherited`,
 `TestTheEnvFileQuotesScratchPathsWithSpacesQuotesAndDollars` and
 `TestATmuxSocketPathOver100BytesIsRefusedAndNoEnvFileIsWritten`.
+
+## 2026-11-12: The tester's briefing gives per-run facts and names no tools
+
+This supersedes "Give the tester an environment for nested conductors" (2026-11-11): km no longer
+writes a tester environment file, the `TesterEnvFile` setting is removed, and neither tester
+briefing tells a chair to source anything. It narrows the briefing wording of "Name the signal
+that ended a run, and handle SIGTERM" (2026-11-11): the conductor's PID remains, with its
+orchestrator URL and state directory identified as outside the test and protected from signals,
+stops and changes; signals are restricted to processes the tester started and recorded in
+`<scratch>/pids`. The briefing names no tools or process-finding commands.
+
+Nested-conductor setup and tool-specific safety rules live in `AGENTS.md`, "Exercising km live",
+`scripts/nested-km-env` and `.kapellmeister/learned/tester.md`, following "What a repository tells
+its ensemble lives in the repository, not in km" (2026-11-11). The CAO-home probe and the live-run
+profile guard remain because they hold for any user. Evidence:
+`TestTheTesterBriefingGivesTheConductorsPidOrchestratorURLAndStateDirectory`,
+`TestTheTesterBriefingNamesNoToolsOrFileToSource`,
+`TestNoPromptKmGivesAChairNamesCaoServerTmuxPgrepPkillOrKillall` and
+`TestRunAndPlayLeaveTheScratchDirectoryEmptyOfAnythingKmWrote`. The test step must also record a
+real nested run and unchanged conductor agent-store checksums, session list and process liveness
+in this run's test report.

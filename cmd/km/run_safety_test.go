@@ -139,6 +139,56 @@ func TestRunAndPlayCreateTheScratchDirectoryUnderStateScratchOutsideTheRunRecord
 	}
 }
 
+func TestRunAndPlayLeaveTheScratchDirectoryEmptyOfAnythingKmWrote(t *testing.T) {
+	for _, command := range []string{"run", "play"} {
+		for _, tester := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/%t", command, tester), func(t *testing.T) {
+				var err error
+				var url string
+				if command == "run" {
+					f := &runCAO{}
+					_, args := runSessionArgs(t, f)
+					if !tester {
+						for i := 0; i < len(args); i++ {
+							if args[i] == "-tester" {
+								args = append(args[:i], args[i+2:]...)
+								break
+							}
+						}
+					}
+					_, err = captureStdout(t, func() error { return runCommand(args) })
+				} else {
+					s := playStanding(t)
+					if tester {
+						s = safetyStanding(t)
+					}
+					url = (&playCAO{}).serve(t).URL
+					_, err = capturePlay(t, []string{s.Session, "-cao", url})
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				dir, _ := onlyRunResult(t)
+				scratch := filepath.Join(loop.StateDir(), "scratch", filepath.Base(dir))
+				entries, readErr := os.ReadDir(scratch)
+				if readErr != nil {
+					t.Fatal(readErr)
+				}
+				if len(entries) != 0 {
+					t.Errorf("scratch must be empty, got %v", entries)
+				}
+				data, err := os.ReadFile(filepath.Join(dir, "config.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(string(data), "TesterEnvFile") {
+					t.Errorf("config retains removed tester environment setting: %s", data)
+				}
+			})
+		}
+	}
+}
+
 func TestRunAndPlayRefuseAStateDirInsideAGitRepositoryNamingBothPathsBeforeAnyCAOCall(t *testing.T) {
 	for _, command := range []string{"run", "play"} {
 		t.Run(command, func(t *testing.T) {

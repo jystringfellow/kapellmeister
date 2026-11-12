@@ -111,12 +111,12 @@ Do not modify any file other than %s. When done, reply with one short sentence.
 `, plan, summary, reviewNote, failedNote, verifyLine(command, v, verifyPath), out, out)
 }
 
-func testPlanPrompt(task, plan, out, scratch string, timeout time.Duration, conductorPID int, lessons, caoURL, stateDir, envFile string) string {
+func testPlanPrompt(task, plan, out, scratch string, timeout time.Duration, conductorPID int, lessons, caoURL, stateDir string) string {
 	limit := ""
 	if timeout > 0 {
 		limit = fmt.Sprintf("The test step has a time limit of %s. Plan scenarios ordered by risk (highest first) and sized to fit that limit.\n", timeout)
 	}
-	return preamble("tester") + taskBlock(task) + lessons + testerProcessBriefing(conductorPID, scratch, caoURL, stateDir, envFile) + fmt.Sprintf(`
+	return preamble("tester") + taskBlock(task) + lessons + testerProcessBriefing(conductorPID, scratch, caoURL, stateDir) + fmt.Sprintf(`
 Read the plan in %s. Plan how to exercise the change end to end in its real environment, the way a user would, including hostile conditions: missing, stale or concurrent state and external services misbehaving. Do not restate unit tests.
 %sStay blind to the implementation: do not look at git diff or git status, or at the implementer's output or reviews.
 Use only %s for scratch files, build output, scratch repositories and server state.
@@ -124,12 +124,12 @@ Write the test plan to %s and change no other file. When done, reply with one sh
 `, plan, limit, scratch, out)
 }
 
-func testPrompt(task, plan, testPlan, summary, command string, v VerifyResult, verifyPath, scratch, out string, timeout time.Duration, conductorPID int, lessons, caoURL, stateDir, envFile string) string {
+func testPrompt(task, plan, testPlan, summary, command string, v VerifyResult, verifyPath, scratch, out string, timeout time.Duration, conductorPID int, lessons, caoURL, stateDir string) string {
 	limit := ""
 	if timeout > 0 {
 		limit = fmt.Sprintf("The test step has a time limit of %s. Stop starting new scenarios when about %s remains (the last tenth of the limit), leaving time to clean up and write your verdict.\n", timeout, timeout/10)
 	}
-	return preamble("tester") + taskBlock(task) + lessons + testerProcessBriefing(conductorPID, scratch, caoURL, stateDir, envFile) + fmt.Sprintf(`
+	return preamble("tester") + taskBlock(task) + lessons + testerProcessBriefing(conductorPID, scratch, caoURL, stateDir) + fmt.Sprintf(`
 Read the plan in %s, the test plan in %s and the implementation summary in %s.
 %s
 `+verifiedNote+`Execute the test plan against the real environment, the way a user would. Run the highest-risk scenarios first.
@@ -202,10 +202,6 @@ func lessonsSection(l chairLessons) string {
 	return section + l.text + lessonsClose + "\n"
 }
 
-func testerProcessBriefing(pid int, scratch, caoURL, stateDir, envFile string) string {
-	return fmt.Sprintf("\nkm is process %d and is conducting this run; never signal or kill it; never signal or kill a process found by name (pgrep, pkill, killall, ps | grep); signal only processes you started yourself and listed in %s/pids.\nThe conductor's CAO URL %s and km state directory %s are shared and off limits for writes, including the CAO home, profiles and tmux server behind that CAO. No km, cao, cao-server or tmux command may create, change, install into or delete anything there. In the same shell, before starting any km, cao-server, cao or tmux of your own, source the tester environment with `. %s`; never run those against the conductor's environment; if sourcing fails, do not start them. Start nested cao-server only under that environment and append its PID to %s/pids.\n", pid, scratch, caoURL, stateDir, testerQuote(envFile), scratch)
-}
-
-func testerQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+func testerProcessBriefing(pid int, scratch, orchestratorURL, stateDir string) string {
+	return fmt.Sprintf("\nThe process %d is conducting this run; the orchestrator at %s and the state directory %s belong to that conductor; none of them is part of what you are testing, and none may be signalled, stopped or changed.\nYou may signal only processes you started yourself and listed in %s/pids.\n", pid, orchestratorURL, stateDir, scratch)
 }

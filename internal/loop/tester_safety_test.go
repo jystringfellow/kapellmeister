@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"testing"
@@ -314,26 +315,60 @@ func TestPidsFilesLargerThanOneMiBAreSkipped(t *testing.T) {
 	}
 }
 
-func TestTheTesterBriefingNamesTheConductorsCAOURLAndStateDirectoryAsOffLimitsAndTheEnvFileToSource(t *testing.T) {
+func TestTheTesterBriefingGivesTheConductorsPidOrchestratorURLAndStateDirectory(t *testing.T) {
+	briefing := testerProcessBriefing(1234, "/s", "http://127.0.0.1:19889", "/conductor/state")
+	for _, want := range []string{"process 1234", "conducting this run", "http://127.0.0.1:19889", "/conductor/state", "belong to that conductor", "none of them is part of what you are testing", "none may be signalled, stopped or changed", "signal only processes you started yourself and listed in /s/pids"} {
+		if !strings.Contains(briefing, want) {
+			t.Errorf("briefing lacks %q: %s", want, briefing)
+		}
+	}
+	withoutURL := strings.ReplaceAll(briefing, "http://127.0.0.1:19889", "orchestrator")
+	if lines := strings.Split(strings.TrimSpace(withoutURL), "\n"); len(lines) != 2 || strings.Count(withoutURL, ".") != 2 {
+		t.Errorf("briefing must contain at most two sentences: %s", briefing)
+	}
 	e, f := testerEngine(t)
 	e.Config.CAOURL = "http://127.0.0.1:19889"
 	e.Config.StateDir = "/conductor/state"
-	e.Config.TesterEnvFile = filepath.Join(e.Config.ScratchDir, "env.sh")
+	e.Config.Lessons = true
 	run(t, e)
-	for _, name := range []string{"test-plan", "test"} {
-		p := testerSteps(f, name)[0].Prompt
-		for _, want := range []string{e.Config.CAOURL, e.Config.StateDir, e.Config.TesterEnvFile, "off limits for writes", "before starting any", "km", "cao-server", "cao", "tmux", "if sourcing fails", "CAO home", "profiles", "tmux server", "never signal or kill", "pids"} {
-			if !strings.Contains(p, want) {
-				t.Errorf("%s lacks %q: %s", name, want, p)
+	for _, step := range f.steps {
+		for _, value := range []string{fmt.Sprintf("process %d", os.Getpid()), e.Config.CAOURL, e.Config.StateDir, filepath.Join(e.Config.ScratchDir, "pids")} {
+			if step.Name == "test-plan" || step.Name == "test" {
+				if !strings.Contains(step.Prompt, value) {
+					t.Errorf("%s lacks %q", step.Name, value)
+				}
+			} else if strings.Contains(step.Prompt, value) {
+				t.Errorf("%s names tester briefing fact %q", step.Name, value)
 			}
 		}
 	}
-	for _, name := range []string{"plan", "implement", "review", "gate", "classify"} {
-		for _, step := range testerSteps(f, name) {
-			for _, value := range []string{e.Config.CAOURL, e.Config.StateDir, e.Config.TesterEnvFile} {
-				if strings.Contains(step.Prompt, value) {
-					t.Errorf("%s names tester isolation: %s", name, step.Prompt)
-				}
+}
+
+func TestTheTesterBriefingNamesNoToolsOrFileToSource(t *testing.T) {
+	briefing := testerProcessBriefing(1234, "/s", "http://127.0.0.1:19889", "/conductor/state")
+	for _, pattern := range []string{`(?i)\bkm\b`, `(?i)\bcao\b`, `(?i)cao-server|tmux|pgrep|pkill|killall|ps \| grep|source|sourcing|env\.sh|sh -c`} {
+		if regexp.MustCompile(pattern).MatchString(briefing) {
+			t.Errorf("briefing matches forbidden tool or setup instruction %q: %s", pattern, briefing)
+		}
+	}
+}
+
+func TestNoPromptKmGivesAChairNamesCaoServerTmuxPgrepPkillOrKillall(t *testing.T) {
+	e, f := testerEngine(t)
+	scratch, err := os.MkdirTemp("", "briefing-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(scratch) })
+	e.Config.ScratchDir = scratch
+	e.Config.Lessons = true
+	e.Config.CAOURL = "http://127.0.0.1:19889"
+	e.Config.StateDir = "/conductor/state"
+	run(t, e)
+	for _, step := range f.steps {
+		for _, tool := range []string{"cao-server", "tmux", "pgrep", "pkill", "killall"} {
+			if strings.Contains(strings.ToLower(step.Prompt), tool) {
+				t.Errorf("%s prompt names %s", step.Name, tool)
 			}
 		}
 	}
