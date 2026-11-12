@@ -1,7 +1,7 @@
 # kapellmeister
 
-kapellmeister runs a plan → implement → review → gate loop over coding agents (Claude Code, Codex, Copilot
-CLI, Antigravity) through [CLI Agent Orchestrator](https://github.com/awslabs/cli-agent-orchestrator)
+kapellmeister runs a plan → implement → review → gate loop over coding agents (including Claude Code, Codex, Copilot
+CLI and Antigravity) through [CLI Agent Orchestrator](https://github.com/awslabs/cli-agent-orchestrator)
 (CAO), with an optional tester that exercises the change live after gate approval. Rounds repeat
 until the gate and any tester approve or the rounds run out. Every run works in a throwaway detached
 worktree and leaves its change uncommitted for you to ship.
@@ -16,7 +16,7 @@ km ensemble list                                # list standing ensembles
 km ensemble down SESSION                        # take one down
 km report [-json] [-since DATE] [-repository NAME] [-max-depth N] [-max-entries N] [DIR...]  # summarize run records
 km status [-json] [-max-depth N] [-max-entries N] [DIR...]  # show runs in progress
-km preflight -worktree DIR [-tier large]          # check each agent starts and answers
+km preflight -worktree DIR [-agents NAME,...] [-tier large]  # check the available agents
 km config [-worktree DIR] [-cao URL]              # show the effective settings and their files
 ```
 
@@ -48,9 +48,22 @@ The branch is fetched from `origin`; a missing branch fails before any chair sta
 `-base` takes a branch name such as `feature/parser`, and cannot be combined with `-worktree`,
 which plays on the checkout it is given. `km play` uses its standing ensemble's recorded checkout.
 
-Chairs default to claude plans, codex implements, copilot reviews, claude gates and classifies.
+Default chairs follow the ordered `[agents] available` list in your user config, ignoring duplicates:
+
+- One agent plays every required part.
+- With two agents, the first plans, reviews, gates and classifies; the second implements. Review
+  stays independent of the implementer's agent whenever there is a choice.
+- With three or more agents, the first plans, gates and classifies, the second implements and the
+  third reviews.
+- When `claude`, `codex` and `copilot` are all available, in any order or with extras, claude plans,
+  gates and classifies, codex implements and copilot reviews.
+
+There is no default tester. Configured `[chairs]` override these defaults, followed by a selected
+ensemble and role flags. With no available agents, supply every required chair explicitly;
+otherwise km refuses before contacting CAO and names the user config to edit.
+
 Override any chair with `-planner`, `-implementer`, `-reviewer`, `-gate`, `-classifier` or the optional
-`-tester`, as an agent (`claude`, `codex`, `copilot`, `agy`) or `provider:profile[:model]`. Append `@small`,
+`-tester`, as a built-in or user-defined agent, or `provider:profile[:model]`. Append `@small`,
 `@medium` or `@large` to pin a chair's tier, for example `-reviewer claude@large`. A chair with an
 explicit model always runs that model and cannot also use `@tier`.
 
@@ -62,7 +75,9 @@ reviewers follow sizing. Other required parts have one chair; the optional teste
 ## Preflight
 
 `km preflight -worktree DIR [-agents claude,codex]` seats each chair in its own temporary CAO
-session, one at a time. Checks run concurrently once their chairs are seated. Session-creation
+session, one at a time. It defaults to your `[agents] available`; `-agents` selects any defined
+names, including user-defined ones. With neither available agents nor `-agents`, it asks you to
+configure them before contacting CAO. Checks run concurrently once their chairs are seated. Session-creation
 5xx errors and a 400 saying the requested session was not found get up to three retries, after
 1, 2 and 4 seconds plus up to half as much again at random, under distinct names ending in `r`, `r2` and `r3`. The `ok` or `BLOCKED` line
 reports `seat retried N time(s) after <first error>`. Other failures keep one immediate retry;
@@ -141,9 +156,11 @@ cao install profiles/km-claude.md --provider claude_code
 ```
 
 Every km Claude chair using `km-claude`, including generated `km-claude-<effort>` profiles,
-inherits that mode. km copies `permissionMode`, `allowedTools` and `codexProfile` from its Claude
-and Codex bases when generating effort profiles, and reinstalls existing variants when any of these
-fields differ.
+inherits that mode. km copies `permissionMode`, `allowedTools` and `codexProfile` from any installed
+Claude or Codex base when generating effort profiles, and synchronizes variants it generated when
+these fields differ. A variant that needs replacement must carry km's generated description;
+km refuses to replace one it did not generate. The base's system prompt, MCP, skill and other
+fields are not copied: variants carry km's chair instructions and the chosen effort.
 An unset `allowedTools` stays unset; an explicit empty list stays empty.
 Before an installation, km creates and deletes a temporary `km-probe-*` profile through CAO's API
 and verifies its exact content in the local `CAO_HOME_DIR` (default
@@ -262,9 +279,10 @@ and at most one tester. Parts are roles with plain names; chairs may carry orche
 such as `tonmeister` for the tester. Section and chair names are lowercase letters, digits and dashes. Sections keep the order they first appear in the file,
 and chairs keep their order within a section.
 
-A chair plays the first of its `agents` that is in your `[agents] available`, which defaults to
-every agent km knows. A repository's file names only agents, each with an optional `@tier`,
-because profiles and models depend on your machine. Your own files may also name
+A chair plays the first of its `agents` that is in your `[agents] available`, which has no default.
+A repository's file names only agents defined on your machine, built-in or user-defined, each with
+an optional `@tier`, because profiles and models depend on your machine. An undefined agent is an
+error even if a later preference is available. Your own files may also name
 `provider:profile[:model]`. A chair's `timeout` wins over its section's, which wins over the
 file's, which wins over `[run] timeout`. Role flags cannot override an ensemble file; copy it to
 `~/.kapellmeister/ensembles/` and edit that instead. A name defined both as a file and in
@@ -273,7 +291,8 @@ file's, which wins over `[run] timeout`. Role flags cannot override an ensemble 
 ## Configuration
 
 kapellmeister layers two files over its built-in defaults; flags override both for one run. Every key is
-optional, and unknown keys are an error.
+optional, and unknown keys are an error. To run without explicit chairs, configure at least one
+available agent in your user config.
 
 - **`~/.kapellmeister/config.toml`** (`$KAPELLMEISTER_HOME` moves it) holds what depends on your machine and accounts:
   `[cao]`, `[chairs]`, `[agents]`, `[ensembles]`, timeouts, and the model each tier means for you.
@@ -288,6 +307,61 @@ Putting one in the wrong file is an error.
 
 km bounds each CAO call: short calls at 30s, launches at 90s, and run-step at the step’s own timeout
 plus 90s for CAO’s readiness wait; hitting a bound reports the method, path and limit.
+
+A one-vendor setup needs only this in `~/.kapellmeister/config.toml`, after installing the
+`km-claude` base with `cao install profiles/km-claude.md --provider claude_code`:
+
+```toml
+[agents]
+available = ["claude"]
+```
+
+All five required chairs use Claude. `km preflight -worktree DIR` checks that one agent.
+
+To use your own CAO profile, install it with CAO, then define its short name in your user config:
+
+```toml
+[agents]
+available = ["mine"]
+
+[agents.define]
+mine = "claude_code:my-reviewer"
+
+[chairs]
+reviewer = "mine@large"
+```
+
+`mine` fills every omitted required chair. `km preflight -worktree DIR -agents mine -tier large`
+and `km run -repo DIR -task-file task.md -implementer mine` accept the same name. No `km-*` base
+profile is needed. Definitions are exactly `provider:profile`, without a model or tier; names use
+lowercase letters, digits, dashes and underscores, starting with a letter or digit. The built-ins
+are `claude = "claude_code:km-claude"`, `codex = "codex:km-codex"`,
+`copilot = "copilot_cli:km-copilot"` and `agy = "antigravity_cli:km-agy"`. A definition with any of
+these names overrides it. `[agents]`, including `[agents.define]`, belongs only in the user config.
+
+A repository ensemble can use that name with `agents = ["mine@large"]` on its chairs. For example,
+`.kapellmeister/ensembles/solo.toml` can seat the complete score:
+
+```toml
+[sections.all.chairs.planner]
+part = "planner"
+agents = ["mine"]
+[sections.all.chairs.implementer]
+part = "implementer"
+agents = ["mine"]
+[sections.all.chairs.reviewer]
+part = "reviewer"
+agents = ["mine@large"]
+[sections.all.chairs.gate]
+part = "gate"
+agents = ["mine"]
+[sections.all.chairs.classifier]
+part = "classifier"
+agents = ["mine"]
+```
+
+Select it with `km audition -worktree DIR -ensemble solo` or
+`km run -repo DIR -task-file task.md -ensemble solo`. Each user supplies their own `mine` definition and available list.
 
 ```toml
 # ~/.kapellmeister/config.toml
@@ -324,7 +398,8 @@ large = { model = "claude-sonnet-5.5" }
 ```
 
 Select a named ensemble for a run with `km run -ensemble thorough` alongside the usual task and
-repository flags. Its chairs overlay `[chairs]`, then built-in defaults for omitted roles. Without
+repository flags. Its chairs overlay `[chairs]`, then defaults derived from your available agents
+for omitted roles. Without
 `-ensemble`, the run uses `[chairs]` as usual. Role flags override the selected ensemble's chairs;
 unknown ensemble names are an error listing the defined names. `km config` lists each ensemble
 and its chairs. `[ensembles]` belongs only in `~/.kapellmeister/config.toml`, because it names
@@ -513,8 +588,11 @@ An explicit model (`provider:profile:model`) cannot also carry `@tier`.
 
 Models must be IDs (CAO rejects display names). Effort applies to Claude Code and Codex only,
 because CAO cannot pass it to the others; `effort = "inherit"` uses the CLI's own setting. kapellmeister
-installs the `km-claude-<effort>` and `km-codex-<effort>` CAO profiles it needs on first use;
-chairs on other profiles need a `<profile>-<effort>` copy installed by hand.
+generates and installs each `<profile>-<effort>` variant it needs from the installed base profile,
+including user-named profiles. A missing base is an error naming that base. Permissions are copied
+as described above; the base's system prompt and other fields are not. `effort = "inherit"`
+uses the base directly and installs nothing. Explicit models and providers without tier tables
+also need no variants.
 
 ### Sizing
 

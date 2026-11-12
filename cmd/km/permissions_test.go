@@ -101,6 +101,7 @@ func TestEnsureProfilesReinstallsAVariantWhosePermissionsDifferFromItsBase(t *te
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv(loop.StateEnv, t.TempDir())
 			args, installed := fakeProfileInstall(t)
+			tt.variant.Description = "kapellmeister chair at high effort"
 			srv := permissionCAO(t, map[string]cao.ProfilePermissions{"km-claude": tt.base, "km-claude-high": tt.variant}, map[string]bool{"km-claude-high": true})
 			p := loop.DefaultPolicy()
 			p.Steps["classify"] = loop.StepPolicy{Tier: "medium", Min: "medium", Max: "medium"}
@@ -243,6 +244,7 @@ func TestConfigPrintsEachChairsPermissionLabelAndTheSameNote(t *testing.T) {
 
 func TestConfigStillPrintsWhenCAOIsUnreachable(t *testing.T) {
 	t.Setenv(loop.HomeEnv, t.TempDir())
+	writeFile(t, loop.UserConfigPath(loop.Home()), builtInAgentConfig)
 	t.Setenv(loop.StateEnv, t.TempDir())
 	out, err := captureStdout(t, func() error { return configCommand([]string{"-worktree", t.TempDir(), "-cao", unreachableCAO}) })
 	if err != nil || strings.Count(out, "permissions unavailable:") != 5 {
@@ -259,38 +261,38 @@ func TestChairTableWithoutPermissionLabelsKeepsItsOutput(t *testing.T) {
 	}
 }
 
-func TestConfigReadsTheChosenTierAndEveryProvidersPermissionMode(t *testing.T) {
+func TestConfigReadsEveryProvidersBasePermissionMode(t *testing.T) {
 	t.Setenv(loop.HomeEnv, t.TempDir())
 	t.Setenv(loop.StateEnv, t.TempDir())
 	writeFile(t, loop.UserConfigPath(loop.Home()), "[chairs]\nplanner = 'claude_code:custom@large'\nimplementer = 'codex:custom-codex'\nreviewer = ['claude_code:custom', 'copilot', 'agy', 'codex:custom-codex']\ngate = 'codex:custom-codex'\nclassifier = 'codex:custom-codex'\ntester = 'claude_code:custom'\n")
 	srv := permissionCAO(t, map[string]cao.ProfilePermissions{
-		"custom":              {PermissionMode: "default"},
-		"custom-xhigh":        {PermissionMode: "plan"},
-		"custom-high":         {PermissionMode: "bypassPermissions"},
-		"custom-codex-high":   {AllowedTools: []string{"*"}},
-		"custom-codex-medium": {CodexProfile: "safe"},
-		"km-copilot":          {},
-		"km-agy":              {},
+		"custom":            {PermissionMode: "default"},
+		"custom-xhigh":      {PermissionMode: "plan"},
+		"custom-high":       {PermissionMode: "bypassPermissions"},
+		"custom-codex-high": {AllowedTools: []string{"*"}},
+		"custom-codex":      {CodexProfile: "safe"},
+		"km-copilot":        {},
+		"km-agy":            {},
 	}, nil)
 	out, err := captureStdout(t, func() error { return configCommand([]string{"-worktree", t.TempDir(), "-cao", srv.URL}) })
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"planner  claude_code:custom@large  permissions permission-mode plan",
-		"implementer  codex:custom-codex  permissions yolo",
-		"reviewer-1  claude_code:custom  permissions permission-mode bypassPermissions",
+		"planner  claude_code:custom@large  permissions permission-mode default",
+		"implementer  codex:custom-codex  permissions approvals",
+		"reviewer-1  claude_code:custom  permissions permission-mode default",
 		"reviewer-2  copilot  permissions allow-all (fixed by CAO)",
 		"reviewer-3  agy  permissions skip-permissions (fixed by CAO)",
-		"reviewer-4  codex:custom-codex  permissions yolo",
+		"reviewer-4  codex:custom-codex  permissions approvals",
 		"classifier  codex:custom-codex  permissions approvals",
-		"tester  claude_code:custom  permissions permission-mode bypassPermissions",
+		"tester  claude_code:custom  permissions permission-mode default",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q: %s", want, out)
 		}
 	}
-	requirePermissionNote(t, out, 7)
+	requirePermissionNote(t, out, 2)
 }
 
 func TestAuditionStillRunsWhenPermissionProfilesCannotBeRead(t *testing.T) {
@@ -429,7 +431,7 @@ func TestEnsureProfilesKeepsAndSynchronizesTheBasesNamedCodexProfile(t *testing.
 				case "/agents/profiles/km-codex":
 					fmt.Fprintf(w, `{"allowedTools":["Read"],"codexProfile":%q}`, baseProfile)
 				case "/agents/profiles/km-codex-high":
-					fmt.Fprintf(w, `{"allowedTools":["Read"],"codexProfile":%q}`, variantProfile)
+					fmt.Fprintf(w, `{"description":"kapellmeister chair at high effort","allowedTools":["Read"],"codexProfile":%q}`, variantProfile)
 				default:
 					t.Errorf("unexpected request %s", r.URL.Path)
 					http.NotFound(w, r)

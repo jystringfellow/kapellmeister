@@ -18,7 +18,7 @@ func TestFlagsOverrideConfigOnlyWhenGiven(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv(loop.HomeEnv, home)
 	t.Setenv(loop.CAOURLEnv, "")
-	if err := os.WriteFile(loop.UserConfigPath(home), []byte("[run]\ntimeout = \"1h\"\nrounds = 5\n\n[chairs]\nreviewer = \"agy\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(loop.UserConfigPath(home), []byte(builtInAgentConfig+"[run]\ntimeout = \"1h\"\nrounds = 5\n\n[chairs]\nreviewer = \"agy\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
@@ -34,7 +34,7 @@ func TestFlagsOverrideConfigOnlyWhenGiven(t *testing.T) {
 	if s.Rounds != 2 || s.Timeout != time.Hour || s.Policy.Sizing.Mode != loop.SizingOn {
 		t.Fatalf("settings = rounds %d timeout %s sizing %s", s.Rounds, s.Timeout, s.Policy.Sizing.Mode)
 	}
-	chairs, err := resolveChairs(chairSpecs(s, roles))
+	chairs, err := resolveChairs(s.Defined, chairSpecs(s, roles))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestFlagsOverrideConfigOnlyWhenGiven(t *testing.T) {
 
 func TestUnknownChairsAndBadSizingFlagsAreRejected(t *testing.T) {
 	t.Setenv(loop.HomeEnv, t.TempDir())
-	if _, err := loop.ResolveChair("gemini"); err == nil {
+	if _, err := loop.BuiltInAgents().ResolveChair("gemini"); err == nil {
 		t.Fatal("accepted an unknown agent")
 	}
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
@@ -72,7 +72,7 @@ func TestAgentNamesAcceptAPinnedTier(t *testing.T) {
 		{"claude_code:custom@large", "claude_code", "custom", "large"},
 	} {
 		t.Run(tc.spec, func(t *testing.T) {
-			chair, err := loop.ResolveChair(tc.spec)
+			chair, err := loop.BuiltInAgents().ResolveChair(tc.spec)
 			if err != nil || chair != (loop.Chair{Provider: tc.provider, Profile: tc.profile, Tier: tc.tier}) {
 				t.Fatalf("%s: %+v %v", tc.spec, chair, err)
 			}
@@ -84,7 +84,7 @@ func TestAgentNamesAcceptAPinnedTier(t *testing.T) {
 		{"claude_code:km-claude:claude-fable-5-1@large", "explicit model"},
 	} {
 		t.Run(tc.spec, func(t *testing.T) {
-			if _, err := loop.ResolveChair(tc.spec); err == nil || !strings.Contains(err.Error(), tc.want) {
+			if _, err := loop.BuiltInAgents().ResolveChair(tc.spec); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("%s: %v", tc.spec, err)
 			}
 		})
@@ -95,7 +95,7 @@ func ensembleSettings(t *testing.T) loop.Settings {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv(loop.HomeEnv, home)
-	if err := os.WriteFile(loop.UserConfigPath(home), []byte(`[chairs]
+	if err := os.WriteFile(loop.UserConfigPath(home), []byte(builtInAgentConfig+`[chairs]
 reviewer = "agy"
 [ensembles.thorough]
 reviewer = "claude@large"
@@ -160,7 +160,7 @@ func TestConfigListsEachEnsembleAndItsChairs(t *testing.T) {
 		t.Fatalf("ensembles:\n%s\nwant:\n%s", &out, want)
 	}
 	out.Reset()
-	printEnsembles(&out, loop.DefaultSettings())
+	printEnsembles(&out, builtInSettings())
 	if out.Len() != 0 {
 		t.Fatalf("no ensembles: %q", &out)
 	}
@@ -187,7 +187,7 @@ func TestAPinnedTierOnAProviderWithoutATierTableIsRejected(t *testing.T) {
 							t.Fatal(err)
 						}
 					}
-					if err := os.WriteFile(loop.UserConfigPath(home), []byte(config), 0o644); err != nil {
+					if err := os.WriteFile(loop.UserConfigPath(home), []byte(builtInAgentConfig+config), 0o644); err != nil {
 						t.Fatal(err)
 					}
 					s, err := loop.LoadSettings(home, "")
@@ -207,7 +207,7 @@ func TestAPinnedTierOnAProviderWithoutATierTableIsRejected(t *testing.T) {
 		}
 	}
 	t.Run("original agent spec", func(t *testing.T) {
-		s := loop.DefaultSettings()
+		s := builtInSettings()
 		delete(s.Policy.Tiers, "codex")
 		s.Chairs["reviewer"] = "codex@small"
 		_, chairs, err := runChairs(s, "", nil)
@@ -225,6 +225,7 @@ func TestAPinnedTierOnAProviderWithATierTableIsAccepted(t *testing.T) {
 	for _, source := range []string{"built-in", "user", "repository"} {
 		t.Run(source, func(t *testing.T) {
 			home, worktree := t.TempDir(), t.TempDir()
+			writeFile(t, loop.UserConfigPath(home), builtInAgentConfig)
 			spec := "claude@large"
 			if source != "built-in" {
 				spec = "myprov:myprof@large"
@@ -235,9 +236,11 @@ func TestAPinnedTierOnAProviderWithATierTableIsAccepted(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				if err := os.WriteFile(path, []byte("[tiers.myprov.large]\nmodel = \"m\"\n"), 0o644); err != nil {
-					t.Fatal(err)
+				body := "[tiers.myprov.large]\nmodel = 'm'\n"
+				if source == "user" {
+					body = builtInAgentConfig + body
 				}
+				writeFile(t, path, body)
 			}
 			s, err := loop.LoadSettings(home, worktree)
 			if err != nil {
@@ -258,7 +261,7 @@ func TestAPinnedTierOnAProviderWithATierTableIsAccepted(t *testing.T) {
 func TestAnUnpinnedChairOnAProviderWithoutATierTableIsAccepted(t *testing.T) {
 	for _, spec := range []string{"myprov:myprof", "myprov:myprof:some-model"} {
 		t.Run(spec, func(t *testing.T) {
-			s := loop.DefaultSettings()
+			s := builtInSettings()
 			s.Chairs["reviewer"] = spec
 			_, chairs, err := runChairs(s, "", nil)
 			if err != nil {
@@ -273,6 +276,7 @@ func TestAnUnpinnedChairOnAProviderWithoutATierTableIsAccepted(t *testing.T) {
 
 func TestRunRejectsAPinOnAProviderWithoutATierTableBeforeAnyCAOCall(t *testing.T) {
 	t.Setenv(loop.HomeEnv, t.TempDir())
+	writeFile(t, loop.UserConfigPath(loop.Home()), builtInAgentConfig)
 	err := runCommand([]string{"-task", "x", "-worktree", t.TempDir(), "-cao", unreachableCAO, "-reviewer", "myprov:myprof@large"})
 	want := `reviewer: chair "myprov:myprof@large": no [tiers.myprov] to pin a tier against`
 	if err == nil || err.Error() != want {
@@ -281,7 +285,7 @@ func TestRunRejectsAPinOnAProviderWithoutATierTableBeforeAnyCAOCall(t *testing.T
 }
 
 func TestAPinOnATierItsProvidersTableLacksIsRejected(t *testing.T) {
-	s := loop.DefaultSettings()
+	s := builtInSettings()
 	s.Policy.Tiers["myprov"] = map[string]loop.TierSpec{"medium": {Model: "m"}}
 	for _, tc := range []struct {
 		role, spec, want string
@@ -297,7 +301,7 @@ func TestAPinOnATierItsProvidersTableLacksIsRejected(t *testing.T) {
 				specs[role] = spec
 			}
 			specs[tc.role] = tc.spec
-			chairs, err := resolveChairs(specs)
+			chairs, err := resolveChairs(s.Defined, specs)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -331,9 +335,9 @@ func TestTheReviewerFlagReplacesTheWholeConfiguredList(t *testing.T) {
 
 func TestOnlyReviewerFlagsAcceptSeveralChairsAndErrorsNameTheChair(t *testing.T) {
 	for _, role := range loop.ChairRoles {
-		s := loop.DefaultSettings()
+		s := builtInSettings()
 		s.Chairs[role] = "claude,codex"
-		_, err := resolveChairs(s.Chairs)
+		_, err := resolveChairs(s.Defined, s.Chairs)
 		if role == "reviewer" {
 			if err != nil {
 				t.Error(err)
@@ -344,18 +348,18 @@ func TestOnlyReviewerFlagsAcceptSeveralChairsAndErrorsNameTheChair(t *testing.T)
 			t.Errorf("%s: %v", role, err)
 		}
 	}
-	s := loop.DefaultSettings()
+	s := builtInSettings()
 	s.Chairs["reviewer"] = "copilot,unknown"
-	if _, err := resolveChairs(s.Chairs); err == nil || !strings.Contains(err.Error(), "reviewer-2:") {
+	if _, err := resolveChairs(s.Defined, s.Chairs); err == nil || !strings.Contains(err.Error(), "reviewer-2:") {
 		t.Fatalf("%v", err)
 	}
 }
 
 func TestPinsAreCheckedForEveryReviewerWithItsNumberedName(t *testing.T) {
-	s := loop.DefaultSettings()
+	s := builtInSettings()
 	for _, spec := range []string{"myprov:custom@large", "myprov:custom@small"} {
 		s.Chairs["reviewer"] = "copilot," + spec
-		chairs, err := resolveChairs(s.Chairs)
+		chairs, err := resolveChairs(s.Defined, s.Chairs)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -367,9 +371,9 @@ func TestPinsAreCheckedForEveryReviewerWithItsNumberedName(t *testing.T) {
 }
 
 func TestPreflightAndEffortProfilesCoverEveryReviewer(t *testing.T) {
-	s := loop.DefaultSettings()
+	s := builtInSettings()
 	s.Chairs["reviewer"] = "copilot,claude@large,codex@small"
-	chairs, err := resolveChairs(s.Chairs)
+	chairs, err := resolveChairs(s.Defined, s.Chairs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -396,7 +400,7 @@ func TestPreflightAndEffortProfilesCoverEveryReviewer(t *testing.T) {
 }
 
 func TestConfigShowsReviewerListsAndGateWhen(t *testing.T) {
-	s := loop.DefaultSettings()
+	s := builtInSettings()
 	s.Chairs["reviewer"] = "copilot,claude@large"
 	var out bytes.Buffer
 	printChairs(&out, s)
@@ -404,7 +408,7 @@ func TestConfigShowsReviewerListsAndGateWhen(t *testing.T) {
 		t.Fatal(out.String())
 	}
 	home := t.TempDir()
-	if err := os.WriteFile(loop.UserConfigPath(home), []byte("[ensembles.x]\nreviewer = [\"copilot\", \"claude@large\"]\ngate_when = \"always\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(loop.UserConfigPath(home), []byte(builtInAgentConfig+"[ensembles.x]\nreviewer = [\"copilot\", \"claude@large\"]\ngate_when = \"always\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	s, err := loop.LoadSettings(home, "")
@@ -432,3 +436,12 @@ func TestKmUsageSaysReportSummarizesRunRecordsNotOnlyFinishedRuns(t *testing.T) 
 		t.Fatal(usage)
 	}
 }
+
+func builtInSettings() loop.Settings {
+	s := loop.DefaultSettings()
+	s.Agents = loop.BuiltInAgents().Names()
+	s.Chairs = loop.DefaultChairs(s.Agents)
+	return s
+}
+
+const builtInAgentConfig = "[agents]\navailable = [\"claude\", \"codex\", \"copilot\", \"agy\"]\n"

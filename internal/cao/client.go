@@ -241,6 +241,7 @@ func (c *Client) SetDescription(ctx context.Context, id, description string) err
 }
 
 type ProfilePermissions struct {
+	Description    string   `json:"description"`
 	PermissionMode string   `json:"permissionMode"`
 	CodexProfile   string   `json:"codexProfile"`
 	AllowedTools   []string `json:"allowedTools"`

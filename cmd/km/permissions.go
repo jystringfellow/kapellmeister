@@ -47,7 +47,7 @@ func fillChairPermissions(ctx context.Context, client *cao.Client, report *ensem
 }
 
 func printConfigPermissions(ctx context.Context, w io.Writer, client *cao.Client, s loop.Settings) (int, error) {
-	chairs, err := resolveChairs(s.Chairs)
+	chairs, err := resolveChairs(s.Defined, s.Chairs)
 	if err != nil {
 		return 0, err
 	}
@@ -55,10 +55,8 @@ func printConfigPermissions(ctx context.Context, w io.Writer, client *cao.Client
 	reviewerIndex := 0
 	for _, member := range ensemble.MembersOf(chairs) {
 		resolved, assignment := s.Policy.Chair(roleSteps[member.Part], member.Chair, "", 0)
-		if resolved.Profile != member.Chair.Profile {
-			if _, err := loop.EffortProfileSource(member.Chair.Provider, member.Chair.Profile, assignment.Effort, loop.Permissions{}); err == nil {
-				resolved = member.Chair
-			}
+		if assignment.Effort != "" && assignment.Effort != loop.InheritEffort {
+			resolved = member.Chair
 		}
 		label, off, _ := chairPermissions(ctx, client, resolved)
 		spec := s.Chairs[member.Part]

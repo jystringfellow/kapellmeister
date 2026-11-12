@@ -41,6 +41,7 @@ func TestRehearseStopsOnAFailingBaselineBeforeAnyCAOCall(t *testing.T) {
 	for _, source := range []string{"flag", "config", "hook"} {
 		t.Run(source, func(t *testing.T) {
 			t.Setenv(loop.HomeEnv, t.TempDir())
+			writeFile(t, loop.UserConfigPath(loop.Home()), builtInAgentConfig)
 			t.Setenv(loop.StateEnv, t.TempDir())
 			wt := t.TempDir()
 			args := []string{"-worktree", wt, "-task", "task", "-cao", unreachableCAO}
@@ -75,6 +76,7 @@ func TestRehearseStopsOnAFailingBaselineBeforeAnyCAOCall(t *testing.T) {
 
 func TestRehearseRetriesTheBaselineUsingTheConfiguredRetryCount(t *testing.T) {
 	t.Setenv(loop.HomeEnv, t.TempDir())
+	writeFile(t, loop.UserConfigPath(loop.Home()), builtInAgentConfig)
 	wt := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(wt, ".kapellmeister"), 0755); err != nil {
 		t.Fatal(err)
@@ -95,6 +97,7 @@ func TestRehearseRetriesTheBaselineUsingTheConfiguredRetryCount(t *testing.T) {
 func TestRehearseProceedsToCAOWhenTheBaselinePassesOrIsSkipped(t *testing.T) {
 	for _, verify := range []string{"true", ""} {
 		t.Setenv(loop.HomeEnv, t.TempDir())
+		writeFile(t, loop.UserConfigPath(loop.Home()), builtInAgentConfig)
 		err := rehearseCommand([]string{"-worktree", t.TempDir(), "-task", "task", "-cao", unreachableCAO, "-verify", verify})
 		if err == nil || strings.Contains(err.Error(), "baseline verify failed") || !strings.Contains(err.Error(), "connect") {
 			t.Errorf("verify=%q: error = %v", verify, err)
@@ -104,6 +107,7 @@ func TestRehearseProceedsToCAOWhenTheBaselinePassesOrIsSkipped(t *testing.T) {
 
 func TestRehearseRejectsAnUnknownEnsembleBeforeAnyCAOCall(t *testing.T) {
 	t.Setenv(loop.HomeEnv, t.TempDir())
+	writeFile(t, loop.UserConfigPath(loop.Home()), builtInAgentConfig)
 	err := rehearseCommand([]string{"-worktree", t.TempDir(), "-task", "task", "-cao", unreachableCAO, "-ensemble", "nope"})
 	if err == nil || !strings.Contains(err.Error(), `unknown ensemble "nope"`) {
 		t.Errorf("error = %v", err)
@@ -114,6 +118,7 @@ func TestRehearseWritesTheReportAndStandingTaskFileAndNamesFailedChairs(t *testi
 	for _, fail := range []bool{false, true} {
 		t.Run(fmt.Sprint(fail), func(t *testing.T) {
 			t.Setenv(loop.HomeEnv, t.TempDir())
+			writeFile(t, loop.UserConfigPath(loop.Home()), builtInAgentConfig)
 			t.Setenv(loop.StateEnv, t.TempDir())
 			wt := t.TempDir()
 			taskPath := filepath.Join(t.TempDir(), "task.md")

@@ -26,7 +26,7 @@ func TestAnEffortProfileKeepsTheBasesAllowedTools(t *testing.T) {
 			want = `allowedTools: ["Read","Bash"]`
 		}
 		for _, provider := range []string{"claude_code", "codex"} {
-			source, err := EffortProfileSource(provider, generatedBases[provider], "high", Permissions{AllowedTools: tools})
+			source, err := EffortProfileSource(provider, map[string]string{"claude_code": "km-claude", "codex": "km-codex"}[provider], "high", Permissions{AllowedTools: tools})
 			if err != nil {
 				t.Fatal(err)
 			}

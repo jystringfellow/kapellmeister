@@ -45,6 +45,9 @@ agents = ["claude@small"]
 
 func ensembleWorktree(t *testing.T, userConfig string) (loop.Settings, string) {
 	t.Helper()
+	if !strings.Contains(userConfig, "[agents]") {
+		userConfig = builtInAgentConfig + userConfig
+	}
 	home, wt := t.TempDir(), t.TempDir()
 	t.Setenv(loop.HomeEnv, home)
 	if err := os.WriteFile(loop.UserConfigPath(home), []byte(userConfig), 0o644); err != nil {

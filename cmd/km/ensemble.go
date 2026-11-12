@@ -14,7 +14,7 @@ import (
 )
 
 func lineUp(s loop.Settings, worktree, name string, roles map[string]*string) (loop.Settings, loop.Chairs, []ensemble.Member, error) {
-	spec, found, err := ensemble.Find(name, loop.Home(), worktree)
+	spec, found, err := ensemble.Find(name, loop.Home(), worktree, s.Defined)
 	if err != nil {
 		return s, loop.Chairs{}, nil, err
 	}
@@ -40,7 +40,7 @@ func lineUp(s loop.Settings, worktree, name string, roles map[string]*string) (l
 			return s, loop.Chairs{}, nil, fmt.Errorf("-%s cannot override ensemble %s from %s; edit it, or copy it to %s and edit that", role, name, spec.Path, loop.Home()+"/"+ensemble.UserDir)
 		}
 	}
-	members, err := spec.Bind(s.Agents)
+	members, err := spec.Bind(s.Defined, s.Agents)
 	if err != nil {
 		return s, loop.Chairs{}, nil, err
 	}
@@ -98,8 +98,8 @@ func sizeMember(policy loop.Policy, m ensemble.Member) ensemble.Member {
 	return m
 }
 
-func prepareMember(ctx context.Context, client *cao.Client, policy loop.Policy, spec string, m ensemble.Member) (ensemble.Member, error) {
-	chair, err := loop.ResolveChair(spec)
+func prepareMember(ctx context.Context, client *cao.Client, policy loop.Policy, agents loop.Agents, spec string, m ensemble.Member) (ensemble.Member, error) {
+	chair, err := agents.ResolveChair(spec)
 	if err != nil {
 		return m, err
 	}

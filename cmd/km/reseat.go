@@ -30,7 +30,7 @@ func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
 
 func reseatCommand(args []string) error {
 	fs := flag.NewFlagSet("reseat", flag.ContinueOnError)
-	agent := fs.String("agent", "", "replacement agent or provider:profile[:model], with optional @tier")
+	agent := fs.String("agent", "", "replacement agent from km config, or provider:profile[:model], with optional @tier")
 	timeout := fs.Duration("timeout", 0, "how long the new occupant gets to close its briefing (default [run] preflight_timeout, else 4m)")
 	caoURL := fs.String("cao", "", "cao-server URL (default $CAO_API_BASE_URL, then [cao] url, else http://127.0.0.1:9889)")
 	positionals, err := parseInterspersed(fs, args)
@@ -68,7 +68,7 @@ func reseatCommand(args []string) error {
 	client := cao.NewClient(firstNonEmpty(*caoURL, s.CAOURL))
 	m := standing.Members()[index]
 	if flagsSet(fs)["agent"] {
-		m, err = prepareMember(ctx, client, s.Policy, *agent, m)
+		m, err = prepareMember(ctx, client, s.Policy, s.Defined, *agent, m)
 		if err != nil {
 			return fmt.Errorf("chair %s: %w", positionals[1], err)
 		}

@@ -125,6 +125,7 @@ func TestConfigShowsTheLearnedBudgetInTheRunSettings(t *testing.T) {
 	t.Setenv(loop.StateEnv, t.TempDir())
 	repo := t.TempDir()
 	writeFile(t, filepath.Join(repo, loop.ConfigFile), "[run]\nlearned_budget = 123\n")
+	writeFile(t, loop.UserConfigPath(loop.Home()), builtInAgentConfig)
 	srv := permissionCAO(t, map[string]cao.ProfilePermissions{}, nil)
 	out, err := captureStdout(t, func() error { return configCommand([]string{"-worktree", repo, "-cao", srv.URL}) })
 	if err != nil {

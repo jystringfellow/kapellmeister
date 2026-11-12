@@ -48,9 +48,9 @@ func TestTheTesterFlagAndTheChairsTesterConfigBothResolve(t *testing.T) {
 			})
 		}
 	}
-	s := loop.DefaultSettings()
+	s := builtInSettings()
 	s.Chairs["tester"] = "claude,codex"
-	if _, err := resolveChairs(s.Chairs); err == nil || !strings.Contains(err.Error(), "tester") || !strings.Contains(err.Error(), "only reviewer") {
+	if _, err := resolveChairs(s.Defined, s.Chairs); err == nil || !strings.Contains(err.Error(), "tester") || !strings.Contains(err.Error(), "only reviewer") {
 		t.Fatalf("tester list error = %v", err)
 	}
 }
@@ -107,7 +107,7 @@ func TestAPlayRecordWithATesterRebuildsItAndRunsItsStepsInItsOccupant(t *testing
 
 func TestConfigPrintsTheTesterOnlyWhenSeated(t *testing.T) {
 	for _, seated := range []bool{false, true} {
-		s := loop.DefaultSettings()
+		s := builtInSettings()
 		if seated {
 			s.Chairs["tester"] = "claude"
 			s.Ensembles = map[string]loop.Ensemble{"live": {Tester: loop.ChairSpec{Spec: "claude"}}}
@@ -122,9 +122,9 @@ func TestConfigPrintsTheTesterOnlyWhenSeated(t *testing.T) {
 }
 
 func TestPreflightAndEffortProfilesCoverTheTester(t *testing.T) {
-	s := loop.DefaultSettings()
+	s := builtInSettings()
 	s.Chairs["tester"] = "claude@large"
-	chairs, err := resolveChairs(s.Chairs)
+	chairs, err := resolveChairs(s.Defined, s.Chairs)
 	if err != nil {
 		t.Fatal(err)
 	}
