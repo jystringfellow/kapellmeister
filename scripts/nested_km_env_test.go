@@ -74,13 +74,13 @@ func TestTheEnvFileMovesKmCaoAndTmuxUnderTheScratchDirectoryAndClearsWhatTheChai
 			if err != nil {
 				t.Fatalf("%v: %s", err, stderr)
 			}
-			if path != filepath.Join(scratch, "nested", "env.sh") {
+			if path != filepath.Join(scratch, "n", "env.sh") {
 				t.Fatalf("printed %q", path)
 			}
 			values := sourcedEnv(t, shell, path)
-			directories := map[string]string{"KAPELLMEISTER_HOME": "km-home", "KAPELLMEISTER_STATE_DIR": "km-state", "CAO_HOME_DIR": "cao-home", "TMUX_TMPDIR": "tmux"}
+			directories := map[string]string{"KAPELLMEISTER_HOME": "km-home", "KAPELLMEISTER_STATE_DIR": "km-state", "CAO_HOME_DIR": "cao-home", "TMUX_TMPDIR": "t"}
 			for key, name := range directories {
-				if values[key] != filepath.Join(scratch, "nested", name) {
+				if values[key] != filepath.Join(scratch, "n", name) {
 					t.Errorf("%s = %q", key, values[key])
 				}
 				if info, err := os.Stat(values[key]); err != nil || !info.IsDir() {
@@ -115,8 +115,8 @@ func TestTheEnvFileQuotesScratchPathsWithSpacesQuotesAndDollars(t *testing.T) {
 				t.Fatalf("%v: %s", err, stderr)
 			}
 			values := sourcedEnv(t, shell, path)
-			for key, name := range map[string]string{"KAPELLMEISTER_HOME": "km-home", "KAPELLMEISTER_STATE_DIR": "km-state", "CAO_HOME_DIR": "cao-home", "TMUX_TMPDIR": "tmux"} {
-				if values[key] != filepath.Join(scratch, "nested", name) {
+			for key, name := range map[string]string{"KAPELLMEISTER_HOME": "km-home", "KAPELLMEISTER_STATE_DIR": "km-state", "CAO_HOME_DIR": "cao-home", "TMUX_TMPDIR": "t"} {
+				if values[key] != filepath.Join(scratch, "n", name) {
 					t.Errorf("%s = %q", key, values[key])
 				}
 			}
@@ -128,7 +128,7 @@ func TestATmuxSocketPathOver100BytesIsRefusedAndNoEnvFileIsWritten(t *testing.T)
 	for _, shell := range shells(t) {
 		t.Run(shell, func(t *testing.T) {
 			root := shortScratch(t)
-			fits := len(filepath.Join(root, "x", "nested", "tmux", fmt.Sprintf("tmux-%d", os.Getuid()), "default"))
+			fits := len(filepath.Join(root, "x", "n", "t", fmt.Sprintf("tmux-%d", os.Getuid()), "default"))
 			longest := filepath.Join(root, strings.Repeat("x", 1+100-fits))
 			if _, stderr, err := nestedKmEnv(t, shell, longest); err != nil {
 				t.Fatalf("a 100-byte socket path was refused: %v: %s", err, stderr)
@@ -138,7 +138,7 @@ func TestATmuxSocketPathOver100BytesIsRefusedAndNoEnvFileIsWritten(t *testing.T)
 			if err == nil || stdout != "" || !strings.Contains(stderr, "101 bytes") || !strings.Contains(stderr, "shorter scratch directory") {
 				t.Fatalf("refusal: err %v, stdout %q, stderr %q", err, stdout, stderr)
 			}
-			if _, err := os.Stat(filepath.Join(tooLong, "nested", "env.sh")); !os.IsNotExist(err) {
+			if _, err := os.Stat(filepath.Join(tooLong, "n", "env.sh")); !os.IsNotExist(err) {
 				t.Fatalf("env file: %v", err)
 			}
 		})
@@ -147,7 +147,7 @@ func TestATmuxSocketPathOver100BytesIsRefusedAndNoEnvFileIsWritten(t *testing.T)
 
 func TestSocketPathLengthIsCountedInBytesNotCharacters(t *testing.T) {
 	root := shortScratch(t)
-	fits := len(filepath.Join(root, "nested", "tmux", fmt.Sprintf("tmux-%d", os.Getuid()), "default"))
+	fits := len(filepath.Join(root, "n", "t", fmt.Sprintf("tmux-%d", os.Getuid()), "default"))
 	scratch := filepath.Join(root, strings.Repeat("é", (102-fits)/2))
 	c := exec.Command("sh", "nested-km-env", scratch)
 	c.Env = append(os.Environ(), "LC_ALL=en_US.UTF-8")
@@ -199,7 +199,7 @@ func TestARelativeScratchDirectoryIsResolvedAgainstTheWorkingDirectory(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.TrimSpace(string(out)); got != filepath.Join(resolved, "relative", "nested", "env.sh") && got != filepath.Join(scratch, "relative", "nested", "env.sh") {
+	if got := strings.TrimSpace(string(out)); got != filepath.Join(resolved, "relative", "n", "env.sh") && got != filepath.Join(scratch, "relative", "n", "env.sh") {
 		t.Fatalf("printed %q", got)
 	}
 }

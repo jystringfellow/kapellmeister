@@ -51,11 +51,11 @@ case $scratch in
 *"$newline"*) refuse 'the scratch path contains a newline' ;;
 esac
 
-nested=$scratch/nested
+nested=$scratch/n
 env_file=$nested/env.sh
 rm -f "$env_file"
 
-socket=$nested/tmux/tmux-$(id -u)/default
+socket=$nested/t/tmux-$(id -u)/default
 socket_bytes=$(($(printf '%s' "$socket" | wc -c)))
 if [ "$socket_bytes" -gt 100 ]; then
 	refuse "the tmux socket path $socket is $socket_bytes bytes and tmux needs 100 or fewer; use a shorter scratch directory"
@@ -82,7 +82,7 @@ trap 'rm -f "$draft"' EXIT
 	printf 'export KAPELLMEISTER_HOME=%s\n' "$(quoted "$nested/km-home")"
 	printf 'export KAPELLMEISTER_STATE_DIR=%s\n' "$(quoted "$nested/km-state")"
 	printf 'export CAO_HOME_DIR=%s\n' "$(quoted "$nested/cao-home")"
-	printf 'export TMUX_TMPDIR=%s\n' "$(quoted "$nested/tmux")"
+	printf 'export TMUX_TMPDIR=%s\n' "$(quoted "$nested/t")"
 	printf 'export CAO_API_HOST=%s\n' "$(quoted 127.0.0.1)"
 	printf 'export CAO_API_PORT=%s\n' "$(quoted "$port")"
 	printf 'export CAO_API_BASE_URL=%s\n' "$(quoted "http://127.0.0.1:$port")"

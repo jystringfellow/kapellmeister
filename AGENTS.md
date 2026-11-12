@@ -70,7 +70,7 @@ The conductor is a process named `km`; by default it uses `~/.kapellmeister`, th
   `$scratch` is your own scratch directory (the tester's briefing names one; otherwise make a
   short temp directory). The URL is optional; pass the conductor's when it is not on port 9889.
 - **Isolate everything together.** The script puts `KAPELLMEISTER_HOME`, `KAPELLMEISTER_STATE_DIR`,
-  `CAO_HOME_DIR` and `TMUX_TMPDIR` under `<scratch>/nested`, and sets `CAO_API_HOST=127.0.0.1`, a
+  `CAO_HOME_DIR` and `TMUX_TMPDIR` under `<scratch>/n`, and sets `CAO_API_HOST=127.0.0.1`, a
   free `CAO_API_PORT` that is neither 9889 nor the conductor's, and the matching
   `CAO_API_BASE_URL`. That last one is the URL km calls; it does not move a server's port.
 - **A separate state directory with a shared CAO home is not isolation.** `cao install` writes
@@ -79,7 +79,7 @@ The conductor is a process named `km`; by default it uses `~/.kapellmeister`, th
 - **`TMUX`, `TMUX_PANE` and `CAO_TERMINAL_ID` stay unset.** CAO starts tmux without socket flags,
   and an inherited `TMUX` leads tmux to the conductor's socket despite `TMUX_TMPDIR`;
   `CAO_TERMINAL_ID` would give your commands this chair's identity.
-- **Keep the scratch path short.** tmux's socket, `<scratch>/nested/tmux/tmux-<uid>/default`, must
+- **Keep the scratch path short.** tmux's socket, `<scratch>/n/t/tmux-<uid>/default`, must
   fit in 100 bytes; the script refuses a longer one. Pick a shorter directory, do not link around it.
 - **Never signal a process found by name** (`pgrep`, `pkill`, `killall`, `ps | grep`): the first
   `km` you find is the conductor. Record the PID of each process you start and signal only those.
