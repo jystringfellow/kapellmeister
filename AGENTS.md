@@ -10,6 +10,8 @@ Behavior is defined by tests, and only by tests. There are no spec documents.
 - Start every behavior change with a failing test that states the behavior. Name tests as
   statements, such as `TestEffortProfilesAreGeneratedOnlyForKapellmeistersOwnBases`.
 - Run it and confirm it fails for the right reason before implementing.
+- For a failure found while running km live, add a reproducing regression test and confirm it
+  fails before fixing the code.
 - Implement the least code that makes it pass.
 - Never weaken a test to make it pass. If the intended behavior changed, change the test on
   purpose and say why in the commit.

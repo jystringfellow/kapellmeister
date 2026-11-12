@@ -22,12 +22,20 @@ func TestTheTestAndTestPlanPromptsNameTheAbsoluteScratchDirectoryAsTheOnlyScratc
 	run(t, e)
 	for _, name := range []string{"test-plan", "test"} {
 		p := testerSteps(f, name)[0].Prompt
-		want := "Use only " + e.Config.ScratchDir + " for scratch files, build output, scratch repositories and server state."
+		want := "Everything you create stays under " + e.Config.ScratchDir + "."
 		if !filepath.IsAbs(e.Config.ScratchDir) || !strings.Contains(p, want) {
 			t.Errorf("%s prompt lacks scratch rule %q: %s", name, want, p)
 		}
 		if strings.Contains(p, filepath.Join(stateDir, "runs", e.Config.RunID, "scratch")) {
 			t.Errorf("%s prompt names scratch in the run records: %s", name, p)
+		}
+		for _, forbidden := range []string{"scratch repositories", "server state", "including processes and sessions"} {
+			if strings.Contains(p, forbidden) {
+				t.Errorf("%s contains %q", name, forbidden)
+			}
+		}
+		if name == "test" && !strings.Contains(p, "Before finishing, clean up anything you started. Touch nothing you did not create.") {
+			t.Error("tester cleanup rule missing")
 		}
 		if name == "test" && !strings.Contains(p, filepath.Join(e.Config.ScratchDir, "pids")) {
 			t.Errorf("test prompt lacks scratch pids path: %s", p)

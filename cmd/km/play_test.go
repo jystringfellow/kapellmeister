@@ -311,7 +311,7 @@ func TestPlayRunsEveryStepInItsChairsStandingOccupantAndDeletesNothing(t *testin
 		t.Error("recorded task missing")
 	}
 	for i, path := range fake.replies {
-		if strings.HasPrefix(path, "implement-") && !strings.Contains(fake.requests[i].Prompt, "go test <tests or packages>") {
+		if strings.HasPrefix(path, "implement-") && !strings.Contains(fake.requests[i].Prompt, "go test <tests>") {
 			t.Error("configured check missing from implementer prompt")
 		}
 	}

@@ -492,7 +492,7 @@ func TestImplementerIsPointedAtTheCheckHookAndAwayFromTheFullSuite(t *testing.T)
 	for _, s := range fake.steps {
 		switch s.Name {
 		case "implement":
-			if !strings.Contains(s.Prompt, "./.kapellmeister/check <tests or packages>") || !strings.Contains(s.Prompt, "Do not run the full suite") {
+			if !strings.Contains(s.Prompt, "./.kapellmeister/check <tests>") || !strings.Contains(s.Prompt, "Do not run the full suite") {
 				t.Fatalf("implement prompt: %s", s.Prompt)
 			}
 		case "review", "gate":
@@ -519,10 +519,10 @@ func TestRepoConfigCommandsWinOverHookScripts(t *testing.T) {
 	if err != nil || v != "scripts/verify" || c != "scripts/check {args} -short" {
 		t.Fatalf("got %q %q %v", v, c, err)
 	}
-	if got := CheckUsage(c); got != "scripts/check <tests or packages> -short" {
+	if got := CheckUsage(c); got != "scripts/check <tests> -short" {
 		t.Fatalf("CheckUsage = %q", got)
 	}
-	if got := CheckUsage("scripts/check"); got != "scripts/check <tests or packages>" {
+	if got := CheckUsage("scripts/check"); got != "scripts/check <tests>" {
 		t.Fatalf("CheckUsage without token = %q", got)
 	}
 }

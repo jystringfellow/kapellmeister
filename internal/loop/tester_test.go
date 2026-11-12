@@ -89,7 +89,7 @@ func TestTheTestPlanPromptCarriesTheTaskAndThePlanButNoImplementationSummary(t *
 		t.Fatalf("test-plan steps = %d", len(steps))
 	}
 	p := steps[0].Prompt
-	for _, want := range []string{e.Config.Task, e.rel("plan.md"), "real environment", "missing", "stale", "concurrent", "external services", "unit tests", "git diff", "git status", "no other file"} {
+	for _, want := range []string{e.Config.Task, e.rel("plan.md"), "real environment", "the failure paths this change could plausibly hit", "unit tests", "git diff", "git status", "no other file"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("prompt lacks %q: %s", want, p)
 		}
@@ -119,7 +119,7 @@ func TestTheTestStepRunsOnlyAfterAGateApproveAndATestApproveYieldsApproved(t *te
 	if slices.Index(names, "test[1]") <= slices.Index(names, "classify-gate[1]") || names[len(names)-1] != "classify-test[1]" {
 		t.Fatal(names)
 	}
-	for _, want := range []string{e.Config.Task, e.rel("plan.md"), e.rel("test-plan.md"), e.rel("implement-1.md"), e.rel("verify-1.txt"), "exited 0", "scratch", "clean up", "did not create", "APPROVE", "CHANGES"} {
+	for _, want := range []string{e.Config.Task, e.rel("plan.md"), e.rel("test-plan.md"), e.rel("implement-1.md"), e.rel("verify-1.txt"), "exited 0", "Everything you create stays under " + e.Config.ScratchDir, "clean up", "did not create", "APPROVE", "CHANGES"} {
 		if !strings.Contains(s.Prompt, want) {
 			t.Errorf("prompt lacks %q: %s", want, s.Prompt)
 		}
@@ -157,7 +157,7 @@ func TestATestChangesStartsAnotherRoundWithTheTestReportLeadingTheFeedback(t *te
 			t.Errorf("test report must lead feedback: %s", p)
 		}
 	}
-	if !strings.Contains(p, "failing regression test") || !strings.Contains(p, "confirm it fails") || !strings.Contains(p, "then fix") {
+	if !strings.Contains(p, "add a regression test that reproduces it") || !strings.Contains(p, "then fix") || !strings.Contains(p, "following the repository's development rules") || strings.Contains(p, "first add") || strings.Contains(p, "confirm it fails") {
 		t.Error(p)
 	}
 	if len(testerSteps(f, "test-plan")) != 1 {
