@@ -73,12 +73,14 @@ type UsageMeter interface {
 }
 
 type LogMeter struct {
-	ClaudeHome string
-	CodexHome  string
-	mu         sync.Mutex
-	cwd        map[string]string
-	windows    map[string]chan struct{}
-	counted    map[string]map[string]struct{}
+	CopilotHome     string
+	AntigravityHome string
+	ClaudeHome      string
+	CodexHome       string
+	mu              sync.Mutex
+	cwd             map[string]string
+	windows         map[string]chan struct{}
+	counted         map[string]map[string]struct{}
 }
 
 func NewLogMeter() *LogMeter {
@@ -91,7 +93,11 @@ func NewLogMeter() *LogMeter {
 	if codex == "" {
 		codex = filepath.Join(home, ".codex")
 	}
-	return &LogMeter{ClaudeHome: claude, CodexHome: codex}
+	copilot := os.Getenv("COPILOT_HOME")
+	if copilot == "" {
+		copilot = filepath.Join(home, ".copilot")
+	}
+	return &LogMeter{ClaudeHome: claude, CodexHome: codex, CopilotHome: copilot, AntigravityHome: filepath.Join(home, ".gemini", "antigravity-cli")}
 }
 
 const maxUsageRange = 64 << 20
@@ -112,7 +118,7 @@ func (m *LogMeter) Open(ctx context.Context, step Step) (close func() Usage, err
 			release()
 		}
 	}()
-	if step.Chair.Provider != "claude_code" && step.Chair.Provider != "codex" {
+	if step.Chair.Provider != "claude_code" && step.Chair.Provider != "codex" && step.Chair.Provider != "copilot_cli" && step.Chair.Provider != "antigravity_cli" {
 		return func() Usage { return unknownUsage("unsupported-provider") }, nil
 	}
 	release, err = m.chairWindow(ctx, step)
@@ -173,8 +179,13 @@ func (m *LogMeter) Open(ctx context.Context, step Step) (close func() Usage, err
 		if matches != 1 {
 			return unknownUsage("ambiguous-log")
 		}
-		if step.Chair.Provider == "claude_code" {
+		switch step.Chair.Provider {
+		case "claude_code":
 			return m.claudeWindow(grown, chosen.path)
+		case "copilot_cli":
+			return copilotUsage(chosen.data)
+		case "antigravity_cli":
+			return antigravityUsage(chosen.data)
 		}
 		head, err := readUsageHead(chosen.path, chosen.start)
 		if err != nil {
@@ -286,9 +297,22 @@ func (m *LogMeter) logs(step Step) (map[string]usageSnapshot, error) {
 	paths := make(map[string]usageSnapshot)
 	var dirs []string
 	pattern := "*.jsonl"
-	if step.Chair.Provider == "claude_code" {
+	switch step.Chair.Provider {
+	case "claude_code":
 		dirs = []string{filepath.Join(m.ClaudeHome, "projects", claudeProjectName.ReplaceAllString(step.Dir, "-"))}
-	} else {
+	case "copilot_cli", "antigravity_cli":
+		var err error
+		if step.Chair.Provider == "copilot_cli" {
+			dirs, err = usageSessionDirs(filepath.Join(m.CopilotHome, "session-state"))
+			pattern = "events.jsonl"
+		} else {
+			dirs, err = usageSessionDirs(filepath.Join(m.AntigravityHome, "brain"), ".system_generated", "logs")
+			pattern = "transcript.jsonl"
+		}
+		if err != nil {
+			return nil, err
+		}
+	case "codex":
 		now := time.Now()
 		dirs = []string{filepath.Join(m.CodexHome, "sessions", now.Format("2006/01/02")), filepath.Join(m.CodexHome, "sessions", now.AddDate(0, 0, -1).Format("2006/01/02"))}
 		pattern = "rollout-*.jsonl"
@@ -317,12 +341,12 @@ func (m *LogMeter) logs(step Step) (map[string]usageSnapshot, error) {
 			if !info.Mode().IsRegular() {
 				return nil, errors.New("usage log is not a regular file")
 			}
-			if step.Chair.Provider == "codex" {
-				cwd, err := m.codexCwd(path)
+			if step.Chair.Provider == "codex" || step.Chair.Provider == "copilot_cli" {
+				cwd, err := m.sessionCwd(path, step.Chair.Provider)
 				if err != nil {
 					return nil, err
 				}
-				if filepath.Clean(cwd) != filepath.Clean(step.Dir) {
+				if cwd == "" || filepath.Clean(cwd) != filepath.Clean(step.Dir) {
 					continue
 				}
 			}
@@ -335,6 +359,45 @@ func (m *LogMeter) logs(step Step) (map[string]usageSnapshot, error) {
 		}
 	}
 	return paths, nil
+}
+
+func usageSessionDirs(root string, tail ...string) ([]string, error) {
+	entries, err := os.ReadDir(root)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var dirs []string
+	for _, entry := range entries {
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil, errors.New("usage session is a symlink")
+		}
+		if !entry.IsDir() {
+			continue
+		}
+		path := filepath.Join(root, entry.Name())
+		missing := false
+		for _, name := range tail {
+			path = filepath.Join(path, name)
+			info, err := os.Lstat(path)
+			if os.IsNotExist(err) {
+				missing = true
+				break
+			}
+			if err != nil {
+				return nil, err
+			}
+			if !info.IsDir() {
+				return nil, errors.New("usage path is not a directory")
+			}
+		}
+		if !missing {
+			dirs = append(dirs, path)
+		}
+	}
+	return dirs, nil
 }
 
 func claudeSubagentLogs(parent string, paths map[string]usageSnapshot) error {
@@ -382,7 +445,7 @@ func claudeSubagentLogs(parent string, paths map[string]usageSnapshot) error {
 	})
 }
 
-func (m *LogMeter) codexCwd(path string) (string, error) {
+func (m *LogMeter) sessionCwd(path, provider string) (string, error) {
 	m.mu.Lock()
 	cwd, ok := m.cwd[path]
 	m.mu.Unlock()
@@ -404,11 +467,26 @@ func (m *LogMeter) codexCwd(path string) (string, error) {
 		Payload struct {
 			Cwd string `json:"cwd"`
 		} `json:"payload"`
+		Data struct {
+			Context struct {
+				Cwd string `json:"cwd"`
+			} `json:"context"`
+		} `json:"data"`
 	}
-	if json.Unmarshal(scanner.Bytes(), &entry) != nil || entry.Type != "session_meta" {
+	if json.Unmarshal(scanner.Bytes(), &entry) != nil {
 		return "", nil
 	}
-	cwd = entry.Payload.Cwd
+	if provider == "copilot_cli" {
+		if entry.Type != "session.start" {
+			return "", nil
+		}
+		cwd = entry.Data.Context.Cwd
+	} else {
+		if entry.Type != "session_meta" {
+			return "", nil
+		}
+		cwd = entry.Payload.Cwd
+	}
 	if cwd != "" {
 		m.mu.Lock()
 		if m.cwd == nil {

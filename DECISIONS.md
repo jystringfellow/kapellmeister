@@ -439,3 +439,18 @@ profile guard remain because they hold for any user. Evidence:
 `TestRunAndPlayLeaveTheScratchDirectoryEmptyOfAnythingKmWrote`. The test step must also record a
 real nested run and unchanged conductor agent-store checksums, session list and process liveness
 in this run's test report.
+
+## 2026-11-12: Read Copilot and Antigravity usage from per-request session records
+
+Copilot CLI 1.0.109 records per-request tokens alongside cumulative checkpoint and shutdown totals;
+only requests are counted. Its input includes cache reads and writes, which must be subtracted.
+Copilot output already includes reasoning: a real 1.0.109 session's request outputs summed to 362,
+matching its footer and shutdown output total, with 45 reasoning tokens shown as a subset. Output
+is kept unchanged so reasoning is counted once.
+Antigravity 1.5.6 transcripts record requests with input already excluding cache reads, but no model,
+cache writes or separate thinking count. Resumed real sessions confirmed the append-only windows.
+Evidence: `TestCopilotAndAntigravityStepsSumTheirRequestsWithoutCountingCumulativeRecords`,
+`TestResumedCopilotAndAntigravityStepsCountOnlyRequestsAppendedDuringTheStep`,
+`TestInvalidCopilotRequestCountsMakeTheWholeStepUnknown`,
+`TestACopilotStepsOutputIncludesReasoningWithoutAddingItAgain` and
+`TestConcurrentCopilotStepsKeepTheirOwnOutputIncludingReasoning`.
