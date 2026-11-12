@@ -551,6 +551,19 @@ and files containing the `<lessons` or `</lessons` section markers (case-insensi
 with the same warning and recorded reason. The old `[run] lessons_budget` key is an error naming
 `learned_budget`; `lessons` and `lessons_timeout` still control gate-proposed lessons.
 
+Lessons are advice for one part, and the budget can cut them. A rule that must hold belongs in the
+repository's agent instruction files, which every chair is told to read and follow. km's own
+repository is a worked example of the split. Developing km with km means a chair may start a
+second conductor beside the one conducting it, so:
+
+- [`AGENTS.md`](AGENTS.md), "Exercising km live", holds the rules for every chair;
+- [`scripts/nested-km-env`](scripts/nested-km-env) is the repository's own tooling that those
+  rules point to;
+- [`.kapellmeister/learned/`](.kapellmeister/learned) holds a line or two per part, such as the
+  order of the tester's scenarios and a pointer back to the rules rather than a copy of them.
+
+What a repository needs its ensemble to know is checked in to that repository.
+
 ## Report
 
 `km report [DIR...]` summarizes run records, oldest first, followed by totals by outcome,

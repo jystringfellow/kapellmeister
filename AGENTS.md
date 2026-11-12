@@ -56,10 +56,38 @@ for something that holds many ensembles.
 
 ## Exercising km live
 
-Any chair running km against a real CAO must use its own `KAPELLMEISTER_STATE_DIR` under a temp
-directory and work in its own throwaway worktree or scratch repository. Take down every session
-you create with `km ensemble down` (or the audition's teardown). Never touch a session you did not
-create, including the ensemble you are sitting in.
+These rules bind every chair that runs `km`, `cao`, `cao-server` or `tmux` while a km conducts it.
+The conductor is a process named `km`; by default it uses `~/.kapellmeister`, the CAO home
+`~/.aws/cli-agent-orchestrator`, port 9889 and the default tmux socket, and you inherit all of them.
+
+- **Isolate first, in the same shell, or do not run those commands.** A failed step leaves no file
+  to source.
+
+  ```sh
+  env_file=$(scripts/nested-km-env "$scratch" "$conductor_cao_url") && . "$env_file" || exit 1
+  ```
+
+  `$scratch` is your own scratch directory (the tester's briefing names one; otherwise make a
+  short temp directory). The URL is optional; pass the conductor's when it is not on port 9889.
+- **Isolate everything together.** The script puts `KAPELLMEISTER_HOME`, `KAPELLMEISTER_STATE_DIR`,
+  `CAO_HOME_DIR` and `TMUX_TMPDIR` under `<scratch>/n`, and sets `CAO_API_HOST=127.0.0.1`, a
+  free `CAO_API_PORT` that is neither 9889 nor the conductor's, and the matching
+  `CAO_API_BASE_URL`. That last one is the URL km calls; it does not move a server's port.
+- **A separate state directory with a shared CAO home is not isolation.** `cao install` writes
+  profiles into the calling shell's `CAO_HOME_DIR` whatever server URL is in use, so it overwrites
+  the profiles the conductor's chairs are playing from.
+- **`TMUX`, `TMUX_PANE` and `CAO_TERMINAL_ID` stay unset.** CAO starts tmux without socket flags,
+  and an inherited `TMUX` leads tmux to the conductor's socket despite `TMUX_TMPDIR`;
+  `CAO_TERMINAL_ID` would give your commands this chair's identity.
+- **Keep the scratch path short.** tmux's socket, `<scratch>/n/t/tmux-<uid>/default`, must
+  fit in 100 bytes; the script refuses a longer one. Pick a shorter directory, do not link around it.
+- **Never signal a process found by name** (`pgrep`, `pkill`, `killall`, `ps | grep`): the first
+  `km` you find is the conductor. Record the PID of each process you start and signal only those.
+- **Change nothing the conductor uses:** its CAO home and profiles, its tmux server and sessions,
+  its km home and state directory, and the ensemble you are sitting in.
+- **Work in your own throwaway worktree or scratch repository.**
+- **Take down what you start:** every session with `km ensemble down` (or the audition's teardown),
+  every server by its recorded PID, and `tmux kill-server` only in a shell that sourced the file.
 
 ## Checks
 
