@@ -41,6 +41,7 @@ type reportRun struct {
 	roughStart bool
 	hasResult  bool
 	hasStarted bool
+	parts      *reportPartRun
 }
 
 type reportTotals struct {
@@ -54,6 +55,7 @@ type reportTotals struct {
 }
 
 type runReport struct {
+	Parts            *reportParts        `json:"parts,omitempty"`
 	NotSearched      []reportNotSearched `json:"not_searched"`
 	NotSearchedTotal int                 `json:"not_searched_total"`
 	Runs             []reportRun         `json:"runs"`
@@ -63,6 +65,7 @@ type runReport struct {
 func reportCommand(args []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("report", flag.ContinueOnError)
 	flags.SetOutput(stderr)
+	withParts := flags.Bool("parts", false, "append steps and work grouped by part, provider and model")
 	asJSON := flags.Bool("json", false, "print runs and totals as JSON")
 	sinceText := flags.String("since", "", "keep runs started on or after a UTC date or RFC3339 timestamp")
 	repository := flags.String("repository", "", "keep runs from this exact repository")
@@ -91,7 +94,7 @@ func reportCommand(args []string, stdout, stderr io.Writer) error {
 	if defaultDir {
 		dirs = []string{filepath.Join(loop.StateDir(), "runs")}
 	}
-	runs, scan, err := findRuns(dirs, defaultDir, *maxDepth, *maxEntries, false)
+	runs, scan, err := findRuns(dirs, defaultDir, *maxDepth, *maxEntries, false, *withParts)
 	if err != nil {
 		return fmt.Errorf("report: %s", plain(err.Error()))
 	}
@@ -135,6 +138,9 @@ func reportCommand(args []string, stdout, stderr io.Writer) error {
 		}
 		return a.Path < b.Path
 	})
+	if *withParts {
+		report.Parts = mergeReportParts(report.Runs)
+	}
 	if *asJSON {
 		return printReportJSON(stdout, report)
 	}
@@ -455,6 +461,11 @@ func printReport(stdout io.Writer, report runReport) error {
 			fmt.Fprintf(w, "  %s\t%d%s\n", plain(name), group.counts[name], plain(suffix))
 		}
 		if err := w.Flush(); err != nil {
+			return err
+		}
+	}
+	if report.Parts != nil {
+		if err := printReportParts(stdout, report.Parts); err != nil {
 			return err
 		}
 	}

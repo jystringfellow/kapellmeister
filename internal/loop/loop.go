@@ -655,7 +655,7 @@ func (e *Engine) step(ctx context.Context, s Step) (StepResult, error) {
 
 var stepRoles = map[string]string{"lessons": "gate", "plan": "planner", "implement": "implementer", "review": "reviewer", "gate": "gate", "test-plan": "tester", "test": "tester"}
 
-func partOf(stepName string) string {
+func PartOf(stepName string) string {
 	if part, ok := stepRoles[stepName]; ok {
 		return part
 	}
@@ -666,7 +666,7 @@ func partOf(stepName string) string {
 }
 
 func TerminalLabel(runID, stepName string) string {
-	return "km " + runID + " · " + partOf(stepName)
+	return "km " + runID + " · " + PartOf(stepName)
 }
 
 var errNoReply = errors.New("no reply file")

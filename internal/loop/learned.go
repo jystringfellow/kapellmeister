@@ -140,7 +140,7 @@ func (e *Engine) loadLessons() {
 }
 
 func (e *Engine) lessonsFor(step string, chair Chair) string {
-	return lessonsSection(e.lessons[lessonKey{partOf(step), chair.Address}])
+	return lessonsSection(e.lessons[lessonKey{PartOf(step), chair.Address}])
 }
 
 func (e *Engine) readLessonBlob(mode, oid string) lessonBlob {

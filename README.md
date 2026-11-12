@@ -53,7 +53,7 @@ km play SESSION [-max-rounds N] [-verify CMD] [-timeout D] [-cao URL]  # run the
 km reseat SESSION ADDRESS [-agent SPEC] [-timeout D] [-cao URL]  # replace one occupant
 km ensemble list                                # list standing ensembles
 km ensemble down SESSION                        # take one down
-km report [-json] [-since DATE] [-repository NAME] [-max-depth N] [-max-entries N] [DIR...]  # summarize run records
+km report [-parts] [-json] [-since DATE] [-repository NAME] [-max-depth N] [-max-entries N] [DIR...]  # summarize run records
 km status [-json] [-max-depth N] [-max-entries N] [DIR...]  # show runs in progress
 km preflight -worktree DIR [-agents NAME,...] [-tier large]  # check the available agents
 km config [-worktree DIR] [-cao URL]              # show the effective settings and their files
@@ -818,7 +818,7 @@ time, so this fallback can be off by the host's UTC offset for those records. Mi
 or ensemble fields show as `unknown`, as with an older km, plain chairs that omit the ensemble,
 or a repository without a hosted origin. Unfinished runs have unknown rounds and duration.
 
-Only the first non-blank telemetry line is read. A truncated last line after valid lines is
+Without `-parts`, only the first non-blank telemetry line is read. A truncated last line after valid lines is
 ignored; real content that cannot be parsed, including a lone partial first line, is diagnosed
 on stderr and counts as unreadable unless a finished result is available. A malformed result
 also counts as unreadable. Malformed `config.json` is diagnosed without changing an unfinished
@@ -874,6 +874,135 @@ by ensemble
   unknown   2  unknown (2 without usage)
   thorough  1  in 1.2M out 340k
 ```
+
+`km report -parts [DIR...]` appends a view of the same selected runs grouped by part,
+provider and model. It accepts the same `-since`, `-repository`, `-max-depth`, `-max-entries`
+and directory arguments. `-parts -json` adds a top-level `parts` object; existing keys and
+plain `km report` output keep their meaning. Rows follow score order (planner, implementer,
+reviewer, gate, tester, classifier), then provider and model alphabetically. They show recorded
+facts, with counts and denominators; they provide no score or ranking.
+
+A step must name a chair and be `plan`, `implement`, `review`, `gate`, `test-plan`, `test`,
+`classify-review`, `classify-gate`, `classify-test` or `lessons`, optionally followed by `-nudge`.
+Each nudge counts as another step with its own time and usage. `test-plan` and `test` belong to
+tester; `classify-*` to classifier; the lessons proposal step to gate. Escalation, verification,
+start and other metadata do not count as steps. Chairless lessons-loading records and
+lessons tree-change notifications are metadata too. Other recognized steps without a chair
+count as unattributed steps.
+
+The provider comes from `chair.provider`. The model comes from `chair.model`, falling back to
+the reported top-level `model`; if `model_honored` is false and a reported model exists, that
+reported model takes precedence. Missing provider or model becomes `unknown`. Address, profile,
+chair name, effort and tier do not split a row. Two reviewers using the same provider and model
+share one row, counting both steps and verdicts but each run once. A chair whose effort changes
+between runs stays in that row. Only varying effort or tier produces a note below the tables,
+listing each value's step count; missing values are `unset`. Constant values are omitted.
+
+The first table's columns (and JSON row fields) are:
+
+| Column | Meaning |
+| --- | --- |
+| `PART`, `PROVIDER`, `MODEL` | The row's grouping values (`part`, `provider`, `model`). |
+| `RUNS` | Distinct selected run records in which this row played a step (`runs`). Agreeing copies count once; conflicting copies remain separate as in the run table. |
+| `STEPS` | Attributed step attempts, including nudges (`steps`). |
+| `ERRORS` | Steps with a nonempty `error` (`step_errors`). |
+| `TIME` | Sum of nonnegative recorded `duration_ms`, excluding queue and reply-wait time. |
+| `TIME/STEP` | That time divided by **all** steps, including unmeasured ones (`duration_ms_per_step`). |
+| `TOKENS` | Sum of recorded step input/output tokens, excluding cache from input, in the same compact format as the run table. |
+| `TOKENS/STEP` | Those input/output totals divided by **all** steps (`usage_per_step.input_tokens`, `usage_per_step.output_tokens`). Fractional tokens may be displayed to one decimal place. |
+
+Time and tokens are `unknown` when no steps were measured, and measured zero stays zero.
+A sum or average with any unmeasured contribution is a lower bound marked `≥`. Step usage
+uses the same counter validation as run usage: missing, malformed, `known: false` or out-of-range
+usage is unknown. JSON `usage` has `known`, `unknown_steps` when nonzero, and all four token
+counters when known; cache totals are retained there. Each unmeasured or partly measured
+step contributes one to `unknown_steps`, regardless of a step record’s own counter. `duration_ms` is the measured sum and
+`unmeasured_duration_steps` counts excluded steps; a zero sum with all steps unmeasured is
+unknown. The per-step time and usage objects are omitted when unknown. `efforts` and `tiers`
+are value-to-step-count maps, present only when that value varies within the row.
+
+The work tables count verdicts only when a `verdict-review`, `verdict-gate` or `verdict-test`
+record matches a `review`, `gate` or `test` step with a chair by subject, positive round and
+`chair_name` (empty for a single reviewer, gate and tester). For duplicate keys the last step
+and last verdict win (an incomplete last verdict removes any earlier verdict); step totals still include all attempts. A verdict without that match
+belongs to no model. Downstream comparisons use verdict records of the same round, even if
+their step cannot be attributed. They do not infer a verdict from a run outcome. Older runs
+without verdict records contribute steps and run outcomes but no verdict counts. Counts can
+also be lower than steps because a step failed, a run stopped or records are partial.
+
+For reviewer, gate and tester, `APPROVE` (`work.approve`) counts exact `APPROVE` verdicts,
+`CHANGES` (`changes`) counts exact `CHANGES`, and `UNCLEAR` (`unclear`) counts every other
+nonempty verdict string. Reviewer `FAILED` (`failed`) is separate: the review step failed,
+so it gave no verdict. Here “not approved” means a present verdict other than `APPROVE`.
+A missing gate or test verdict never counts as a downstream failure. The comparison columns
+are **numerator/denominator**, never percentages:
+
+| Part / column | Numerator / denominator (JSON work fields) |
+| --- | --- |
+| Reviewer `APPROVE→GATE!` | Its approvals in rounds where the gate did not approve / its approvals in rounds with a gate verdict (`approve_then_gate_not_approved` / `approve_gate_ran`). |
+| Reviewer or gate `APPROVE→TEST!` | Its approvals in rounds where the tester did not approve / its approvals in rounds with a test verdict (`approve_then_test_not_approved` / `approve_test_ran`). |
+| Reviewer `CHANGES→GATE+` | Its requests for changes in rounds the gate approved / its requests for changes in rounds with a gate verdict (`changes_then_gate_approved` / `changes_gate_ran`). |
+| Tester `ALL+→TEST!` | Its nonapprovals after every recorded review and the gate approved / its verdicts in those rounds (`not_approved_after_all_approved` / `all_approved_rounds_tested`). At least one review verdict is required; a failed or unclear review, or a recorded review step missing its verdict, prevents unanimity. |
+
+A reviewer “blocked” a round here only in the sense that it gave `CHANGES`. Records do not
+carry the gate policy, so these columns make no claim that the round was actually held back.
+They describe agreement between recorded verdicts, not which model was right. Missing review
+records cannot prove that unrecorded reviewers approved.
+
+Planner and implementer work uses `result.json` and counts **runs**, not verdicts. Only runs
+where that part was played by a single (provider, model) contribute to these outcome columns:
+
+| Column | Meaning (JSON work field) |
+| --- | --- |
+| `FIRST` | Approved runs with exactly one round (`approved_first_round`). |
+| `LATER` | Approved runs with more than one round (`approved_later_rounds`). |
+| `ROUNDS?` | Approved runs with missing or nonpositive rounds (`approved_rounds_unknown`). |
+| `NOT APPROVED` | Readable results whose outcome is anything other than `approved` (`not_approved`). |
+| `UNFINISHED` | Runs with no result (`unfinished`). |
+| `RESULT?` | Runs whose result exists but cannot be read (`unreadable_results`), excluded from outcomes. |
+| `SPLIT` | Runs where multiple providers or models played this part (`split_runs`), excluded from every other outcome column for each participating row. |
+| `ROUNDS/APPROVED` | Sum of rounds in approved runs with known positive rounds (`rounds_in_approved_runs`), shown as `sum over n runs`, where n is `FIRST + LATER`. Divide to obtain rounds per approved run. |
+
+Classifier has no work table. JSON rows carry these same counts in `work` for the other parts.
+The `parts` object contains `rows` (an empty array when none), `unattributed_steps`,
+`unattributed_verdicts` and `runs_without_steps`. These last three counts print below the tables
+when nonzero. Unattributed verdicts include unmatched verdict keys and records without a positive
+round or nonempty verdict. Runs without attributed steps include missing, empty or unreadable
+telemetry and runs containing only metadata or chairless steps. They still appear in the run table.
+
+With `-parts`, report streams telemetry independently of the start-time read, even when the
+first line is unreadable or the start came from current state. Reads retain the same regular-file,
+no-symlink protections. Lines are limited to 1 MiB and files to 64 MiB; overlong lines are skipped,
+and the unread remainder of an oversized file is diagnosed. Malformed objects, wrong field types
+and negative rounds are skipped with one skipped-line count per run on stderr. Malformed usage
+alone makes that step's usage unknown. A malformed final line without a newline is ignored as a
+possible interrupted write. Reports can therefore be partial; missing records are never assumed
+to be approvals or measured zeros.
+
+For example, two approved runs with `alpha` and `beta` each playing implementer and reviewer
+(one round for alpha, two for beta), with one recorded step per part and an approving review,
+append this section with `km report -parts`:
+
+<!-- report-parts-example -->
+```text
+by part and model
+PART         PROVIDER  MODEL  RUNS  STEPS  ERRORS  TIME  TIME/STEP  TOKENS  TOKENS/STEP
+implementer  p         alpha  1     1      0       1s    1s         100/20  100/20
+implementer  p         beta   1     1      0       1s    1s         100/20  100/20
+reviewer     p         alpha  1     1      0       1s    1s         100/20  100/20
+reviewer     p         beta   1     1      0       1s    1s         100/20  100/20
+
+work: implementer
+PROVIDER  MODEL  FIRST  LATER  ROUNDS?  NOT APPROVED  UNFINISHED  RESULT?  SPLIT  ROUNDS/APPROVED
+p         alpha  1      0      0        0             0           0        0      1 over 1 runs
+p         beta   0      1      0        0             0           0        0      2 over 1 runs
+
+work: reviewer
+PROVIDER  MODEL  APPROVE  CHANGES  UNCLEAR  FAILED  APPROVE→GATE!  APPROVE→TEST!  CHANGES→GATE+
+p         alpha  1        0        0        0       0/0            0/0            0/0
+p         beta   1        0        0        0       0/0            0/0            0/0
+```
+<!-- /report-parts-example -->
 
 ## Status
 
