@@ -64,15 +64,8 @@ func statusAt(args []string, stdout, stderr io.Writer, now time.Time) error {
 	for _, diagnostic := range scan.diagnostics {
 		fmt.Fprintln(stderr, strings.Replace(diagnostic, "km: report:", "km: status:", 1))
 	}
-	finished := map[string]bool{}
-	for _, recorded := range found {
-		finished[recorded.RunID] = finished[recorded.RunID] || recorded.hasResult
-	}
 	runs := []statusRun{}
-	for _, recorded := range found {
-		if finished[recorded.RunID] || !recorded.hasStarted {
-			continue
-		}
+	for _, recorded := range unfinishedRuns(found) {
 		run := statusRun{RunID: recorded.RunID, Path: recorded.Path, Started: recorded.Started, Repository: recorded.Repository, Ensemble: recorded.Ensemble, Playing: []statusStep{}, Liveness: "unknown"}
 		if state := recorded.state; state != nil {
 			run.Command, run.Round, run.MaxRounds = state.Command, state.Round, state.MaxRounds
@@ -167,4 +160,18 @@ func printStatus(stdout io.Writer, runs []statusRun, now time.Time) error {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", plain(run.RunID), plain(started), plain(reportKnown(run.Repository)), plain(reportKnown(run.Ensemble)), plain(round), plain(step), plain(chair), plain(elapsed), plain(run.Liveness))
 	}
 	return w.Flush()
+}
+
+func unfinishedRuns(found []reportRun) []reportRun {
+	finished := map[string]bool{}
+	for _, recorded := range found {
+		finished[recorded.RunID] = finished[recorded.RunID] || recorded.hasResult
+	}
+	var runs []reportRun
+	for _, recorded := range found {
+		if !finished[recorded.RunID] && recorded.hasStarted {
+			runs = append(runs, recorded)
+		}
+	}
+	return runs
 }
