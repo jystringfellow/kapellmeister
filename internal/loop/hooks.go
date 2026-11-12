@@ -32,7 +32,7 @@ func ResolveHooks(worktree, verifyFlag string) (verify, check string, err error)
 }
 
 func CheckUsage(check string) string {
-	const placeholder = "<tests or packages>"
+	const placeholder = "<tests>"
 	if strings.Contains(check, ArgsToken) {
 		return strings.ReplaceAll(check, ArgsToken, placeholder)
 	}

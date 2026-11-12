@@ -345,8 +345,11 @@ A run without an ensemble uses `any`. Failed verification always skips the gate 
 round back to the implementer. With one reviewer, `any` and `all` both require its approval.
 
 The gate reads every available review, checks the diff itself, and sorts each finding into
-**blocking** or **nit**, with a reason. It approves when the task is done, verification passed,
-and nothing blocks. Its gate file lists nits without sending them back for another round.
+**blocking** or **nit**, with a reason. It approves when the task is done, configured verification passed,
+and nothing blocks. Without a verify command, reviewer, gate and tester prompts say km did not verify
+the change and leave them free to run tests. The implementer is told km will run full verification
+only when a verify command is configured. The gate file lists nits without sending them back for
+another round.
 
 Each successful review is classified as soon as it lands, while other reviewers may still be
 running. km waits for every review and classification before deciding whether to run the gate.
@@ -361,7 +364,7 @@ toward escalation.
 
 When a tester is seated, it writes `test-plan.md` from the task and plan alone, blind to the
 implementation, while round 1 implements. The plan targets end to end use in the real environment,
-including missing, stale or concurrent state and misbehaving services. Both tester prompts state the
+including the failure paths the change could plausibly hit. Both tester prompts state the
 test step's effective time limit, including ensemble, section and chair overrides. The plan orders
 scenarios by risk and sizes them to fit that limit. The tester runs the highest-risk scenarios first
 and stops starting new ones with about the last tenth remaining, leaving time to clean up and write
@@ -370,22 +373,22 @@ finishes, and writes the verdict line last. After the gate approves, km waits fo
 then runs `test` in the tester's chair and reads the verdict from `test-<round>.md`: a bare `APPROVE`
 or `CHANGES` last line is taken as is; otherwise the classifier reads the report. Only a test
 APPROVE yields an `approved` outcome. Any other verdict sends the test report back as the leading
-feedback, with instructions to reproduce each failure in a failing regression test before fixing
-it. Later rounds reuse the same test plan.
+feedback, with instructions to add a regression test reproducing each failure and fix the code, following
+the repository's development rules. Later rounds reuse the same test plan.
 A test-step timeout or a SIGINT/SIGTERM during the test step after gate approval ends `untested`:
 the change was approved but testing did not finish. A signal names the signal and says the tester
 did not finish and the gate's approval stands unverified, in both the output and the run record. The outcome names the partial report if it exists and preserves the worktree and its
 uncommitted change as an approved run would. Other test-step failures, and a timeout or failure in
 any other score step, still fail the run. The test step gets the same worktree check as the gate and
 reviewers; a tester that modifies the worktree still fails the run even if it also times out.
-Both tester prompts restrict scratch files, build output, scratch repositories and server state to
+Both tester prompts require everything the tester creates to stay under
 the absolute `<state dir>/scratch/<run id>` directory, outside the worktree.
 `km run` and `km play` create it before starting the score and refuse to start if it is inside a git
 work tree; set `KAPELLMEISTER_STATE_DIR` outside any repository. The test prompt permits git commands
 that write only in repositories the tester created inside scratch, always using `git -C <repository>`.
 The tester must append every long-running process's PID to `<scratch>/pids`, one per line, and stop
-those processes and its sessions before finishing, without touching anyone else's. Both tester
-briefings give per-run facts: the conductor's process ID, its orchestrator URL and state directory,
+those processes before finishing. It must clean up anything it started, without touching anyone else's.
+Both tester briefings give per-run facts: the conductor's process ID, its orchestrator URL and state directory,
 that none is part of what is being tested and none may be signalled, stopped or changed, and that
 the tester may signal only processes it started itself and listed in `<scratch>/pids`. After every
 test step, including failure, timeout or interruption, km reports each distinct listed process still alive as
@@ -403,8 +406,8 @@ Without a tester, gate approval finishes the run as usual.
 When collection is enabled, after the score ends km asks the gate for lessons when it has given
 a verdict, whether or not it approved the run. The question is: from this run's plan, reviews and verdicts, what would have
 saved a round if a chair had known it at the start? Zero lessons is a good answer. Each candidate
-names its part (`planner`, `implementer`, `reviewer`, `gate`, `classifier` or `tester`), states a lesson
-in one or two sentences, and cites the step and finding that support it. The gate returns a JSON
+names a part seated in the run (`planner`, `implementer`, `reviewer`, `gate`, `classifier`, or `tester`
+when seated), states a lesson in one or two sentences, and cites the step and finding that support it. The gate returns a JSON
 array of objects with `part`, `lesson` and `evidence` fields.
 
 This is shadow mode: km never reads `lessons.json` back and never puts a lesson in a briefing.

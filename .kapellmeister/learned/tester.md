@@ -1,2 +1,4 @@
 - Put the scenarios that depend on an external tool's real behaviour first, so the time limit cannot cut them.
 - Before any scenario that runs km, cao, cao-server or tmux, follow AGENTS.md "Exercising km live" and use `scripts/nested-km-env`.
+- Probe stale and concurrent state and CAO misbehaving; create scratch repositories under the scratch directory.
+- Keep scratch files, build output and server state under scratch; clean up processes and sessions you started.
