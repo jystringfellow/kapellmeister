@@ -429,6 +429,20 @@ repo. Chairs: `km-claude` (Haiku 5.5), `km-codex` (GPT-6 Luna), `km-copilot` (Ha
     `scripts/nested-km-env` writes an environment file that applies all of this, and
     `AGENTS.md`, "Exercising km live", states the rules.
 
+28. **Profile installs need byte read-back, and Copilot also writes outside the CAO home.**
+    Established on 2026-11-12 with real CAO 2.5.4 in an isolated nested server, without seating
+    chairs. An install from an empty directory copied the profile byte-for-byte into
+    `$CAO_HOME_DIR/agent-store/<stem>.md`. Reinstalling identical content succeeded; different
+    content with the same stem silently replaced it. A different source stem with an installed
+    frontmatter name printed an error but exited zero and left the original untouched.
+    `--provider` selected the provider; the store file was named after the source stem.
+    Copilot installation also writes `$HOME/.copilot/agents/<name>.agent.md`, independent of
+    `CAO_HOME_DIR`; a shared existing file caused another exit-zero refusal. For the all-provider
+    check, HOME was additionally moved under the scratch directory. From outside the checkout,
+    the embedded binary then installed all four profiles, each matched the source bytes, and
+    a second run reported all four unchanged. Differing content, a foreign description, a live
+    recorded child process and a wrong CAO home each triggered the intended refusal.
+
 ## Implications for the team layer
 
 - km owns the queue of obligations, as decided: a cue is done only when its reply lands in the km

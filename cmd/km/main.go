@@ -38,6 +38,8 @@ const usage = `usage:
   km status [-json] [-max-depth N] [-max-entries N] [DIR...]   show the runs in progress
   km cue done -queue FILE CUE [NOTE]                         close a cue (chairs run this)
   km preflight -worktree DIR [-agents LIST] [-tier T]       check each agent starts and answers
+  km profiles install [-cao URL] [-replace] [AGENT ...]       install embedded base chair profiles
+  km version                                                print the version
   km config [-worktree DIR]                                  show the effective settings and the files they come from`
 
 func main() {
@@ -51,6 +53,18 @@ func execute(args []string, stderr io.Writer) int {
 	}
 	var err error
 	switch args[0] {
+	case "version":
+		if len(args) != 1 {
+			fmt.Fprintln(stderr, "usage: km version")
+			return 2
+		}
+		printVersion(os.Stdout)
+	case "profiles":
+		if len(args) < 2 || args[1] != "install" {
+			fmt.Fprintln(stderr, profilesUsage)
+			return 2
+		}
+		err = profilesCommand(args[1:], os.Stdout)
 	case "run":
 		err = runCommand(args[1:])
 	case "audition":
@@ -629,7 +643,13 @@ func ensureProfiles(ctx context.Context, client *cao.Client, p *loop.Policy, ste
 			if err != nil {
 				var httpErr *cao.HTTPError
 				if errors.As(err, &httpErr) && httpErr.Status == http.StatusNotFound {
-					return fmt.Errorf("profile %s is not installed in CAO; it is the base of effort profile %s; install it with cao install, or set effort = \"inherit\" under [tiers.%s] to use it as is", v.Base, v.Name(), v.Provider)
+					install := "cao install"
+					for _, agent := range loop.BuiltInAgents() {
+						if agent.Chair.Profile == v.Base && agent.Chair.Provider == v.Provider {
+							install = "km profiles install " + agent.Name
+						}
+					}
+					return fmt.Errorf("profile %s is not installed in CAO; it is the base of effort profile %s; install it with %s, or set effort = \"inherit\" under [tiers.%s] to use it as is", v.Base, v.Name(), install, v.Provider)
 				}
 				return fmt.Errorf("reading CAO profile %s: %w", v.Base, err)
 			}
@@ -676,8 +696,8 @@ func ensureProfiles(ctx context.Context, client *cao.Client, p *loop.Policy, ste
 		if err := os.WriteFile(path, []byte(v.source), 0o644); err != nil {
 			return err
 		}
-		if out, err := exec.CommandContext(ctx, "cao", "install", path, "--provider", v.provider).CombinedOutput(); err != nil {
-			return fmt.Errorf("cao install %s: %w: %s", path, err, out)
+		if _, err := caoInstall(ctx, path, v.provider); err != nil {
+			return err
 		}
 		if have[v.name] {
 			fmt.Printf("→ reinstalled CAO profile %s: permissions now match %s\n", v.name, v.base)
