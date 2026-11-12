@@ -268,7 +268,7 @@ func TestPreflightWaitsOnlyForTheSeatingBoundAfterAnInterrupt(t *testing.T) {
 			return seat, seatCtx.Err()
 		}
 		start := time.Now()
-		_, err := Preflight(ctx, host, dir, []Chair{{Provider: "a"}}, time.Minute)
+		_, err := Preflight(ctx, host, dir, []Chair{{Provider: "a"}}, DefaultSettings().PreflightTimeout)
 		if !errors.Is(err, context.Canceled) {
 			t.Errorf("error = %v", err)
 		}
@@ -394,5 +394,35 @@ func TestPreflightDeletesTheChosenNameWhenSeatingFailsWithoutASession(t *testing
 				}
 			})
 		})
+	}
+}
+
+func TestPreflightGivesTheSeatADeadlineDerivedFromItsTimeout(t *testing.T) {
+	for _, tc := range []struct{ timeout, want time.Duration }{
+		{4 * time.Minute, 90 * time.Second}, {8 * time.Minute, 3 * time.Minute}, {50 * time.Millisecond, 10 * time.Second},
+	} {
+		host := &preflightHost{fakeStepper: &fakeStepper{t: t, dir: t.TempDir()}}
+		host.seat = func(ctx context.Context, name string, chair Chair, dir string) (Seat, error) {
+			deadline, ok := ctx.Deadline()
+			remaining := time.Until(deadline)
+			if !ok || remaining > tc.want || remaining < tc.want-10*time.Second {
+				t.Errorf("seat deadline remaining %s, want near %s", remaining, tc.want)
+			}
+			return Seat{}, errors.New("seat unavailable")
+		}
+		_, err := Preflight(context.Background(), host, host.dir, []Chair{{Provider: "p"}}, tc.timeout)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestSeatTimeoutIsThreeEighthsOfThePreflightTimeoutWithTodaysValueAtTheDefault(t *testing.T) {
+	for _, tc := range []struct{ timeout, want time.Duration }{
+		{DefaultSettings().PreflightTimeout, 90 * time.Second}, {8 * time.Minute, 3 * time.Minute}, {50 * time.Millisecond, 10 * time.Second},
+	} {
+		if got := seatTimeout(tc.timeout); got != tc.want {
+			t.Errorf("seatTimeout(%s) = %s, want %s", tc.timeout, got, tc.want)
+		}
 	}
 }

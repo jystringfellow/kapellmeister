@@ -34,6 +34,8 @@ type TestConfig struct {
 }
 
 type RunConfig struct {
+	BaseBranch       string `toml:"base"`
+	WorktreeDir      string `toml:"worktree_dir"`
 	LearnedBudget    *int   `toml:"learned_budget"`
 	Lessons          *bool  `toml:"lessons"`
 	LessonsTimeout   string `toml:"lessons_timeout"`
@@ -123,6 +125,8 @@ type FileConfig struct {
 
 type Settings struct {
 	Defined          Agents              `json:"-"`
+	BaseBranch       string              `json:"base_branch"`
+	WorktreeDir      string              `json:"worktree_dir"`
 	LearnedBudget    int                 `json:"learned_budget"`
 	Lessons          bool                `json:"lessons"`
 	LessonsTimeout   time.Duration       `json:"lessons_timeout"`
@@ -188,7 +192,7 @@ func UserConfigPath(home string) string {
 func DefaultSettings() Settings {
 	return Settings{
 		LearnedBudget:    defaultLearnedBudget,
-		Lessons:          true,
+		Lessons:          false,
 		LessonsTimeout:   DefaultLessonsTimeout,
 		BlockerPoll:      20 * time.Second,
 		GateWhen:         GateWhenAny,
@@ -219,12 +223,16 @@ func LoadSettings(home, worktree string) (Settings, error) {
 	if err := refuseSections(user, userPath, repoOnlySections, "the repository's "+ConfigFile); err != nil {
 		return s, err
 	}
+	if err := refuseRunKey(user, "base", "the repository's "+ConfigFile); err != nil {
+		return s, err
+	}
+
 	repo, repoFound := loadedConfig{}, false
 	if worktree != "" {
 		if repo, repoFound, err = loadConfigFile(filepath.Join(worktree, ConfigFile), ConfigFile); err != nil {
 			return s, err
 		}
-		if err := refuseSections(repo, ConfigFile, userOnlySections, userPath); err != nil {
+		if err := refuseRepoConfig(repo, userPath); err != nil {
 			return s, err
 		}
 	}
@@ -301,22 +309,59 @@ type loadedConfig struct {
 }
 
 func loadConfigFile(path, name string) (loadedConfig, bool, error) {
-	cfg := loadedConfig{name: name}
-	md, err := toml.DecodeFile(path, &cfg.FileConfig)
+	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return cfg, false, nil
+		return loadedConfig{}, false, nil
 	}
 	if err != nil {
-		return cfg, false, fmt.Errorf("%s: %w", name, err)
+		return loadedConfig{}, false, fmt.Errorf("%s: %w", name, err)
+	}
+	cfg, err := decodeConfig(data, name)
+	return cfg, err == nil, err
+}
+
+func decodeConfig(data []byte, name string) (loadedConfig, error) {
+	cfg := loadedConfig{name: name}
+	md, err := toml.Decode(string(data), &cfg.FileConfig)
+	if err != nil {
+		return cfg, fmt.Errorf("%s: %w", name, err)
 	}
 	if md.IsDefined("run", "lessons_budget") {
-		return cfg, false, fmt.Errorf("%s: run.lessons_budget: renamed to run.learned_budget", name)
+		return cfg, fmt.Errorf("%s: run.lessons_budget: renamed to run.learned_budget", name)
 	}
 	if extra := md.Undecoded(); len(extra) > 0 {
-		return cfg, false, fmt.Errorf("%s: unknown keys %v", name, extra)
+		return cfg, fmt.Errorf("%s: unknown keys %v", name, extra)
 	}
 	cfg.md = md
-	return cfg, true, nil
+	return cfg, nil
+}
+
+func refuseRunKey(cfg loadedConfig, key, destination string) error {
+	if cfg.md.IsDefined("run", key) {
+		return fmt.Errorf("%s: run.%s belongs in %s", cfg.name, key, destination)
+	}
+	return nil
+}
+
+func refuseRepoConfig(cfg loadedConfig, userPath string) error {
+	if err := refuseSections(cfg, ConfigFile, userOnlySections, userPath); err != nil {
+		return err
+	}
+	return refuseRunKey(cfg, "worktree_dir", userPath)
+}
+
+func RepoBaseBranch(data []byte) (string, error) {
+	cfg, err := decodeConfig(data, ConfigFile)
+	if err != nil {
+		return "", err
+	}
+	if err := refuseRepoConfig(cfg, UserConfigPath(Home())); err != nil {
+		return "", err
+	}
+	if cfg.md.IsDefined("run", "base") && cfg.Run.BaseBranch == "" {
+		return "", fmt.Errorf("%s: run.base: must name a branch", ConfigFile)
+	}
+	return cfg.Run.BaseBranch, nil
 }
 
 func refuseSections(cfg loadedConfig, name string, sections []string, home string) error {
@@ -330,6 +375,23 @@ func refuseSections(cfg loadedConfig, name string, sections []string, home strin
 
 func (s *Settings) applyRun(layer loadedConfig) error {
 	r := layer.Run
+	if layer.md.IsDefined("run", "base") {
+		s.BaseBranch = r.BaseBranch
+	}
+	if layer.md.IsDefined("run", "worktree_dir") {
+		dir := r.WorktreeDir
+		if strings.HasPrefix(dir, "~/") {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return fmt.Errorf("%s: run.worktree_dir: %w", layer.name, err)
+			}
+			dir = filepath.Join(home, dir[2:])
+		}
+		if dir != "" && !filepath.IsAbs(dir) {
+			return fmt.Errorf("%s: run.worktree_dir: must be an absolute path or start with ~/", layer.name)
+		}
+		s.WorktreeDir = dir
+	}
 	if r.LearnedBudget != nil {
 		if *r.LearnedBudget < 1 {
 			return fmt.Errorf("%s: run.learned_budget: must be at least 1", layer.name)

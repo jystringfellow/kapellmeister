@@ -405,3 +405,37 @@ func TestPreflightDoesNotRetryASeatWhenItsLaunchContextExpires(t *testing.T) {
 		}
 	})
 }
+
+func TestCAOStepperReadsAChairsScreenThroughCAOWithoutTmux(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	for _, raw := range []string{"Do you trust this folder?", "\x1b[2J\x1b[HDo you trust this folder?"} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method + " " + r.URL.Path {
+			case "GET /terminals/chair", "POST /sessions":
+				_ = json.NewEncoder(w).Encode(cao.Terminal{ID: "chair", SessionName: "cao-isolated"})
+			case "GET /terminals/chair/output":
+				if r.URL.Query().Get("mode") != "full" {
+					t.Error("output must request full mode")
+				}
+				_ = json.NewEncoder(w).Encode(map[string]string{"output": raw})
+			case "PATCH /terminals/chair/description":
+				_, _ = w.Write([]byte(`{}`))
+			case "POST /terminals/run-step":
+				http.Error(w, "chair is blocked", http.StatusRequestTimeout)
+			default:
+				t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		stepper := CAOStepper{Client: cao.NewClient(srv.URL)}
+		session, screen, err := stepper.Screen(context.Background(), "chair")
+		if err != nil || session != "cao-isolated" || strings.TrimSpace(screen) != "Do you trust this folder?" {
+			t.Errorf("screen = %q, session = %q, error = %v", screen, session, err)
+		}
+		results, err := Preflight(context.Background(), stepper, t.TempDir(), []Chair{{Provider: "p"}}, time.Minute)
+		if err != nil || len(results) != 1 || !strings.Contains(results[0].Blocker, "Do you trust this folder?") {
+			t.Errorf("preflight = %+v, error = %v", results, err)
+		}
+		srv.Close()
+	}
+}
