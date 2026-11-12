@@ -1,0 +1,93 @@
+#!/bin/sh
+set -eu
+
+refuse() {
+	printf 'nested-km-env: %s\n' "$1" >&2
+	exit 1
+}
+
+quoted() {
+	printf '%s\n' "$1" | sed "s/'/'\\\\''/g; 1s/^/'/; \$s/\$/'/"
+}
+
+free_port() {
+	python3 -c '
+import socket, sys
+while True:
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = str(s.getsockname()[1])
+    s.close()
+    if port not in sys.argv[1:]:
+        print(port)
+        break
+' "$@" 2>/dev/null || perl -MIO::Socket::INET -e '
+while (1) {
+    my $s = IO::Socket::INET->new(Listen => 1, LocalAddr => "127.0.0.1", LocalPort => 0, Proto => "tcp") or exit 1;
+    my $port = $s->sockport;
+    close $s;
+    unless (grep { $_ eq $port } @ARGV) { print "$port\n"; exit 0 }
+}
+' "$@" 2>/dev/null
+}
+
+if [ $# -lt 1 ] || [ $# -gt 2 ] || [ -z "$1" ]; then
+	printf 'usage: nested-km-env <scratch directory> [conductor CAO URL]\n' >&2
+	exit 2
+fi
+
+scratch=$1
+conductor_url=${2:-}
+case $scratch in
+/*) ;;
+*) scratch=$PWD/$scratch ;;
+esac
+while [ "$scratch" != / ] && [ "${scratch%/}" != "$scratch" ]; do
+	scratch=${scratch%/}
+done
+newline='
+'
+case $scratch in
+*"$newline"*) refuse 'the scratch path contains a newline' ;;
+esac
+
+nested=$scratch/nested
+env_file=$nested/env.sh
+rm -f "$env_file"
+
+socket=$nested/tmux/tmux-$(id -u)/default
+socket_bytes=$(($(printf '%s' "$socket" | wc -c)))
+if [ "$socket_bytes" -gt 100 ]; then
+	refuse "the tmux socket path $socket is $socket_bytes bytes and tmux needs 100 or fewer; use a shorter scratch directory"
+fi
+
+conductor_port=${conductor_url#*://}
+conductor_port=${conductor_port%%/*}
+conductor_port=${conductor_port##*@}
+case $conductor_port in
+*:*) conductor_port=${conductor_port##*:} ;;
+*) conductor_port=9889 ;;
+esac
+
+port=$(free_port 9889 "$conductor_port") || refuse 'cannot bind a free port on 127.0.0.1 with python3 or perl'
+case $port in
+'' | *[!0-9]*) refuse "cannot use $port as a port" ;;
+esac
+
+mkdir -p "$nested"
+draft=$env_file.$$
+trap 'rm -f "$draft"' EXIT
+{
+	printf 'unset TMUX TMUX_PANE CAO_TERMINAL_ID\n'
+	printf 'export KAPELLMEISTER_HOME=%s\n' "$(quoted "$nested/km-home")"
+	printf 'export KAPELLMEISTER_STATE_DIR=%s\n' "$(quoted "$nested/km-state")"
+	printf 'export CAO_HOME_DIR=%s\n' "$(quoted "$nested/cao-home")"
+	printf 'export TMUX_TMPDIR=%s\n' "$(quoted "$nested/tmux")"
+	printf 'export CAO_API_HOST=%s\n' "$(quoted 127.0.0.1)"
+	printf 'export CAO_API_PORT=%s\n' "$(quoted "$port")"
+	printf 'export CAO_API_BASE_URL=%s\n' "$(quoted "http://127.0.0.1:$port")"
+	printf 'mkdir -p "$TMUX_TMPDIR" "$KAPELLMEISTER_HOME" "$KAPELLMEISTER_STATE_DIR" "$CAO_HOME_DIR" || return 1\n'
+	printf 'chmod 700 "$TMUX_TMPDIR" || return 1\n'
+} >"$draft"
+mv "$draft" "$env_file"
+printf '%s\n' "$env_file"
