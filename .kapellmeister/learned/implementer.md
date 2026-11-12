@@ -1,0 +1,1 @@
+- Do not report "could not be established" or "not found" from a search alone. Run the real tool once, isolated in a scratch directory, and report what it did.

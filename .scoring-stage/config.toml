@@ -1,2 +1,9 @@
 agents = ["agy", "claude", "codex", "copilot"]
 kits = ["./.scoring-stage/kits/kapellmeister"]
+takes = [
+    "~/.kapellmeister/state/runs",
+    "~/.claude/projects",
+    "~/.codex/sessions",
+    "~/.aws/cli-agent-orchestrator/db",
+    "~/.aws/cli-agent-orchestrator/logs",
+]
