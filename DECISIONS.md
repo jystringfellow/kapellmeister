@@ -283,3 +283,27 @@ chair's creation is the same kind of concurrent tmux change the serial seating w
 retry waits carry random jitter so two km processes do not retry in step. Not covered by a test: the
 second signal, and a deletion waiting for a creation. Two km processes preflighting at once can
 still collide on their first attempts; the turn is per process.
+
+## 2026-11-12: Propose lessons only where a person reviews them
+
+Lessons collection is off by default: it costs up to five minutes after every run, and nothing in
+km reads the proposals back. This repository opts in with `[run] lessons = true`; a person reviews
+proposals before checking useful lessons in under `.kapellmeister/learned/`. This refines
+"Collect lessons in shadow before reading them back". Evidence:
+`TestLessonsAreOffByDefaultWithAFiveMinuteLimitWhenTurnedOn`,
+`TestThisRepositorysConfigTurnsLessonsOn` and `TestADefaultRunMakesNoLessonsStep`.
+
+## 2026-11-12: The base branch follows the repository
+
+`km run -repo` chooses `-base`, then `[run] base` committed on the remote's recorded default branch,
+then `origin/HEAD`, then `main` with a note when Git does not know the default. It fetches only the
+branches needed to resolve that base, without pruning the clone's remote-tracking branches, and
+creates retained worktrees under the user's `[run] worktree_dir` or the system temp directory.
+Preflight reads screens through CAO and derives seating time from `preflight_timeout`.
+Evidence: `TestRunWithoutBaseStartsFromAnOriginWhoseDefaultBranchIsNotMain`,
+`TestRunNotesAndFallsBackToMainWhenGitDoesNotRecordOriginsDefaultBranch`,
+`TestRepositoryConfigRunBaseChoosesTheBaseAndDashBaseWinsOverIt`,
+`TestRunLeavesTheClonesRemoteTrackingBranchesAlone`,
+`TestRunMakesItsWorktreeUnderTheConfiguredDirectoryAndTheSystemTempByDefault`,
+`TestCAOStepperReadsAChairsScreenThroughCAOWithoutTmux` and
+`TestPreflightGivesTheSeatADeadlineDerivedFromItsTimeout`.

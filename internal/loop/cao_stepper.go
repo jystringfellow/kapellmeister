@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"os/exec"
 	"time"
 
 	"github.com/jystringfellow/kapellmeister/internal/cao"
@@ -67,8 +66,8 @@ func (c CAOStepper) Screen(ctx context.Context, terminalID string) (string, stri
 	if err != nil {
 		return "", "", err
 	}
-	out, err := exec.CommandContext(ctx, "tmux", "capture-pane", "-p", "-t", info.SessionName).Output()
-	return info.SessionName, string(out), err
+	out, err := (CAOWatcher{Client: c.Client}).Output(ctx, terminalID)
+	return info.SessionName, out, err
 }
 
 func (c CAOStepper) Seat(ctx context.Context, name string, chair Chair, dir string) (Seat, error) {
