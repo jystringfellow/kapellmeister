@@ -132,7 +132,7 @@ func assertInterruptedRun(t *testing.T, sig os.Signal, tester bool) {
 	}
 }
 
-func TestTheTesterBriefingNamesTheConductorsPidAndForbidsSignallingItOrProcessesFoundByName(t *testing.T) {
+func TestTheTesterBriefingNamesTheConductorsPidAndRestrictsSignalsToProcessesListedInPids(t *testing.T) {
 	e, f := testerEngine(t)
 	scratch, err := filepath.EvalSymlinks(e.Config.ScratchDir)
 	if err != nil {
@@ -142,7 +142,7 @@ func TestTheTesterBriefingNamesTheConductorsPidAndForbidsSignallingItOrProcesses
 	run(t, e)
 	for _, name := range []string{"test-plan", "test"} {
 		p := testerSteps(f, name)[0].Prompt
-		for _, want := range []string{fmt.Sprintf("process %d", os.Getpid()), "never signal or kill it", "never signal or kill a process found by name", "pgrep", "pkill", "killall", "ps | grep", "signal only processes you started yourself", e.Config.ScratchDir + "/pids"} {
+		for _, want := range []string{fmt.Sprintf("process %d", os.Getpid()), "signal only processes you started yourself", e.Config.ScratchDir + "/pids"} {
 			if !strings.Contains(p, want) {
 				t.Errorf("%s prompt lacks %q", name, want)
 			}

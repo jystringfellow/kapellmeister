@@ -1,0 +1,1 @@
+- When the task depends on what an external tool does or writes, plan a step that produces one real instance in an isolated scratch directory. A search that finds nothing is not evidence of absence.

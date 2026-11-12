@@ -440,26 +440,20 @@ work tree; set `KAPELLMEISTER_STATE_DIR` outside any repository. The test prompt
 that write only in repositories the tester created inside scratch, always using `git -C <repository>`.
 The tester must append every long-running process's PID to `<scratch>/pids`, one per line, and stop
 those processes and its sessions before finishing, without touching anyone else's. Both tester
-briefings name the conductor's process ID and forbid signalling or killing it, or any process
-found by name (`pgrep`, `pkill`, `killall`, `ps | grep`). The tester may signal only processes it
-started itself and recorded in `<scratch>/pids`. After every
+briefings give per-run facts: the conductor's process ID, its orchestrator URL and state directory,
+that none is part of what is being tested and none may be signalled, stopped or changed, and that
+the tester may signal only processes it started itself and listed in `<scratch>/pids`. After every
 test step, including failure, timeout or interruption, km reports each distinct listed process still alive as
 `  left running: pid <pid> (<command>)` and records its PID and command in `left-running` telemetry.
 km never signals these processes. It silently skips non-regular `pids` files (including FIFOs) and
 files larger than 1 MiB. The concurrent test-plan step
 relies on its prompt to forbid file changes because implementation is editing at the same time.
-For runs with a tester, km writes `<scratch>/env.sh`. Both tester briefings require sourcing it
-in the same shell before starting any nested `km`, `cao-server`, `cao` or `tmux`, and forbid writes
-to the conductor's CAO URL and km state directory, including its CAO home, profiles and tmux server.
-The file sets `KAPELLMEISTER_HOME`, `KAPELLMEISTER_STATE_DIR`, `CAO_HOME_DIR` and `TMUX_TMPDIR` to
-separate directories under scratch. It sets `CAO_API_HOST=127.0.0.1`, a free `CAO_API_PORT` distinct
-from 9889 and the conductor's port, and the matching `CAO_API_BASE_URL` for nested km. It unsets
-`TMUX`, `TMUX_PANE` and `CAO_TERMINAL_ID` so nested commands cannot inherit the conductor's server
-or chair identity. The chosen port can become occupied before use; a nested server then reports a
-bind error. If the scratch path is too long for a tmux socket, km warns and sourcing the file fails
-without changing the environment; use a shorter `KAPELLMEISTER_STATE_DIR`. The tester must not start
-these commands if sourcing fails, and must record and stop any nested server's PID.
-Without a tester, gate approval finishes the run as usual; no environment file is written.
+km creates the scratch directory and writes nothing into it. What a tester needs to set up belongs
+in the repository's instruction files and lessons: isolated environments, tools to avoid and how
+to start a second conductor are knowledge about that repository. See the [worked example](#checked-in-lessons)
+in this repository's `AGENTS.md`, "Exercising km live", `scripts/nested-km-env` and
+`.kapellmeister/learned/tester.md`.
+Without a tester, gate approval finishes the run as usual.
 
 After the score ends, km asks the gate for lessons when it has given a verdict, whether or not
 it approved the run. The question is: from this run's plan, reviews and verdicts, what would have
@@ -628,6 +622,19 @@ or direction-changing Unicode characters (format characters and line or paragrap
 and files containing the `<lessons` or `</lessons` section markers (case-insensitive) are skipped
 with the same warning and recorded reason. The old `[run] lessons_budget` key is an error naming
 `learned_budget`; `lessons` and `lessons_timeout` still control gate-proposed lessons.
+
+Lessons are advice for one part, and the budget can cut them. A rule that must hold belongs in the
+repository's agent instruction files, which every chair is told to read and follow. km's own
+repository is a worked example of the split. Developing km with km means a chair may start a
+second conductor beside the one conducting it, so:
+
+- [`AGENTS.md`](AGENTS.md), "Exercising km live", holds the rules for every chair;
+- [`scripts/nested-km-env`](scripts/nested-km-env) is the repository's own tooling that those
+  rules point to;
+- [`.kapellmeister/learned/`](.kapellmeister/learned) holds a line or two per part, such as the
+  order of the tester's scenarios and a pointer back to the rules rather than a copy of them.
+
+What a repository needs its ensemble to know is checked in to that repository.
 
 ## Report
 

@@ -407,6 +407,28 @@ repo. Chairs: `km-claude` (Haiku 5.5), `km-codex` (GPT-6 Luna), `km-copilot` (Ha
     `TestPreflightDoesNotRetryASeatWhenItsLaunchContextExpires` exercises the real client with
     virtual time so CI need not wait 90 s.
 
+27. **CAO's home, bind address and tmux socket all come from the calling environment.**
+    Established on 2026-11-11 by a real isolated run of CAO 2.5.4: a scratch `cao-server` and
+    the installed `cao` CLI, with every home, state directory, API port and tmux socket under
+    one scratch directory, and only recorded server PIDs stopped.
+    - CAO honours `CAO_HOME_DIR`, `CAO_API_HOST` and `CAO_API_PORT`; its installed constants
+      and the scratch server agreed.
+    - `CAO_API_BASE_URL` selects the URL a client such as km calls. It does not choose the port
+      a server binds.
+    - `cao install` writes into the calling shell's `CAO_HOME_DIR`, whatever server URL is in
+      use. With a second server on its own port but the home left shared, an install replaced a
+      healthy `km-claude-high.md` that granted Bash, Read and Write with `allowedTools: []`.
+    - CAO calls `libtmux.Server()` without socket flags, so tmux chooses the socket from the
+      environment. With `TMUX_TMPDIR` set, the nested socket appeared under it.
+    - An inherited `TMUX` makes tmux follow the socket of the server it names, the conductor's,
+      despite a different `TMUX_TMPDIR`. `TMUX` and `TMUX_PANE` must be unset, and
+      `CAO_TERMINAL_ID` too, since it carries the calling chair's identity.
+    - tmux's socket path is `$TMUX_TMPDIR/tmux-<uid>/default`. 100 bytes is below the limit on
+      both macOS and Linux.
+
+    `scripts/nested-km-env` writes an environment file that applies all of this, and
+    `AGENTS.md`, "Exercising km live", states the rules.
+
 ## Implications for the team layer
 
 - km owns the queue of obligations, as decided: a cue is done only when its reply lands in the km
