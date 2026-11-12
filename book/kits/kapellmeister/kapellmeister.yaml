@@ -1,0 +1,113 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+kind: mixin
+displayName: kapellmeister
+description: >-
+  What km needs to conduct its chairs in any repository's sandbox: a released
+  km binary checked against its published SHA-256, tmux, CAO with cao-server
+  started on every boot, and km's base chair profiles installed in CAO for
+  the agents the sandbox has. CAO's defaults launch these chairs with
+  permission prompts off; the sandbox is the boundary.
+
+args:
+  km:
+    default: "v0.0.1-rc.1"
+    pattern: '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
+    description: km release tag
+  kmSha256Arm64:
+    default: "af86ca24ca4605abfe08f9b3befd79e3080e125b1fc5259bfac1e44926c99feb"
+    pattern: '^[0-9a-f]{64}$'
+    description: SHA-256 of the release's linux_arm64 archive
+  kmSha256Amd64:
+    default: "a78f8f039819cd9d49e8c34006a2e9c5bd9954dca203016f6a6e3cb4a8aee605"
+    pattern: '^[0-9a-f]{64}$'
+    description: SHA-256 of the release's linux_amd64 archive
+  cao:
+    default: "2.5.4"
+    pattern: '^[0-9]+\.[0-9]+\.[0-9]+$'
+    description: cli-agent-orchestrator version from PyPI
+
+capabilities:
+  - type: com.docker.sandbox/network-policy@2
+    config:
+      install:
+        allow:
+          - deb.debian.org
+          - dhi.io
+          - security.debian.org
+          - pypi.org
+          - files.pythonhosted.org
+          - github.com
+          - objects.githubusercontent.com
+          - release-assets.githubusercontent.com
+
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      install:
+        - command: |
+            set -eu
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y --no-install-recommends tmux
+          user: "0"
+          description: Install tmux for CAO's terminals
+        - command: |
+            set -eu
+            version="${{ kit.args.km }}"
+            arch="$(dpkg --print-architecture)"
+            case "$arch" in
+              arm64) sum="${{ kit.args.kmSha256Arm64 }}" ;;
+              amd64) sum="${{ kit.args.kmSha256Amd64 }}" ;;
+              *) echo "kapellmeister kit: no km release for $arch" >&2; exit 1 ;;
+            esac
+            name="km_${version}_linux_${arch}"
+            dir="$(mktemp -d)"
+            curl -fsSL -o "$dir/$name.tar.gz" \
+              "https://github.com/jystringfellow/kapellmeister/releases/download/${version}/${name}.tar.gz"
+            echo "$sum  $dir/$name.tar.gz" | sha256sum -c -
+            tar -C "$dir" -xzf "$dir/$name.tar.gz"
+            install -m 0755 "$dir/$name/km" /usr/local/bin/km
+            rm -r "$dir"
+          user: "0"
+          description: Install the km release after checking its SHA-256
+        - command: |
+            set -eu
+            python3 -m venv "$HOME/.local/share/cao"
+            "$HOME/.local/share/cao/bin/pip" install --quiet "cli-agent-orchestrator==${{ kit.args.cao }}"
+            mkdir -p "$HOME/.local/bin"
+            ln -sf "$HOME/.local/share/cao/bin/cao" "$HOME/.local/share/cao/bin/cao-server" "$HOME/.local/bin/"
+          user: "1000"
+          description: Install CAO with pip, since uv aborts on the sandbox's 16 KB pages
+      startup:
+        - command: |
+            set -eu
+            mkdir -p "$HOME/.cache"
+            export TERM=xterm-256color SHELL=/bin/bash LANG=C.UTF-8
+            tmux has-session -t cao-server 2>/dev/null ||
+              tmux new-session -d -s cao-server -c "$HOME" \
+                "$HOME/.local/bin/cao-server >>$HOME/.cache/cao-server.log 2>&1"
+          user: "1000"
+          description: Start cao-server on 127.0.0.1:9889 in tmux, whose server gives CAO's sessions a full terminal environment
+        - command: |
+            set -eu
+            export PATH="$HOME/.local/bin:$PATH"
+            agents=""
+            for agent in claude codex copilot agy; do
+              if command -v "$agent" >/dev/null 2>&1; then
+                agents="$agents $agent"
+              fi
+            done
+            [ -n "$agents" ] || { echo "kapellmeister kit: no agent CLI found; km has no chairs to seat" >&2; exit 0; }
+            config="$HOME/.kapellmeister/config.toml"
+            if [ ! -e "$config" ]; then
+              mkdir -p "$HOME/.kapellmeister"
+              list="$(printf '"%s", ' $agents)"
+              printf '[agents]\navailable = [%s]\n' "${list%, }" > "$config"
+            fi
+            for _ in $(seq 1 60); do
+              curl -s -o /dev/null --noproxy '*' --max-time 1 http://127.0.0.1:9889/ && break
+              sleep 1
+            done
+            km profiles install -replace $agents
+          user: "1000"
+          description: Tell km which agents this sandbox has, unless a km user config exists, and install their base chair profiles in CAO

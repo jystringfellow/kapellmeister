@@ -1,0 +1,8 @@
+name = "kapellmeister"
+description = "km, CAO and km's base chair profiles, installed from a km release"
+kits = ["./kits/kapellmeister"]
+takes = [
+    "~/.kapellmeister/state/runs",
+    "~/.aws/cli-agent-orchestrator/db",
+    "~/.aws/cli-agent-orchestrator/logs",
+]
