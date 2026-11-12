@@ -233,6 +233,9 @@ func TestAFailedReseatDeletesTheNewTerminalKeepsTheOldOneAndLeavesTheRecordUncha
 			fake.behaviours = map[string]behaviour{a.Chair.Profile: b}
 			old := a.Standing.Chairs[2].TerminalID
 			_, err := a.Run(ctx)
+			if problem == "interrupted" {
+				fake.settle()
+			}
 			if err == nil || !strings.Contains(err.Error(), a.Address) || !strings.Contains(err.Error(), want) {
 				t.Fatalf("error = %v", err)
 			}
@@ -311,6 +314,7 @@ func TestAnInterruptedReseatReportsTheBlockerOnTheNewOccupantsScreen(t *testing.
 	fake.onCue = cancel
 	fake.behaviours = map[string]behaviour{a.Chair.Profile: {ignores: true, screenAfterCue: "Hooks\n  ⚠ 1 hook needs review before it can run.\n  t trust all · enter review · esc close"}}
 	_, err := a.Run(ctx)
+	fake.settle()
 	if err == nil || !strings.Contains(err.Error(), "canceled") || !strings.Contains(err.Error(), "hook needs review") {
 		t.Fatalf("error = %v", err)
 	}

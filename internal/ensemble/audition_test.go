@@ -36,6 +36,7 @@ type fakeTerminal struct {
 }
 
 type fakeCAO struct {
+	srv              *httptest.Server
 	t                *testing.T
 	mu               sync.Mutex
 	behaviours       map[string]behaviour
@@ -53,14 +54,13 @@ var cueCommand = regexp.MustCompile(`'([^']+)' cue done -queue '([^']+)' (\S+)`)
 
 func newFakeCAO(t *testing.T, behaviours map[string]behaviour) (*fakeCAO, *cao.Client) {
 	f := &fakeCAO{t: t, behaviours: behaviours, terminals: map[string]*fakeTerminal{}}
-	srv := httptest.NewServer(http.HandlerFunc(f.serve))
-	t.Cleanup(srv.Close)
-	return f, cao.NewClient(srv.URL)
+	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
+	t.Cleanup(f.srv.Close)
+	return f, cao.NewClient(f.srv.URL)
 }
 
 func (f *fakeCAO) settle() {
-	f.mu.Lock()
-	f.mu.Unlock()
+	f.srv.Close()
 }
 
 func (f *fakeCAO) serve(w http.ResponseWriter, r *http.Request) {
