@@ -262,3 +262,11 @@ func (e *TimeoutError) Error() string {
 }
 
 func (e *TimeoutError) Unwrap() error { return context.DeadlineExceeded }
+
+func (c *Client) CreateProfile(ctx context.Context, name, content string) error {
+	return c.call(ctx, c.Timeout, http.MethodPost, "/agents/profiles", map[string]string{"name": name, "content": content}, nil)
+}
+
+func (c *Client) DeleteProfile(ctx context.Context, name string) error {
+	return c.call(ctx, c.Timeout, http.MethodDelete, "/agents/profiles/"+url.PathEscape(name), nil, nil)
+}

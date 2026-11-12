@@ -127,6 +127,16 @@ inherits that mode. km copies `permissionMode`, `allowedTools` and `codexProfile
 and Codex bases when generating effort profiles, and reinstalls existing variants when any of these
 fields differ.
 An unset `allowedTools` stays unset; an explicit empty list stays empty.
+Before an installation, km creates and deletes a temporary `km-probe-*` profile through CAO's API
+and verifies its exact content in the local `CAO_HOME_DIR` (default
+`~/.aws/cli-agent-orchestrator`). It refuses to install if that proof fails, including when the
+server uses a different home or denies the profile write routes. Point `-cao` at the local CAO,
+or set `CAO_HOME_DIR` to the selected server's home. No probe is made when no installation is needed.
+km also refuses to replace an existing local chair profile with different content while another
+unfinished run in `KAPELLMEISTER_STATE_DIR` is alive under `km status`'s process checks. The error
+names the profile and run, and no pending variant is written or installed. A run never blocks
+itself; missing or unchanged profiles remain allowed. Wait for the other run to finish, or use a
+separate CAO home and km state directory for nested work.
 
 When any chair has an unguarded label, km prints one closing note counting those chairs.
 km reports permissions and never refuses to run because of a permission mode. The `blocked:` lines
@@ -355,14 +365,19 @@ work tree; set `KAPELLMEISTER_STATE_DIR` outside any repository. The test prompt
 that write only in repositories the tester created inside scratch, always using `git -C <repository>`.
 The tester must append every long-running process's PID to `<scratch>/pids`, one per line, and stop
 those processes and its sessions before finishing, without touching anyone else's. Both tester
-briefings name the conductor's process ID and forbid signalling or killing it, or any process
-found by name (`pgrep`, `pkill`, `killall`, `ps | grep`). The tester may signal only processes it
-started itself and recorded in `<scratch>/pids`. After every
+briefings give per-run facts: the conductor's process ID, its orchestrator URL and state directory,
+that none is part of what is being tested and none may be signalled, stopped or changed, and that
+the tester may signal only processes it started itself and listed in `<scratch>/pids`. After every
 test step, including failure, timeout or interruption, km reports each distinct listed process still alive as
 `  left running: pid <pid> (<command>)` and records its PID and command in `left-running` telemetry.
 km never signals these processes. It silently skips non-regular `pids` files (including FIFOs) and
 files larger than 1 MiB. The concurrent test-plan step
 relies on its prompt to forbid file changes because implementation is editing at the same time.
+km creates the scratch directory and writes nothing into it. What a tester needs to set up belongs
+in the repository's instruction files and lessons: isolated environments, tools to avoid and how
+to start a second conductor are knowledge about that repository. See the [worked example](#checked-in-lessons)
+in this repository's `AGENTS.md`, "Exercising km live", `scripts/nested-km-env` and
+`.kapellmeister/learned/tester.md`.
 Without a tester, gate approval finishes the run as usual.
 
 After the score ends, km asks the gate for lessons when it has given a verdict, whether or not

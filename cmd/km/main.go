@@ -367,7 +367,7 @@ func runCommand(args []string) error {
 	sum, err := runEnsemble(ctx, ensembleRun{
 		RunID: runID, StateDir: runDir, Ensemble: *ensemble, BaseBranch: baseBranch, Meter: loop.NewLogMeter(),
 		Config: loop.Config{
-			ScratchDir: scratch, RunID: runID, Task: text, Worktree: wt, Chairs: seated, GateWhen: s.GateWhen,
+			ScratchDir: scratch, CAOURL: s.CAOURL, StateDir: loop.StateDir(), RunID: runID, Task: text, Worktree: wt, Chairs: seated, GateWhen: s.GateWhen,
 			Lessons: s.Lessons, LessonsTimeout: s.LessonsTimeout,
 			LearnedBudget: s.LearnedBudget, BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, CheckCommand: checkCmd, Policy: &policy,
 		},
@@ -573,6 +573,8 @@ func ensureProfiles(ctx context.Context, client *cao.Client, p *loop.Policy, ste
 	}
 	dir := filepath.Join(loop.StateDir(), "profiles")
 	bases := map[string]cao.ProfilePermissions{}
+	type pendingProfile struct{ name, provider, base, source string }
+	var pending []pendingProfile
 	for _, v := range variants {
 		if _, err := loop.EffortProfileSource(v.Provider, v.Base, v.Effort, loop.Permissions{}); err != nil {
 			if have[v.Name()] {
@@ -598,20 +600,38 @@ func ensureProfiles(ctx context.Context, client *cao.Client, p *loop.Policy, ste
 		if err != nil {
 			return err
 		}
+		pending = append(pending, pendingProfile{v.Name(), v.Provider, v.Base, source})
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+	home, err := caoHome()
+	if err != nil {
+		return err
+	}
+	if err := proveCAOHome(ctx, client, home, pending[0].name); err != nil {
+		return err
+	}
+	for _, v := range pending {
+		if err := guardProfile(home, v.name, v.source); err != nil {
+			return err
+		}
+	}
+	for _, v := range pending {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
-		path := filepath.Join(dir, v.Name()+".md")
-		if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		path := filepath.Join(dir, v.name+".md")
+		if err := os.WriteFile(path, []byte(v.source), 0o644); err != nil {
 			return err
 		}
-		if out, err := exec.CommandContext(ctx, "cao", "install", path, "--provider", v.Provider).CombinedOutput(); err != nil {
+		if out, err := exec.CommandContext(ctx, "cao", "install", path, "--provider", v.provider).CombinedOutput(); err != nil {
 			return fmt.Errorf("cao install %s: %w: %s", path, err, out)
 		}
-		if have[v.Name()] {
-			fmt.Printf("→ reinstalled CAO profile %s: permissions now match %s\n", v.Name(), v.Base)
+		if have[v.name] {
+			fmt.Printf("→ reinstalled CAO profile %s: permissions now match %s\n", v.name, v.base)
 		} else {
-			fmt.Printf("→ installed CAO profile %s from %s\n", v.Name(), path)
+			fmt.Printf("→ installed CAO profile %s from %s\n", v.name, path)
 		}
 	}
 	return nil

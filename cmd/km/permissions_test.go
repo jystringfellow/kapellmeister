@@ -25,6 +25,9 @@ func permissionCAO(t *testing.T, profiles map[string]cao.ProfilePermissions, loa
 	next := 0
 	closed := regexp.MustCompile(`'([^']+)' cue done -queue '([^']+)' (\S+)`)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if profileProbe(w, r, os.Getenv("CAO_HOME_DIR")) {
+			return
+		}
 		mu.Lock()
 		defer mu.Unlock()
 		switch {
@@ -70,6 +73,7 @@ func permissionCAO(t *testing.T, profiles map[string]cao.ProfilePermissions, loa
 
 func fakeProfileInstall(t *testing.T) (string, string) {
 	t.Helper()
+	t.Setenv("CAO_HOME_DIR", t.TempDir())
 	dir := t.TempDir()
 	args := filepath.Join(dir, "arguments")
 	installed := filepath.Join(dir, "installed")
@@ -309,6 +313,9 @@ func TestEnsureProfilesReadsEachBaseOnceForAllItsEfforts(t *testing.T) {
 	reads := map[string]int{}
 	var mu sync.Mutex
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if profileProbe(w, r, os.Getenv("CAO_HOME_DIR")) {
+			return
+		}
 		switch r.URL.Path {
 		case "/agents/profiles":
 			fmt.Fprint(w, `[{"name":"km-claude-medium","loadable":true},{"name":"km-claude-high","loadable":true},{"name":"km-claude-xhigh","loadable":true}]`)
@@ -413,6 +420,9 @@ func TestEnsureProfilesKeepsAndSynchronizesTheBasesNamedCodexProfile(t *testing.
 				baseProfile = ""
 			}
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if profileProbe(w, r, os.Getenv("CAO_HOME_DIR")) {
+					return
+				}
 				switch r.URL.Path {
 				case "/agents/profiles":
 					fmt.Fprintf(w, `[{"name":"km-codex-high","loadable":%t}]`, variant != "missing")
