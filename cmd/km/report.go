@@ -55,6 +55,7 @@ type reportTotals struct {
 }
 
 type runReport struct {
+	Searched         []string            `json:"searched,omitempty"`
 	Parts            *reportParts        `json:"parts,omitempty"`
 	NotSearched      []reportNotSearched `json:"not_searched"`
 	NotSearchedTotal int                 `json:"not_searched_total"`
@@ -91,11 +92,15 @@ func reportCommand(args []string, stdout, stderr io.Writer) error {
 		}
 	}
 	defaultDir := len(dirs) == 0
-	if defaultDir {
-		dirs = []string{filepath.Join(loop.StateDir(), "runs")}
-	}
-	runs, scan, err := findRuns(dirs, defaultDir, *maxDepth, *maxEntries, false, *withParts)
+	dirs, configured, source, err := recordDirs(dirs)
 	if err != nil {
+		return fmt.Errorf("report: %s", plain(err.Error()))
+	}
+	runs, scan, err := findRuns(dirs, defaultDir && !configured, *maxDepth, *maxEntries, false, *withParts)
+	if err != nil {
+		if configured {
+			err = fmt.Errorf("%w (from [report] dirs in %s)", err, source)
+		}
 		return fmt.Errorf("report: %s", plain(err.Error()))
 	}
 	for _, diagnostic := range scan.diagnostics {
@@ -105,6 +110,9 @@ func reportCommand(args []string, stdout, stderr io.Writer) error {
 		Runs:        []reportRun{},
 		NotSearched: scan.notSearched, NotSearchedTotal: scan.notSearchedTotal,
 		Totals: reportTotals{EnsembleUsage: map[string]reportUsageTotal{}, RepositoryUsage: map[string]reportUsageTotal{}, Outcomes: map[string]int{}, Repositories: map[string]int{}, Ensembles: map[string]int{}},
+	}
+	if configured {
+		report.Searched = dirs
 	}
 	for _, run := range runs {
 		if set["since"] && (run.Started == nil || run.Started.Before(since)) {
@@ -481,6 +489,9 @@ func reportCell(text string, width int) string {
 }
 
 func printReportNotSearched(w io.Writer, report runReport) error {
+	if err := printSearchedDirs(w, report.Searched); err != nil {
+		return err
+	}
 	if report.NotSearchedTotal == 0 {
 		return nil
 	}

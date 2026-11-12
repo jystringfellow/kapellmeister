@@ -306,6 +306,7 @@ func TestReportRejectsNonregularRecordsWithoutBlocking(t *testing.T) {
 }
 
 func TestReportReadsTheStateDirectoryRunsWhenGivenNoDirectory(t *testing.T) {
+	t.Setenv(loop.HomeEnv, t.TempDir())
 	state := recordRoot(t)
 	t.Setenv(loop.StateEnv, state)
 	if out, _ := captureReport(t); out != "no runs found\n" {

@@ -6,13 +6,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
-
-	"github.com/jystringfellow/kapellmeister/internal/loop"
 )
 
 type statusStep struct {
@@ -54,11 +51,15 @@ func statusAt(args []string, stdout, stderr io.Writer, now time.Time) error {
 		return errors.New("status: -max-depth must be at least 1; -max-entries must be between 1 and 16777216")
 	}
 	defaultDir := len(dirs) == 0
-	if defaultDir {
-		dirs = []string{filepath.Join(loop.StateDir(), "runs")}
-	}
-	found, scan, err := findRuns(dirs, defaultDir, *maxDepth, *maxEntries, true, false)
+	dirs, configured, source, err := recordDirs(dirs)
 	if err != nil {
+		return fmt.Errorf("status: %s", plain(err.Error()))
+	}
+	found, scan, err := findRuns(dirs, defaultDir && !configured, *maxDepth, *maxEntries, true, false)
+	if err != nil {
+		if configured {
+			err = fmt.Errorf("%w (from [report] dirs in %s)", err, source)
+		}
 		return fmt.Errorf("status: %s", plain(err.Error()))
 	}
 	for _, diagnostic := range scan.diagnostics {
@@ -93,16 +94,24 @@ func statusAt(args []string, stdout, stderr io.Writer, now time.Time) error {
 		}
 		return a.RunID < b.RunID
 	})
+	var searched []string
+	if configured {
+		searched = dirs
+	}
 	if *asJSON {
 		return printReportJSON(stdout, struct {
-			Runs []statusRun `json:"runs"`
-		}{runs})
+			Runs     []statusRun `json:"runs"`
+			Searched []string    `json:"searched,omitempty"`
+		}{runs, searched})
 	}
 	if len(runs) == 0 && scan.notSearchedTotal > 0 {
-		_, err := fmt.Fprintf(stdout, "no runs in progress found; %d directories were not searched\n", scan.notSearchedTotal)
+		if _, err := fmt.Fprintf(stdout, "no runs in progress found; %d directories were not searched\n", scan.notSearchedTotal); err != nil {
+			return err
+		}
+	} else if err := printStatus(stdout, runs, now); err != nil {
 		return err
 	}
-	return printStatus(stdout, runs, now)
+	return printSearchedDirs(stdout, searched)
 }
 
 func runLiveness(state runState) string {
