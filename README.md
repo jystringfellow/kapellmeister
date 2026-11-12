@@ -791,6 +791,8 @@ following a symlink even if a directory is renamed during the report.
 The command only reads the supplied directories.
 
 `TOKENS` shows recorded input/output usage in compact form (`1.2M/340k`); input excludes cache.
+New steps can measure Claude Code, Codex, Copilot CLI and Antigravity; report uses the usage saved
+with the run, so adding a reader does not change reports for earlier runs.
 Long table cells are shortened with `…`; JSON keeps their full values. Usage comes only from
 `result.json`, and is `unknown` for older or unfinished runs, unmeasured usage, missing counters,
 wrong types or counters outside 0 through 2^36. Measured zero usage remains zero. A partly measured
@@ -894,12 +896,14 @@ its usage window, including waiting for an earlier step on the same chair. Queue
 watched as running, and the wait stops when the run is cancelled. A step cancelled while queued
 records its error and queue time with zero duration and no usage. `reply_wait_ms` remains separate.
 
-Steps also record `usage` from Claude Code and Codex session logs when readable. A known usage has
+Steps also record `usage` from Claude Code, Codex, Copilot CLI and Antigravity session logs when
+readable. A known usage has
 `known: true`, separate `input_tokens`, `output_tokens`, `cache_write_tokens` and `cache_read_tokens`,
 and a `models` map with the same counters for each model named in the log. Claude input excludes
 cache reads and writes. Codex input has cached reads subtracted; its reported cache writes are kept
 separate without subtracting them from input (the real logs inspected reported zero cache writes).
-Output includes reasoning tokens. km records tokens, without converting them to money.
+Claude, Codex and Copilot CLI output counters include reasoning tokens. km records tokens, without
+converting them to money.
 
 Usage covers complete log lines appended during one step attempt, including the reply wait. Earlier
 steps on a reused occupant are excluded, and each nudge has its own usage. Windows for steps sharing
@@ -916,8 +920,40 @@ they need no reply-path match themselves. Existing subagent content is excluded,
 start at byte zero. Metadata files are ignored. Parent and subagent message ids are remembered only
 when the whole window has known usage; malformed subagent usage makes the window unknown.
 
-Unavailable usage has `known: false` and a `reason`: `unsupported-provider` (Copilot CLI and
-Antigravity), `no-log`, `ambiguous-log` (no unique growing session log names the reply path, including a single
+Copilot CLI logs are under `COPILOT_HOME` (default `~/.copilot`), at
+`session-state/<session-id>/events.jsonl`. The first `session.start` event's `data.context.cwd`
+must match the worktree; `workspace.yaml` beside the log confirmed that directory in the sessions
+examined. Copilot CLI 1.0.109 was checked in both interactive and prompt mode, including a resumed
+session. Each `session.usage_record` counts one request, including subagent records in the same log.
+km subtracts `cacheReadTokens` and `cacheWriteTokens` from `inputTokens` and records both cache counts
+separately; `outputTokens` is output. `responseModel` names the model, falling back to `model`.
+Request ids are deduplicated within the window, scoped by `accounting.sourceSessionId`;
+`accounting.usageId` falls back to `apiCallId`. Cumulative `session.usage_checkpoint` and
+`session.shutdown` totals are ignored, including on resume, so the same requests are not counted twice.
+Only requests recorded as `session.usage_record` are counted; background title requests without
+such records are excluded. `reasoningTokens` is a subset of `outputTokens`, so km keeps output
+unchanged and does not add reasoning again. A real 1.0.109 session recorded 362 output tokens across
+three requests, including 45 reasoning tokens; its footer and shutdown output total were both 362.
+Missing or invalid request counters also yield `no-usage`. A real 1.0.86 session had cumulative
+shutdown tokens but no per-request usage records, so steps on that format remain `no-usage`.
+
+Antigravity CLI (`agy`) 1.5.6 was checked with a prompt-mode conversation and its resumed conversation.
+Its append-only `~/.gemini/antigravity-cli/brain/<conversation-id>/.system_generated/logs/transcript.jsonl`
+records per-request `PLANNER_RESPONSE` lines with status `DONE`. km sums `input_tokens`,
+`output_tokens` and `cache_read_tokens`, deduplicated by `step_index` within the window. Input already
+excludes cache reads; the sums match the CLI's printed conversation totals, which are cumulative on
+resume. The transcript has no working directory, so attribution requires the unique reply-path match
+in appended lines. It records neither cache writes (km's counter is zero by absence) nor separate
+thinking tokens (no established separate counterpart); km keeps the recorded output unchanged and
+does not add the CLI stdout's thinking count. The transcript names no model, so its model is `unknown`.
+Antigravity subagents, transcript rollover into chunks, and nonzero cache writes were not examined.
+
+For scoring-stage retention, add `~/.copilot/session-state` and
+`~/.gemini/antigravity-cli/brain` to your own `takes`. These are the session directories read by km;
+login and credential files are not needed.
+
+Unavailable usage has `known: false` and a `reason`: `unsupported-provider` (no reader for the
+provider), `no-log`, `ambiguous-log` (no unique growing session log names the reply path, including a single
 log without a match), `unreadable-log` or `no-usage`. Unknown usage omits token
 counters; it never means zero. Missing, unreadable, truncated, malformed or oversized logs never
 fail the step. Reads are limited to 64 MiB of growth per log and 4 MiB per line; partial last lines

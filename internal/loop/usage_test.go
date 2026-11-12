@@ -279,8 +279,8 @@ func TestWhenSeveralLogsGrowAndNoneNamesTheReplyPathUsageIsUnknownAsAmbiguous(t 
 	requireUnknown(t, close(), "ambiguous-log")
 }
 
-func TestACopilotOrAntigravityStepRecordsUnknownUsageNotZero(t *testing.T) {
-	for _, provider := range []string{"copilot", "copilot_cli", "antigravity", "antigravity_cli"} {
+func TestAStepOnAProviderWithoutAUsageReaderRecordsUnknownNotZero(t *testing.T) {
+	for _, provider := range []string{"copilot", "antigravity", "gemini_cli"} {
 		t.Run(provider, func(t *testing.T) {
 			m, s, _ := usageLog(t, provider)
 			requireUnknown(t, openUsage(t, m, s)(), "unsupported-provider")

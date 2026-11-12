@@ -1,0 +1,4 @@
+{"type":"session.start","data":{"context":{"cwd":"worktree-path"}}}
+{"type":"user.message","data":{"content":"hello reply-path"}}
+{"type":"session.usage_checkpoint","data":{"totalPremiumRequests":1}}
+{"type":"session.shutdown","data":{"modelMetrics":{"claude-sonnet-5.5":{"usage":{"inputTokens":105507,"outputTokens":153,"cacheReadTokens":52688,"cacheWriteTokens":52813,"reasoningTokens":0}}},"totalPremiumRequests":1}}

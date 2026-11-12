@@ -25,6 +25,18 @@ func (f usageStepper) Run(ctx context.Context, s loop.Step) (loop.StepResult, er
 	case "claude_code":
 		path = filepath.Join(f.meter.ClaudeHome, "projects", regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(s.Dir, "-"), "session.jsonl")
 		lines = []byte(`{"type":"assistant","message":{"id":"` + s.Name + `","model":"claude-haiku-5-5","usage":{"input_tokens":2,"output_tokens":3,"cache_creation_input_tokens":4,"cache_read_input_tokens":5}}}` + "\n")
+	case "copilot_cli", "antigravity_cli":
+		var err error
+		lines, err = os.ReadFile(filepath.Join("..", "..", "internal", "loop", "testdata", s.Chair.Provider+"_usage.jsonl"))
+		if err != nil {
+			return loop.StepResult{}, err
+		}
+		lines = []byte(strings.ReplaceAll(strings.ReplaceAll(string(lines), "worktree-path", s.Dir), "reply-path", s.ReplyPath))
+		if s.Chair.Provider == "copilot_cli" {
+			path = filepath.Join(f.meter.CopilotHome, "session-state", s.Name, "events.jsonl")
+		} else {
+			path = filepath.Join(f.meter.AntigravityHome, "brain", s.Name, ".system_generated", "logs", "transcript.jsonl")
+		}
 	case "codex":
 		path = filepath.Join(f.meter.CodexHome, "sessions", time.Now().Format("2006/01/02"), "rollout-"+s.Name+".jsonl")
 		meta, _ := json.Marshal(map[string]any{"type": "session_meta", "payload": map[string]string{"cwd": s.Dir}})
@@ -117,5 +129,48 @@ func TestResultJSONOmitsUsageWhenNoMeterIsConfigured(t *testing.T) {
 	standing := playStanding(t)
 	if value, ok := recordedResult(t, recordRun(t, standing.Worktree, "", plainChairs()))["usage"]; ok {
 		t.Fatalf("usage = %v", value)
+	}
+}
+
+func TestRunRecordsCopilotAndAntigravityUsageInTelemetryAndResultJSON(t *testing.T) {
+	standing := playStanding(t)
+	meter := &loop.LogMeter{CopilotHome: t.TempDir(), AntigravityHome: t.TempDir()}
+	copilot := loop.Chair{Provider: "copilot_cli"}
+	antigravity := loop.Chair{Provider: "antigravity_cli"}
+	dir := filepath.Join(loop.StateDir(), "runs", "other-usage")
+	sum, err := runEnsemble(context.Background(), ensembleRun{RunID: "other-usage", StateDir: dir, Meter: meter, Stepper: usageStepper{meter: meter}, Progress: io.Discard, Config: loop.Config{RunID: "other-usage", Worktree: standing.Worktree, Task: "usage", MaxRounds: 1, ReplyGrace: time.Millisecond, Chairs: loop.Chairs{Planner: copilot, Implementer: copilot, Reviewers: []loop.Chair{antigravity}, Gate: antigravity, Classifier: copilot}}})
+	if err != nil || sum.Outcome != loop.Approved {
+		t.Fatalf("%+v %v", sum, err)
+	}
+	steps := recordedSteps(t, dir)
+	if len(steps) != 5 {
+		t.Fatalf("steps = %d", len(steps))
+	}
+	var want loop.Tokens
+	for _, rec := range steps {
+		tokens := loop.Tokens{InputTokens: 10, OutputTokens: 114, CacheWriteTokens: 27276, CacheReadTokens: 51947}
+		if rec.Chair.Provider == "antigravity_cli" {
+			tokens = loop.Tokens{InputTokens: 13089, OutputTokens: 100, CacheReadTokens: 13276}
+		}
+		if rec.Usage == nil || !rec.Usage.Known || rec.Usage.Tokens == nil || *rec.Usage.Tokens != tokens {
+			t.Fatalf("%s usage = %+v", rec.Step, rec.Usage)
+		}
+		want.InputTokens += tokens.InputTokens
+		want.OutputTokens += tokens.OutputTokens
+		want.CacheWriteTokens += tokens.CacheWriteTokens
+		want.CacheReadTokens += tokens.CacheReadTokens
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "result.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Usage *loop.Usage `json:"usage"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Usage == nil || !result.Usage.Known || result.Usage.Tokens == nil || *result.Usage.Tokens != want || result.Usage.UnknownSteps != 0 || len(result.Usage.Models) != 2 {
+		t.Fatalf("total = %+v, want %+v", result.Usage, want)
 	}
 }

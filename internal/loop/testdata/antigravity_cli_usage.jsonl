@@ -1,0 +1,7 @@
+{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","content":"hello reply-path"}
+{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","input_tokens":8616,"cache_read_tokens":0,"output_tokens":55}
+{"step_index":2,"source":"MODEL","type":"GENERIC","status":"DONE"}
+{"step_index":3,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","input_tokens":2201,"cache_read_tokens":6562,"output_tokens":24}
+{"step_index":4,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","content":"hello reply-path"}
+{"step_index":5,"source":"SYSTEM","type":"SYSTEM_MESSAGE","status":"DONE"}
+{"step_index":6,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","input_tokens":2272,"cache_read_tokens":6714,"output_tokens":21}

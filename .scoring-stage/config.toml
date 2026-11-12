@@ -4,6 +4,8 @@ takes = [
     "~/.kapellmeister/state/runs",
     "~/.claude/projects",
     "~/.codex/sessions",
+    "~/.copilot/session-state",
+    "~/.gemini/antigravity-cli/brain",
     "~/.aws/cli-agent-orchestrator/db",
     "~/.aws/cli-agent-orchestrator/logs",
 ]
