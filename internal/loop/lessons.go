@@ -192,7 +192,7 @@ func (e *Engine) proposeLessons(ctx context.Context, res Result) (lessons []Less
 	}
 	path := e.rel("lessons-reply.json")
 	_, stepErr := e.step(ctx, Step{Name: "lessons", Round: res.Rounds, Chair: e.Config.Chairs.Gate, ReplyPath: path, Timeout: limit, FreshTerminal: true,
-		Prompt: lessonsPrompt(e.Config.Task, res, e.lessonFiles(), path)})
+		Prompt: lessonsPrompt(e.Config.Task, res, e.lessonFiles(), path, e.seatedParts())})
 	after, err := e.treeState()
 	if err != nil {
 		report.Reason = "lessons step failed: could not inspect the worktree"
@@ -254,4 +254,12 @@ func (e *Engine) lessonFiles() []string {
 		}
 	}
 	return files
+}
+
+func (e *Engine) seatedParts() []string {
+	parts := slices.Clone(ChairRoles)
+	if e.Config.Chairs.Tester != nil {
+		parts = append(parts, OptionalRoles...)
+	}
+	return parts
 }

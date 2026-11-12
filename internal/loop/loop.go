@@ -343,7 +343,7 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 		implementerChair, _ = e.resolve("implement", cfg.Chairs.Implementer)
 		out, err := e.step(ctx, Step{
 			Name: "implement", Round: round, Chair: cfg.Chairs.Implementer,
-			Prompt:    implementPrompt(cfg.Task, plan, summary, cfg.CheckCommand, feedback, feedbackGate, feedbackTest, e.lessonsFor("implement", cfg.Chairs.Implementer)),
+			Prompt:    implementPrompt(cfg.Task, plan, summary, cfg.CheckCommand, cfg.VerifyCommand, feedback, feedbackGate, feedbackTest, e.lessonsFor("implement", cfg.Chairs.Implementer)),
 			ReplyPath: summary, KeepTerminal: true, ReuseTerminal: implementer,
 		})
 		if out.TerminalID != "" {
