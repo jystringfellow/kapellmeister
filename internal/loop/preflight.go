@@ -215,7 +215,7 @@ func preflightChair(ctx context.Context, stepper interface {
 	start := time.Now()
 	booting.Add(1)
 	// CAO returns the owned session only after launch completes.
-	seatCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 90*time.Second)
+	seatCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), seatTimeout(timeout))
 	seat, err := stepper.Seat(seatCtx, name, chair, worktree)
 	cancel()
 	booting.Add(-1)
@@ -349,4 +349,8 @@ func transientSeatFailure(err error, name string) bool {
 		return false
 	}
 	return httpErr.Status >= 500 && httpErr.Status < 600 || httpErr.Status == 400 && strings.Contains(httpErr.Body, "Session '"+name+"' not found")
+}
+
+func seatTimeout(preflight time.Duration) time.Duration {
+	return max(preflight*3/8, 10*time.Second)
 }

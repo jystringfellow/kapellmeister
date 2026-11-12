@@ -56,7 +56,7 @@ func runBaseFixture(t *testing.T, singleBranch bool) baseFixture {
 	return baseFixture{repo: repo, origin: origin, main: main, stack: stack, tmp: tmp, args: args, cao: f}
 }
 
-func requireRunBase(t *testing.T, f baseFixture, branch, commit string, extra ...string) {
+func requireRunBase(t *testing.T, f baseFixture, branch, commit string, extra ...string) string {
 	t.Helper()
 	out, err := captureStdout(t, func() error { return runCommand(append(f.args, extra...)) })
 	if err != nil {
@@ -82,6 +82,7 @@ func requireRunBase(t *testing.T, f baseFixture, branch, commit string, extra ..
 	if branch != "main" && commit == f.main {
 		t.Error("explicit base resolved to the default branch")
 	}
+	return out
 }
 
 func TestRunWithoutBaseStartsTheWorktreeFromTheRemotesDefaultBranch(t *testing.T) {
@@ -212,7 +213,7 @@ func TestAResultWrittenBeforeBaseBranchesWereRecordedStillReads(t *testing.T) {
 
 func TestAFailedWorktreeCreationLeavesNoTemporaryDirectory(t *testing.T) {
 	f := runBaseFixture(t, false)
-	if _, err := addWorktree(f.repo, "missing-commit"); err == nil {
+	if _, err := addWorktree(f.repo, "missing-commit", ""); err == nil {
 		t.Fatal("missing commit accepted")
 	}
 	requireNoBaseRun(t, f)
