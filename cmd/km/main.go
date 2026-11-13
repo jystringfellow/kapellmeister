@@ -28,6 +28,7 @@ import (
 
 const usage = `usage:
   km init [-worktree DIR] [-dry-run] [-json] [-verify CMD] [-check CMD] [-no-run] [-timeout D]   write config and an unfinished verify, or wrap -verify CMD
+  km tune verify [-worktree DIR] [-detach] [-timeout D] [-json] [-again] [-guide]   write and prove verify
   km prove [-worktree DIR] [-break PATCH]... [-timeout D] [-json]   prove verify on clean copies and broken code
   km run -repo DIR [-base BRANCH] (-task TEXT | -task-file FILE) [-ensemble NAME] [-detach] [flags]   one ensemble
   km audition -worktree DIR [-ensemble NAME] [-keep]       boot the ensemble, cue every chair once, tear down
@@ -57,6 +58,8 @@ func execute(args []string, stderr io.Writer) int {
 	}
 	var err error
 	switch args[0] {
+	case "tune":
+		err = tuneCommand(args[1:], os.Stdout, stderr)
 	case "prove":
 		err = proveAt(args[1:], os.Stdout, stderr)
 	case "init":
@@ -901,20 +904,25 @@ func firstNonEmpty(values ...string) string {
 }
 
 type ensembleRun struct {
-	Meter      loop.UsageMeter
-	BaseBranch string
-	Ensemble   string
-	Watcher    loop.Watcher
-	Command    string
-	RunID      string
-	StateDir   string
-	Config     loop.Config
-	Stepper    loop.Stepper
-	Verify     loop.Verifier
-	Progress   io.Writer
+	Tune         *loop.TuneHooks
+	TuneSummary  *tuneSummary
+	TuneCheckout string
+	Meter        loop.UsageMeter
+	BaseBranch   string
+	Ensemble     string
+	Watcher      loop.Watcher
+	Command      string
+	RunID        string
+	StateDir     string
+	Config       loop.Config
+	Stepper      loop.Stepper
+	Verify       loop.Verifier
+	Progress     io.Writer
 }
 
 type ensembleSummary struct {
+	Command string       `json:"command,omitempty"`
+	Tune    *tuneSummary `json:"tune,omitempty"`
 	loop.Result
 	DurationMS int64  `json:"duration_ms"`
 	DiffStat   string `json:"diff_stat"`
@@ -972,6 +980,9 @@ func runEnsemble(ctx context.Context, p ensembleRun) (sum ensembleSummary, runEr
 			}
 			res.Outcome, res.Reason = loop.Failed, reason
 			sum = ensembleSummary{Result: res, DurationMS: time.Since(start).Milliseconds(), Ensemble: p.Ensemble, Repository: repository, Base: base, BaseBranch: p.BaseBranch}
+			if p.Tune != nil {
+				sum.Command, sum.Tune = "tune verify", p.TuneSummary
+			}
 			if err := writeJSON(filepath.Join(p.StateDir, "result.json"), sum); err != nil {
 				fmt.Fprintln(os.Stderr, "km: writing result.json:", err)
 			}
@@ -1005,7 +1016,11 @@ func runEnsemble(ctx context.Context, p ensembleRun) (sum ensembleSummary, runEr
 		state.Round, state.Playing, state.Updated = round, active, time.Now().UTC()
 		publish()
 	}
-	res, err = eng.Run(ctx)
+	if p.Tune != nil {
+		res, err = eng.Tune(ctx, *p.Tune)
+	} else {
+		res, err = eng.Run(ctx)
+	}
 	if err != nil {
 		return ensembleSummary{}, err
 	}
@@ -1033,6 +1048,17 @@ func runEnsemble(ctx context.Context, p ensembleRun) (sum ensembleSummary, runEr
 	sum = ensembleSummary{Result: res, DurationMS: time.Since(start).Milliseconds(), DiffStat: stat, Ensemble: p.Ensemble, Repository: repository, Base: base, BaseBranch: p.BaseBranch}
 	if head != base {
 		sum.Head, sum.HeadMoved = head, true
+	}
+	if p.Tune != nil {
+		sum.Command, sum.Tune = "tune verify", p.TuneSummary
+		if sum.Outcome == loop.Approved {
+			sum.Worktree = p.TuneCheckout
+			sum.RunDir = filepath.Join(p.StateDir, "replies")
+			sum.DiffStat, err = gitDiffStat(p.TuneCheckout, base)
+			if err != nil {
+				return sum, err
+			}
+		}
 	}
 	if err := writeJSON(filepath.Join(p.StateDir, "result.json"), sum); err != nil {
 		return sum, err
@@ -1092,6 +1118,12 @@ var errNotApproved = errors.New("run was not approved")
 
 func finishRun(w io.Writer, sum ensembleSummary) error {
 	printOutcome(w, sum)
+	if sum.Tune != nil {
+		printTune(w, sum)
+		if sum.Outcome != loop.Approved {
+			fmt.Fprintf(w, "  the worktree was kept at %s\n", sum.Worktree)
+		}
+	}
 	if sum.Worktree != "" && (sum.Outcome == loop.Approved || sum.DiffStat != "" || sum.HeadMoved) {
 		fmt.Fprintf(w, "  changes   %s\n", sum.Worktree)
 	}

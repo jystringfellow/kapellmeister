@@ -47,6 +47,7 @@ installing the base chair profiles below.
 
 ```sh
 km init [-worktree DIR] [-dry-run] [-json] [-verify CMD] [-check CMD] [-no-run] [-timeout D]  # write config and an unfinished verify script
+km tune verify [-worktree DIR] [-detach] [-timeout D] [-json] [-again] [-guide]  # write and prove verify
 km prove [-worktree DIR] [-break PATCH]... [-timeout D] [-json]  # prove verify on clean copies and broken code
 km run -repo ~/Code/app [-base BRANCH] -task-file task.md [-ensemble thorough] [-detach]  # one ensemble
 km audition -worktree DIR [-ensemble thorough]   # can this ensemble play? no real work
@@ -67,9 +68,12 @@ km version                                       # print the version
 
 To start a repository, run `km init` in its checkout (or `km init -worktree DIR`). It writes
 repository configuration pointing to `scripts/verify` and an executable, unfinished verify script.
-Write the repository's verify command in that script and remove its unfinished marker, then use
-`km prove -break PATCH` to check it on clean copies and broken code. With `-verify CMD`, init wraps
-the supplied command and runs it once. Neither command needs CAO, user configuration or agents.
+Then run `km tune verify`: your ensemble reads the repository's CI and test instructions, writes
+verify and proves it with deliberate source and test breaks. The result stays uncommitted for you
+to read. This needs one configured, installed agent; two chairs write and review, and one agent
+can play both. `km tune verify -guide` prints the same procedure to follow by hand.
+With `-verify CMD`, init wraps the supplied command and runs it once. Init and the manual route,
+`km prove -break PATCH`, need no CAO or agents.
 Review and commit the setup, then use `km preflight -worktree .` and
 `km run -repo . -task-file task.md`. Preview exact contents with `km init -dry-run`.
 
@@ -849,6 +853,58 @@ for that invocation when existing setup is kept; `-check CMD` adds a focused com
 and `-dry-run` prints exact contents without writing or running anything. `-json` reports the
 same file decisions, hints, verify result and next steps as one object, including on failure.
 
+### Tuning verify
+
+```sh
+km init
+km tune verify [-worktree DIR] [-detach] [-timeout D] [-json] [-again]
+km tune verify -guide
+```
+
+Tune uses the implementer and the first reviewer from your configured chairs, with the same
+available-agent defaults as run. Override them with `-implementer SPEC` and `-reviewer SPEC`;
+`-cao URL` selects CAO. No planner, gate or classifier is needed. Before agent work, tune checks
+configuration, CAO, installed base and effort profiles, then seats each distinct chair and asks
+it to answer. A failure stops there and names one remedy. Tune never installs profiles or edits
+your user configuration. For a missing built-in base, use the reported `km profiles install AGENT`
+command; for a missing effort variant, set `effort = "inherit"` on the selected provider tier.
+`[run] preflight_timeout = "0s"` skips seating checks, as with run.
+
+The checkout must have a HEAD commit and the setup from init. An already written verify is
+refused unless `-again` is given. An executable `.kapellmeister/verify` hook must first be moved
+to `scripts/verify` with `[test] verify` updated. Tune starts with the failing unfinished stub;
+`km run` still refuses a failing baseline.
+
+The writer follows the guide, keeps the bounded-output wrapper, explains checks omitted because
+they need services, and writes at least two break patches outside the checkout: one breaks
+covered source code and one breaks a test expectation. Work takes place in a temporary detached
+worktree. Changes to any checkout file besides `scripts/verify` and `.kapellmeister/config.toml`
+are refused. km itself runs `km prove` with those patches. Only a proved result followed by the
+reviewer's approval can be approved; a chair's opinion alone cannot approve it.
+
+Tune uses `[run] rounds` and `[run] timeout`; `-timeout D` changes each agent step's limit.
+Each verification in prove keeps its `10m` limit. On approval, only the two setup files are copied
+back, and the temporary worktree is removed. If setup changed while tune ran, copy-back is
+refused. Failed worktrees are kept for inspection. Nothing is staged or committed. The summary
+shows the chosen command, omissions and reasons, both clean durations and each break result.
+Break patches live in the run record. `km status`, `km wait` and `km report` identify it as
+`tune verify`. With `-detach`, the launcher returns a run id, PID, checkout and output path;
+use `km wait RUN -json` for the final JSON summary. `-json` without detach prints it directly.
+Bare `km tune` and unknown subjects list the supported subjects and exit non-zero.
+
+For a person or another agent, `km tune verify -guide` prints the procedure without needing a
+checkout, configuration or CAO. The Claude Code skill is a thin wrapper around that command.
+Install it personally from this repository:
+
+```sh
+mkdir -p ~/.claude/skills
+cp -R skills/km-tune-verify ~/.claude/skills/
+```
+
+Or copy `skills/km-tune-verify` into a project's `.claude/skills/` directory. Invoke
+`/km-tune-verify` there; it reads the guide and follows it, finishing with `km prove`.
+The skill carries no copy of the procedure.
+
 ### Proving verify
 
 ```sh
@@ -863,8 +919,8 @@ is flaky. Each run's duration is reported. The checkout is left untouched, inclu
 writes files. Copies and their temporary logs live outside the checkout and are removed on
 completion, failure, timeout or a handled interrupt.
 
-For each `-break PATCH`, prove makes another fresh copy, applies the patch and requires verify
-to fail. A patch that does not apply, is empty or unreadable, or changes `.kapellmeister/` or
+Before either clean run, prove checks every `-break PATCH` in a fresh copy. It then requires
+verify to fail in each patched copy. A patch that does not apply, is empty or unreadable, or changes `.kapellmeister/` or
 `scripts/verify` is refused. A timeout never counts as a successful break. Proved means two
 clean passes and at least one break patch, with every patch making verify fail. Without a patch,
 it reports "passes, not proved" and asks for `-break PATCH`.

@@ -30,8 +30,8 @@ type RunResult struct {
 type BreakResult struct {
 	Patch      string `json:"patch"`
 	Status     string `json:"status"`
-	ExitCode   int    `json:"exit_code"`
-	DurationMS int64  `json:"duration_ms"`
+	ExitCode   *int   `json:"exit_code,omitempty"`
+	DurationMS *int64 `json:"duration_ms,omitempty"`
 	Output     string `json:"output"`
 	Reason     string `json:"reason"`
 }
@@ -140,35 +140,7 @@ func Prove(ctx context.Context, options Options) (result Result) {
 		prefix := "unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_OBJECT_DIRECTORY\nTMPDIR='" + strings.ReplaceAll(tmp, "'", "'\"'\"'") + "'\nexport TMPDIR\n"
 		return initrepo.Run(ctx, dir, prefix+command, options.Timeout), nil
 	}
-	failures := 0
-	for i := 1; i <= 2; i++ {
-		name := fmt.Sprintf("clean run %d", i)
-		dir, err := cleanCopy(ctx, root, head, scratch, fmt.Sprintf("clean-%d", i), setup)
-		if err != nil {
-			return fail(err)
-		}
-		run, err := runVerify(dir)
-		if err != nil {
-			return fail(err)
-		}
-		result.Runs = append(result.Runs, RunResult{Name: name, Status: run.Status, ExitCode: run.ExitCode, DurationMS: run.DurationMS, Output: run.Output})
-		if ctx.Err() != nil {
-			return finish("interrupted", 1, "interrupted")
-		}
-		if run.Status == "timed_out" {
-			return finish("timeout", 3, name+": verify timed out")
-		}
-		if run.ExitCode != 0 {
-			failures++
-		}
-	}
-	if failures == 1 {
-		return finish("flaky", 12, "verify is flaky: only one clean run passed")
-	}
-	if failures == 2 {
-		return finish("failed", 12, "verify failed on both clean copies")
-	}
-	survived := []string{}
+	breakDirs := make([]string, len(options.Breaks))
 	for i, patch := range options.Breaks {
 		dir, err := cleanCopy(ctx, root, head, scratch, fmt.Sprintf("break-%d", i+1), setup)
 		if err != nil {
@@ -199,12 +171,45 @@ func Prove(ctx context.Context, options Options) (result Result) {
 			result.Breaks[i].Status, result.Breaks[i].Reason = "refused", reason
 			return refuse(reason)
 		}
+		breakDirs[i] = dir
+	}
+	failures := 0
+	for i := 1; i <= 2; i++ {
+		name := fmt.Sprintf("clean run %d", i)
+		dir, err := cleanCopy(ctx, root, head, scratch, fmt.Sprintf("clean-%d", i), setup)
+		if err != nil {
+			return fail(err)
+		}
+		run, err := runVerify(dir)
+		if err != nil {
+			return fail(err)
+		}
+		result.Runs = append(result.Runs, RunResult{Name: name, Status: run.Status, ExitCode: run.ExitCode, DurationMS: run.DurationMS, Output: run.Output})
+		if ctx.Err() != nil {
+			return finish("interrupted", 1, "interrupted")
+		}
+		if run.Status == "timed_out" {
+			return finish("timeout", 3, name+": verify timed out")
+		}
+		if run.ExitCode != 0 {
+			failures++
+		}
+	}
+	if failures == 1 {
+		return finish("flaky", 12, "verify is flaky: only one clean run passed")
+	}
+	if failures == 2 {
+		return finish("failed", 12, "verify failed on both clean copies")
+	}
+	survived := []string{}
+	for i, patch := range options.Breaks {
+		dir := breakDirs[i]
 		run, err := runVerify(dir)
 		if err != nil {
 			return fail(err)
 		}
 		b := &result.Breaks[i]
-		b.Status, b.ExitCode, b.DurationMS, b.Output = "breaks", run.ExitCode, run.DurationMS, run.Output
+		b.Status, b.ExitCode, b.DurationMS, b.Output = "breaks", &run.ExitCode, &run.DurationMS, run.Output
 		if ctx.Err() != nil {
 			b.Status = "interrupted"
 			return finish("interrupted", 1, "interrupted")
@@ -225,5 +230,5 @@ func Prove(ctx context.Context, options Options) (result Result) {
 	if len(options.Breaks) == 0 {
 		return finish("not_proved", 11, "passes, not proved; a break patch is needed: -break PATCH")
 	}
-	return finish("proved", 0, "proved: passed twice and every break patch made verify fail")
+	return finish("proved", 0, "passed twice and every break patch made verify fail")
 }

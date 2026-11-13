@@ -166,7 +166,7 @@ func printStatus(stdout io.Writer, runs []statusRun, now time.Time) error {
 			}
 			elapsed = elapsedSince(now, active.Started).Round(time.Second).String()
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", plain(run.RunID), plain(started), plain(reportKnown(run.Repository)), plain(reportKnown(run.Ensemble)), plain(round), plain(step), plain(chair), plain(elapsed), plain(run.Liveness))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", plain(run.RunID), plain(started), plain(reportKnown(run.Repository)), plain(reportRunLabel(run.Ensemble, run.Command)), plain(round), plain(step), plain(chair), plain(elapsed), plain(run.Liveness))
 	}
 	return w.Flush()
 }

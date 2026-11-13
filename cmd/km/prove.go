@@ -61,7 +61,11 @@ func printProof(out io.Writer, r prove.Result) {
 		}
 	}
 	for _, b := range r.Breaks {
-		fmt.Fprintf(out, "break %s: %s (exit %d) in %s\n", b.Patch, b.Status, b.ExitCode, time.Duration(b.DurationMS)*time.Millisecond)
+		fmt.Fprintf(out, "break %s: %s", b.Patch, b.Status)
+		if b.ExitCode != nil && b.DurationMS != nil {
+			fmt.Fprintf(out, " (exit %d) in %s", *b.ExitCode, time.Duration(*b.DurationMS)*time.Millisecond)
+		}
+		fmt.Fprintln(out)
 		if b.Status == "breaks" {
 			fmt.Fprintln(out, "verify failed, as required")
 		}

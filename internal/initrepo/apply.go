@@ -205,8 +205,8 @@ func Init(ctx context.Context, options Options) (result Result, err error) {
 	}
 	if unfinished {
 		result.Verify.Status = "unfinished"
-		result.Verify.Output = "scripts/verify is a stub; write the command, then run km prove"
-		result.Next = append(result.Next, "write the command in scripts/verify and remove the unfinished marker", "km prove -worktree "+shellQuote(root)+" -break PATCH")
+		result.Verify.Output = "scripts/verify is a stub; run km tune verify, or write the command and run km prove"
+		result.Next = append(result.Next, "km tune verify -worktree "+shellQuote(root), "or write the command in scripts/verify and remove the unfinished marker", "km prove -worktree "+shellQuote(root)+" -break PATCH")
 		return result, nil
 	}
 	result.Next = append(result.Next, "km preflight -worktree "+shellQuote(root), "km run -repo "+shellQuote(root)+" -task-file task.md")
