@@ -125,7 +125,8 @@ func Prove(ctx context.Context, options Options) (result Result) {
 	if err != nil {
 		return fail(err)
 	}
-	rel, err := filepath.Rel(root, resolved)
+	scratch = resolved
+	rel, err := filepath.Rel(root, scratch)
 	if err != nil {
 		return fail(err)
 	}
