@@ -19,6 +19,76 @@ import (
 	"github.com/jystringfellow/kapellmeister/internal/loop"
 )
 
+func TestTheEffortProfileMessagesSuggestLinesTheConfigLoaderAccepts(t *testing.T) {
+	for _, kind := range []string{"missing base", "owned variant", "shared effort"} {
+		t.Run(kind, func(t *testing.T) {
+			t.Setenv(loop.StateEnv, t.TempDir())
+			args, _ := fakeProfileInstall(t)
+			home, root := t.TempDir(), t.TempDir()
+			provider, base := "claude_code", "km-claude"
+			config := ""
+			if kind == "shared effort" {
+				provider, base = "codex", "km-codex"
+				config = "[tiers.codex]\nsmall = { effort = 'high' }\n"
+				proofWrite(t, root, loop.ConfigFile, config, 0644)
+			}
+			s, err := loop.LoadSettings(home, root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			profiles := map[string]cao.ProfilePermissions{}
+			loadable := map[string]bool{}
+			if kind == "owned variant" {
+				profiles[base] = cao.ProfilePermissions{PermissionMode: "default"}
+				profiles[base+"-high"] = cao.ProfilePermissions{PermissionMode: "bypassPermissions", Description: "person's profile"}
+				loadable[base+"-high"] = true
+			}
+			srv := permissionCAO(t, profiles, loadable)
+			chair := loop.Chair{Provider: provider, Profile: base}
+			steps := map[string][]loop.Chair{"plan": {chair}}
+			err = ensureProfilesTo(context.Background(), cao.NewClient(srv.URL), &s.Policy, steps, &bytes.Buffer{})
+			if err == nil {
+				t.Fatal("missing refusal")
+			}
+			_, lines, ok := strings.Cut(err.Error(), "\n")
+			if !ok {
+				t.Fatal("message has no suggested config lines", err)
+			}
+			var advice strings.Builder
+			for _, line := range strings.Split(lines, "\n") {
+				fmt.Fprintln(&advice, strings.TrimSpace(line))
+			}
+			proofWrite(t, root, loop.ConfigFile, advice.String(), 0644)
+			loaded, err := loop.LoadSettings(home, root)
+			if err != nil {
+				t.Fatal("suggested lines rejected", advice.String(), err)
+			}
+			count := 0
+			for _, tier := range loop.TierNames {
+				if s.Policy.Tiers[provider][tier].Effort != "high" {
+					continue
+				}
+				count++
+				resolved, a := loaded.Policy.Chair("implement", chair, tier, 0)
+				if resolved.Profile != base || a.Effort != "" || !strings.Contains(advice.String(), tier+` = { effort = "inherit" }`) {
+					t.Fatal(advice.String(), resolved, a)
+				}
+			}
+			if strings.Count(advice.String(), `effort = "inherit"`) != count {
+				t.Fatal("advice must name each matching tier once", advice.String())
+			}
+			for _, variant := range loaded.Policy.EffortVariants(steps) {
+				if variant.Effort == "high" {
+					t.Fatal("suggested config still needs high effort", advice.String())
+				}
+			}
+			if _, err := os.Stat(args); !os.IsNotExist(err) {
+				t.Fatal("installer called", err)
+			}
+		})
+	}
+}
+
 func TestAUserNamedProfileGetsItsEffortVariantInstalledFromItsBase(t *testing.T) {
 	t.Setenv(loop.StateEnv, t.TempDir())
 	args, installed := fakeProfileInstall(t)

@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/jystringfellow/kapellmeister/internal/initrepo"
@@ -49,7 +50,21 @@ func initAt(args []string, stdout, stderr io.Writer) error {
 }
 
 func printInit(out io.Writer, r initrepo.Result, timeout time.Duration) {
+	workflows := 0
 	for _, hint := range r.Hints {
+		if hint.Kind == "ci" && strings.HasPrefix(hint.File, ".github/workflows/") {
+			workflows++
+		}
+	}
+	summarised := false
+	for _, hint := range r.Hints {
+		if workflows > 3 && hint.Kind == "ci" && strings.HasPrefix(hint.File, ".github/workflows/") {
+			if !summarised {
+				fmt.Fprintf(out, "hint: ci %d workflow files in .github/workflows\n", workflows)
+				summarised = true
+			}
+			continue
+		}
 		fmt.Fprintf(out, "hint: %s %s", hint.Kind, hint.File)
 		if hint.Note != "" {
 			fmt.Fprintf(out, " %s", hint.Note)

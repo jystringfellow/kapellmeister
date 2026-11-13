@@ -17,6 +17,43 @@ import (
 	"github.com/jystringfellow/kapellmeister/internal/loop"
 )
 
+func TestPreflightWithATierInstallsItsEffortVariantsAndWithoutOneSeatsTheBaseProfile(t *testing.T) {
+	for _, tier := range []string{"", "medium"} {
+		t.Run("tier="+tier, func(t *testing.T) {
+			root, args, f := tuneEffortFixture(t)
+			srv := f.serve(t)
+			flags := []string{"-worktree", root, "-cao", srv.URL}
+			want := "km-claude"
+			if tier != "" {
+				flags = append(flags, "-tier", tier)
+				want += "-high"
+			}
+			out, err := captureStdout(t, func() error { return preflightCommand(flags) })
+			if err == nil || len(f.seated) != 1 || f.seated[0] != want {
+				t.Fatal(out, err, f.seated)
+			}
+			if tier == "" {
+				if strings.Contains(out, "installed CAO profile") {
+					t.Fatal(out)
+				}
+				if _, err := os.Stat(args); !os.IsNotExist(err) {
+					t.Fatal("installer called without tier", err)
+				}
+			} else {
+				install := strings.Index(out, "→ installed CAO profile km-claude-high from ")
+				seat := strings.Index(out, "→ preflight ")
+				if install < 0 || seat < install {
+					t.Fatal(out)
+				}
+				arguments := initRead(t, filepath.Dir(args), filepath.Base(args))
+				if strings.Count(arguments, "install\n") != 1 {
+					t.Fatal(arguments)
+				}
+			}
+		})
+	}
+}
+
 func TestAnInterruptedPreflightReportsTeardownAndPrintsNoAttachHints(t *testing.T) {
 	for _, failDelete := range []bool{false, true} {
 		t.Run(fmt.Sprint("deleteFails=", failDelete), func(t *testing.T) {

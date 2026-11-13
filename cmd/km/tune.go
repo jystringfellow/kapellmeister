@@ -151,12 +151,15 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 		ctx, stop = loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 		defer stop()
 	}
-	trustOut := stdout
+	progress := stdout
 	if *asJSON {
-		trustOut = stderr
+		progress = stderr
 	}
-	client := newClient(s.CAOURL, s, trustOut)
-	if err := tunePreflight(ctx, client, s.Policy, chairs); err != nil {
+	client := newClient(s.CAOURL, s, progress)
+	if err := tunePreflight(ctx, client, chairs); err != nil {
+		return err
+	}
+	if err := ensureProfilesTo(ctx, client, &s.Policy, map[string][]loop.Chair{"implement": {chairs.Implementer}, "review": {chairs.Reviewers[0]}}, progress); err != nil {
 		return err
 	}
 	writingChair, _ := s.Policy.Chair("implement", chairs.Implementer, "", 0)
@@ -176,10 +179,6 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 		}
 		_, err = fmt.Fprintf(stdout, "run       %s\npid       %d\nworktree  %s\noutput    %s\n", handle.RunID, handle.PID, handle.Worktree, handle.Output)
 		return err
-	}
-	var progress io.Writer = stdout
-	if *asJSON {
-		progress = stderr
 	}
 	if *launchPath != "" {
 		state := initialRunState(runID, "tune verify", root, "", s.Rounds, time.Now())
@@ -401,7 +400,7 @@ func tuneChairs(s loop.Settings, roles map[string]*string) (loop.Chairs, error) 
 	return loop.Chairs{Implementer: resolved["implementer"], Reviewers: []loop.Chair{resolved["reviewer"]}}, nil
 }
 
-func tunePreflight(ctx context.Context, client *cao.Client, policy loop.Policy, chairs loop.Chairs) error {
+func tunePreflight(ctx context.Context, client *cao.Client, chairs loop.Chairs) error {
 	installed, err := client.Profiles(ctx)
 	if err != nil {
 		return fmt.Errorf("cao-server is not reachable at %s; start it with cao-server", client.BaseURL)
@@ -410,11 +409,8 @@ func tunePreflight(ctx context.Context, client *cao.Client, policy loop.Policy, 
 	for _, p := range installed {
 		have[p.Name] = p.Loadable
 	}
-	check := func(chair loop.Chair, variant bool) error {
+	check := func(chair loop.Chair) error {
 		if !have[chair.Profile] {
-			if variant {
-				return fmt.Errorf("effort profile %s is not installed or loadable in CAO; set effort = \"inherit\" under [tiers.%s]", chair.Profile, chair.Provider)
-			}
 			fix := "cao install"
 			for _, agent := range loop.BuiltInAgents() {
 				if agent.Chair.Profile == chair.Profile && agent.Chair.Provider == chair.Provider {
@@ -428,16 +424,9 @@ func tunePreflight(ctx context.Context, client *cao.Client, policy loop.Policy, 
 		}
 		return nil
 	}
-	for i, chair := range []loop.Chair{chairs.Implementer, chairs.Reviewers[0]} {
-		if err := check(chair, false); err != nil {
+	for _, chair := range []loop.Chair{chairs.Implementer, chairs.Reviewers[0]} {
+		if err := check(chair); err != nil {
 			return err
-		}
-		step := []string{"implement", "review"}[i]
-		resolved, _ := policy.Chair(step, chair, "", 0)
-		if resolved.Profile != chair.Profile {
-			if err := check(resolved, true); err != nil {
-				return err
-			}
 		}
 	}
 	return nil
