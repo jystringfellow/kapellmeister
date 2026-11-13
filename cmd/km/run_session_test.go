@@ -30,6 +30,8 @@ type runCAO struct {
 	signal          os.Signal
 	watch           bool
 	deleteFails     bool
+	createFails     bool
+	hold            <-chan struct{}
 	poll            chan struct{}
 	once            sync.Once
 }
@@ -39,6 +41,10 @@ func (f *runCAO) serve(t *testing.T) *httptest.Server {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == "POST" && r.URL.Path == "/sessions":
+			if f.createFails {
+				http.Error(w, "podium refused", 500)
+				return
+			}
 			q := r.URL.Query()
 			f.mu.Lock()
 			f.created = append(f.created, cao.Launch{Provider: q.Get("provider"), Profile: q.Get("agent_profile"), Model: q.Get("model"), WorkingDirectory: q.Get("working_directory")})
@@ -76,6 +82,16 @@ func (f *runCAO) serve(t *testing.T) *httptest.Server {
 			json.NewEncoder(w).Encode(map[string]string{"output": "Permission rule Bash(cp*) requires confirmation for this command.\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\nEsc to cancel · Tab to amend"})
 			return
 		case r.Method == "POST" && r.URL.Path == "/terminals/run-step":
+			if f.hold != nil {
+				select {
+				case <-f.hold:
+				case <-r.Context().Done():
+					return
+				case <-time.After(20 * time.Second):
+					t.Error("held step timed out")
+					return
+				}
+			}
 			if f.interrupt {
 				signalToSend := f.signal
 				if signalToSend == nil {

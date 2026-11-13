@@ -47,7 +47,7 @@ installing the base chair profiles below.
 
 ```sh
 km init [-worktree DIR] [-dry-run] [-json] [-verify CMD] [-check CMD] [-no-run] [-timeout D]  # draft setup and prove verify
-km run -repo ~/Code/app [-base BRANCH] -task-file task.md [-ensemble thorough]  # one ensemble
+km run -repo ~/Code/app [-base BRANCH] -task-file task.md [-ensemble thorough] [-detach]  # one ensemble
 km audition -worktree DIR [-ensemble thorough]   # can this ensemble play? no real work
 km rehearse -worktree DIR -task-file task.md [-ensemble thorough]  # brief and leave standing
 km play SESSION [-max-rounds N] [-verify CMD] [-timeout D] [-cao URL]  # run the score
@@ -55,6 +55,7 @@ km reseat SESSION ADDRESS [-agent SPEC] [-timeout D] [-cao URL]  # replace one o
 km ensemble list                                # list standing ensembles
 km ensemble down SESSION                        # take one down
 km report [-parts] [-json] [-since DATE] [-repository NAME] [-max-depth N] [-max-entries N] [DIR...]  # summarize run records
+km wait RUN [-timeout D] [-json] [-max-depth N] [-max-entries N] [DIR...]  # wait for one run
 km status [-json] [-max-depth N] [-max-entries N] [DIR...]  # show runs in progress
 km preflight -worktree DIR [-agents NAME,...] [-tier large]  # check the available agents
 km config [-worktree DIR] [-cao URL]              # show the effective settings and their files
@@ -67,6 +68,8 @@ repository configuration and a verify script from root files, then runs verify o
 only km and the repository's toolchain; CAO, user configuration and configured agents are not
 needed. Review and commit the drafts, then use `km preflight -worktree .` and
 `km run -repo . -task-file task.md`. Preview exact contents with `km init -dry-run`.
+
+## Run
 
 `km run -repo` leaves its detached worktree under the system temp directory (`wt-km-*`) and
 prints its path in the final summary whenever it leaves changes. Set `[run] worktree_dir` in your
@@ -119,6 +122,63 @@ The reviewer role can have several chairs. Use `-reviewer copilot,claude@large` 
 whole configured reviewer list for one run. Each reviewer runs concurrently in its own CAO
 terminal and resolves its tier separately: pinned reviewers keep their tier, while unpinned
 reviewers follow sizing. Other required parts have one chair; the optional tester has at most one.
+
+### Detached runs
+
+`km run … -detach` starts a run and returns a handle, including when its caller has no terminal:
+
+```text
+run       20261113-035437-5eab65
+pid       95805
+worktree  /tmp/wt-km-example
+output    /home/me/.kapellmeister/state/runs/20261113-035437-5eab65/output.log
+```
+
+Before returning, it validates flags, task text, configuration and chairs, resolves the base,
+creates the worktree, resolves verify/check hooks, prepares scratch and checks/installs effort
+profiles. A refusal still prints its error and exits 1 in the caller. Successful launch exits 0
+once the run process has recorded its PID and is visible to `km status`; it does not imply approval.
+The task text is retained, so the caller can remove its `-task-file` after launch.
+
+Preflight and baseline verification happen in the run process **after detachment**. They may take
+minutes and require CAO and the chairs; returning a handle does not wait for their readiness.
+Their failures are recorded for `km wait`. The run has its own process and session, needs no daemon
+or terminal, and survives the caller exiting or closing its terminal. Stop it with `kill -TERM PID`;
+SIGINT and SIGHUP also use the foreground run's interruption and ensemble teardown path.
+
+The complete stdout and stderr, including output from before detachment, stay in the printed
+`output.log`. Read the whole file with `cat`, or watch it during the run with `tail -f`.
+`km status -json` includes the run record's `path`; append `/output.log` to find this file.
+Foreground runs keep their existing terminal output.
+
+`km wait RUN [-timeout D] [-json] [DIR...]` waits for one run, then prints the same final summary as
+`km run`. RUN must be non-empty and cannot consist only of whitespace. It is an exact run id or
+a unique prefix of at least two characters; an exact match wins even for an older record with a
+one-character id. Blank ids, shorter prefixes, and ambiguous or unknown ids fail with status 1.
+It searches the same directories as `km status`, including `[report] dirs`, and accepts
+its `-max-depth` and `-max-entries` limits. Once found, it polls that run's record.
+
+```sh
+km wait 20261113-035437-5eab65
+km wait 20261113-035437 -timeout 10m -json
+```
+
+`-timeout` defaults to 0 (no deadline). A timeout leaves the run alone. Without a result, a gone
+process or unverifiable liveness (such as a record copied from another host or an older record
+without a PID) is reported as unfinished, so waiting cannot silently turn an abandoned run into
+success or wait on it forever.
+
+| Exit status | Meaning |
+| --- | --- |
+| 0 | Finished and approved |
+| 1 | Finished without approval, or an error such as an unknown run |
+| 3 | Wait timed out; the run continues |
+| 4 | Unfinished; no result and the process is gone or liveness cannot be checked |
+
+`-json` prints `{"run_id":"…","state":"finished","exit_status":0,"reason":"","result":{…}}`.
+The state can also be `timeout` or `unfinished`; those omit `result` and explain why in `reason`.
+The command exits with `exit_status` in both text and JSON modes. It also works for foreground
+runs and records written before detachment was added.
 
 ## Install the base chair profiles
 
@@ -1099,6 +1159,10 @@ p         beta   1        0        0        0       0/0            0/0          
 
 ## Status
 
+Detached runs appear here like foreground runs, including while preflight is still running.
+Use `km wait RUN` to wait for one and receive its final summary and exit status, or read the
+`output.log` path printed by `km run -detach` for progress.
+
 `km status [DIR...]` lists runs that have started and have no `result.json`. With no directory
 it uses the user config's [`[report] dirs`](#report), falling back to `<state>/runs` when the list
 is absent or empty. Named directories replace the setting. Configured searches add the same
@@ -1133,7 +1197,10 @@ RUN                     STARTED              REPOSITORY             ENSEMBLE  RO
 
 Run records (`config.json`, `telemetry.jsonl`, `current.json`, `result.json` and `replies/`) live in
 `<state dir>/runs/<run id>/`. Tester scratch lives separately in `<state dir>/scratch/<run id>/`
-and is left in place after the run. Once `telemetry.jsonl` is created, `km run` and `km play`
+and is left in place after the run. Detached runs also keep `output.log` (complete stdout and
+stderr) and `launch.json` (the run id, worktree, base branch and task text passed to their run
+process). They publish `current.json` before preflight and record failures from that point.
+Once `telemetry.jsonl` is created, `km run` and `km play`
 write a start record and leave `result.json` on normal completion, failure or interruption, including
 errors recording configuration, engine setup or the final git summary. Failures record their reason;
 a panic records a failed result and is raised again. If writing the result itself fails, stderr
