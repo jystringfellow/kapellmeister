@@ -836,7 +836,11 @@ func TestTuneVerifyBudgetStopsAtTheBoundaryAndPublishesOnlyAProvedSetup(t *testi
 				if err := waitCommand([]string{sum.RunID, loop.StateDir()}, &waited, &diag); err == nil {
 					t.Fatal("budget wait reported success")
 				}
-				if !strings.Contains(waited.String(), "left uncommitted in "+root+"\n") || !strings.Contains(waited.String(), "the worktree was kept at "+sum.Tune.Worktree+"\n") {
+				resolved, err := filepath.EvalSymlinks(root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(waited.String(), "left uncommitted in "+resolved+"\n") || !strings.Contains(waited.String(), "the worktree was kept at "+sum.Tune.Worktree+"\n") {
 					t.Fatal(waited.String())
 				}
 			}
