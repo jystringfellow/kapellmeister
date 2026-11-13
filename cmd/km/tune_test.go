@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,10 +13,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jystringfellow/kapellmeister/internal/cao"
 	"github.com/jystringfellow/kapellmeister/internal/initrepo"
 	"github.com/jystringfellow/kapellmeister/internal/loop"
+	"github.com/jystringfellow/kapellmeister/internal/prove"
 	"github.com/jystringfellow/kapellmeister/internal/tune"
 )
 
@@ -69,6 +72,8 @@ type tuneCAO struct {
 	permissions map[string]cao.ProfilePermissions
 	seated      []string
 	hold        <-chan struct{}
+	afterStep   func(string)
+	afterSeat   func()
 }
 
 func (f *tuneCAO) serve(t *testing.T) *httptest.Server {
@@ -104,6 +109,9 @@ func (f *tuneCAO) serve(t *testing.T) *httptest.Server {
 			json.NewEncoder(w).Encode(cao.Terminal{ID: "writer"})
 		case r.Method == "POST" && r.URL.Path == "/sessions":
 			f.seated = append(f.seated, r.URL.Query().Get("agent_profile"))
+			if f.afterSeat != nil {
+				f.afterSeat()
+			}
 			json.NewEncoder(w).Encode(cao.Terminal{ID: "podium", SessionName: "tune-fake"})
 		case r.Method == "DELETE" || r.Method == "PATCH":
 			w.Write([]byte(`{}`))
@@ -136,6 +144,9 @@ func (f *tuneCAO) serve(t *testing.T) *httptest.Server {
 			reply := paths[len(paths)-1]
 			f.steps = append(f.steps, filepath.Base(reply))
 			text := "APPROVE\n"
+			if strings.HasSuffix(reply, "tune-review-1.md") && strings.HasSuffix(f.mode, "revision") {
+				text = "CHANGES\n"
+			}
 			if strings.HasSuffix(reply, ".json") {
 				_, rest, ok := strings.Cut(req.Prompt, "Break patch directory: ")
 				if !ok {
@@ -159,13 +170,43 @@ func (f *tuneCAO) serve(t *testing.T) *httptest.Server {
 				if f.mode == "survives" {
 					command = "true"
 				}
+				if strings.HasSuffix(reply, "tune-2.json") {
+					switch f.mode {
+					case "command revision":
+						command += " && true"
+					case "flaky revision":
+						command += "; if test -e \"$KM_PROOF_STATE\"; then exit 7; fi; touch \"$KM_PROOF_STATE\""
+					case "failed revision":
+						command += " && false"
+					case "invalid revision":
+						text = "bad json"
+					case "outside revision":
+						proofWrite(t, req.WorkingDirectory, "file", "bad", 0644)
+					}
+				}
 				script, _ := initrepo.RenderVerify(command)
+				if f.mode == "comment revision" && strings.HasSuffix(reply, "tune-2.json") {
+					script = strings.Replace(script, "run 'verify'", "# fast subset\n\nrun 'unit tests'", 1)
+				}
 				if f.mode != "stub" {
 					proofWrite(t, req.WorkingDirectory, "scripts/verify", script, 0755)
 				}
 				proofWrite(t, patchDir, "source.patch", source, 0644)
 				proofWrite(t, patchDir, "test.patch", test, 0644)
 				text = fmt.Sprintf(`{"command":%q,"left_out":[{"what":"integration","why":"requires a service"}],"patches":[{"file":%q,"kind":"source"},{"file":%q,"kind":"test"}]}`, command, filepath.Join(patchDir, "source.patch"), filepath.Join(patchDir, "test.patch"))
+				if f.mode == "invalid setup revision" && strings.HasSuffix(reply, "tune-2.json") {
+					path := filepath.Join(req.WorkingDirectory, "scripts/verify")
+					if err := os.Remove(path); err != nil {
+						t.Error(err)
+					}
+					if err := os.Symlink("missing", path); err != nil {
+						t.Error(err)
+					}
+					text = "bad json"
+				}
+				if f.mode == "invalid revision" && strings.HasSuffix(reply, "tune-2.json") {
+					text = "bad json"
+				}
 				switch f.mode {
 				case "bypass script":
 					proofWrite(t, req.WorkingDirectory, loop.ConfigFile, "[test]\nverify = 'sh answer_test.sh'\n", 0644)
@@ -189,6 +230,9 @@ func (f *tuneCAO) serve(t *testing.T) *httptest.Server {
 				proofWrite(t, req.WorkingDirectory, "scripts/verify", "#!/bin/sh\ntrue\n", 0755)
 			}
 			proofWrite(t, req.WorkingDirectory, reply, text, 0644)
+			if f.afterStep != nil {
+				f.afterStep(filepath.Base(reply))
+			}
 			json.NewEncoder(w).Encode(cao.StepResponse{TerminalID: "writer", Status: "completed"})
 		default:
 			f.writes = append(f.writes, r.Method+" "+r.URL.Path)
@@ -690,5 +734,262 @@ func TestTuneVerifyExplainsAPreflightTimeoutInPlainWords(t *testing.T) {
 	}
 	if got := proofGit(t, root, "worktree", "list", "--porcelain"); strings.Count(got, "worktree ") != 1 {
 		t.Fatal(got)
+	}
+}
+
+func tuneRounds(t *testing.T) {
+	t.Helper()
+	config := initRead(t, loop.Home(), "config.toml")
+	proofWrite(t, loop.Home(), "config.toml", strings.Replace(config, "rounds = 1", "rounds = 2", 1), 0644)
+}
+
+func TestTuneVerifyKeepsCommentRevisionsAndProvesCommandRevisionsAgain(t *testing.T) {
+	for _, mode := range []string{"comment revision", "command revision"} {
+		t.Run(mode, func(t *testing.T) {
+			root := tuneFixture(t)
+			tuneRounds(t)
+			srv := (&tuneCAO{mode: mode}).serve(t)
+			code, out := tuneCall(t, "verify", "-worktree", root, "-cao", srv.URL, "-json")
+			var sum ensembleSummary
+			if code != 0 || json.Unmarshal([]byte(out), &sum) != nil {
+				t.Fatal(code, out)
+			}
+			kept := mode == "comment revision"
+			if (sum.Tune.ProofKept != nil) != kept || sum.Outcome != loop.Approved {
+				t.Fatal(out)
+			}
+			dir := filepath.Join(loop.StateDir(), "runs", sum.RunID)
+			entries, _ := os.ReadDir(filepath.Join(dir, "breaks"))
+			want := 4
+			if kept {
+				want = 2
+			}
+			if len(entries) != want || len(sum.Tune.Runs) != 2 {
+				t.Fatal(entries, out)
+			}
+			proof := initRead(t, dir, "replies/prove-2.txt")
+			if kept && (!strings.Contains(proof, "proof kept from round 1") || !strings.Contains(proof, "sha256") || !strings.Contains(initRead(t, root, "scripts/verify"), "# fast subset")) {
+				t.Fatal(proof, out)
+			}
+			var waited, diag bytes.Buffer
+			if err := waitCommand([]string{sum.RunID, loop.StateDir()}, &waited, &diag); err != nil {
+				t.Fatal(err)
+			}
+			if kept && !strings.Contains(waited.String(), "proof kept from round 1") {
+				t.Fatal(waited.String())
+			}
+		})
+	}
+}
+
+func TestTuneVerifyEndsApprovedWithNotesWhenRoundTwoIsFlakyAndPublishesRoundOnesScript(t *testing.T) {
+	root := tuneFixture(t)
+	tuneRounds(t)
+	t.Setenv("KM_PROOF_STATE", filepath.Join(t.TempDir(), "state"))
+	srv := (&tuneCAO{mode: "flaky revision"}).serve(t)
+	code, out := tuneCall(t, "verify", "-worktree", root, "-cao", srv.URL)
+	t.Log("Foreground output:\n" + out)
+	if code != 0 || !strings.Contains(out, "later revision was not adopted") || !strings.Contains(out, "flaky") || !strings.Contains(out, "left uncommitted") {
+		t.Fatal(code, out)
+	}
+	script, _ := initrepo.RenderVerify("sh answer_test.sh")
+	if initRead(t, root, "scripts/verify") != script {
+		t.Fatal("later revision published")
+	}
+	entries, _ := os.ReadDir(filepath.Join(loop.StateDir(), "runs"))
+	var sum ensembleSummary
+	data, err := os.ReadFile(filepath.Join(loop.StateDir(), "runs", entries[0].Name(), "result.json"))
+	if err != nil || json.Unmarshal(data, &sum) != nil || sum.Tune.Status != "proved" || sum.Tune.Command != "sh answer_test.sh" {
+		t.Fatal(err, string(data))
+	}
+}
+
+func TestTuneVerifyBudgetStopsAtTheBoundaryAndPublishesOnlyAProvedSetup(t *testing.T) {
+	for _, proved := range []bool{true, false} {
+		t.Run(fmt.Sprint(proved), func(t *testing.T) {
+			root := tuneFixture(t)
+			tuneRounds(t)
+			before := initRead(t, root, "scripts/verify")
+			var mu sync.Mutex
+			now := time.Unix(1, 0)
+			old := tuneClock
+			tuneClock = func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+			t.Cleanup(func() { tuneClock = old })
+			f := &tuneCAO{afterStep: func(step string) {
+				if proved && step == "tune-review-1.md" || !proved && step == "tune-1.json" {
+					mu.Lock()
+					now = now.Add(time.Minute)
+					mu.Unlock()
+				}
+			}}
+			srv := f.serve(t)
+			code, out := tuneCall(t, "verify", "-worktree", root, "-cao", srv.URL, "-budget", "1m", "-json")
+			var sum ensembleSummary
+			if code != 1 || json.Unmarshal([]byte(out), &sum) != nil || sum.Outcome != loop.BudgetExhausted || sum.Tune.Published != proved {
+				t.Fatal(code, out)
+			}
+			if (initRead(t, root, "scripts/verify") != before) != proved {
+				t.Fatal("wrong checkout setup", out)
+			}
+			if proved {
+				var waited, diag bytes.Buffer
+				if err := waitCommand([]string{sum.RunID, loop.StateDir()}, &waited, &diag); err == nil {
+					t.Fatal("budget wait reported success")
+				}
+				if !strings.Contains(waited.String(), "left uncommitted in "+root+"\n") || !strings.Contains(waited.String(), "the worktree was kept at "+sum.Tune.Worktree+"\n") {
+					t.Fatal(waited.String())
+				}
+			}
+			if len(f.steps) > 2 {
+				t.Fatal(f.steps)
+			}
+		})
+	}
+}
+
+func TestTuneVerifyDefaultsItsBudgetAndProofTimeoutAndHonoursOverrides(t *testing.T) {
+	for _, override := range []bool{false, true} {
+		t.Run(fmt.Sprint(override), func(t *testing.T) {
+			root := tuneFixture(t)
+			srv := (&tuneCAO{}).serve(t)
+			old := runTuneProof
+			defer func() { runTuneProof = old }()
+			var limit time.Duration
+			runTuneProof = func(ctx context.Context, opts prove.Options) prove.Result {
+				limit = opts.Timeout
+				return old(ctx, opts)
+			}
+			args := []string{"verify", "-worktree", root, "-cao", srv.URL, "-json"}
+			expected := 5 * time.Minute
+			budget := 30 * time.Minute
+			if override {
+				expected = time.Minute
+				budget = 2 * time.Minute
+				args = append(args, "-verify-timeout", "1m", "-budget", "2m")
+			}
+			code, out := tuneCall(t, args...)
+			var sum ensembleSummary
+			if code != 0 || json.Unmarshal([]byte(out), &sum) != nil || limit != expected {
+				t.Fatal(code, out, limit)
+			}
+			data, err := os.ReadFile(filepath.Join(loop.StateDir(), "runs", sum.RunID, "config.json"))
+			var cfg loop.Config
+			if err != nil || json.Unmarshal(data, &cfg) != nil || cfg.Budget != budget {
+				t.Fatal(err, string(data))
+			}
+		})
+	}
+	for _, flag := range []string{"-budget", "-verify-timeout"} {
+		for _, d := range []string{"0s", "-1s"} {
+			code, out := tuneCall(t, "verify", flag, d)
+			if code == 0 || !strings.Contains(out, "must be positive") {
+				t.Fatal(code, out)
+			}
+		}
+	}
+}
+
+func TestProveKeepsItsTenMinuteDefault(t *testing.T) {
+	var out bytes.Buffer
+	_ = proveAt([]string{"-h"}, &out, &out)
+	if !strings.Contains(out.String(), "default 10m0s") {
+		t.Fatal(out.String())
+	}
+}
+
+func TestTuneProofReuseRequiresIdenticalConfigModesAndOrderedBreakPatchContents(t *testing.T) {
+	for _, change := range []string{"none", "config bytes", "config mode", "script mode", "patch bytes", "patch order", "patch kind", "patch changes during proof"} {
+		t.Run(change, func(t *testing.T) {
+			root := tuneFixture(t)
+			script, _ := initrepo.RenderVerify("sh answer_test.sh")
+			proofWrite(t, root, "scripts/verify", script, 0755)
+			setup, err := readTuneSetup(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			head := proofGit(t, root, "rev-parse", "HEAD")
+			dir := t.TempDir()
+			runID := "reuse"
+			if err := loop.PrepareRunDir(root, runID); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{"source.patch", "test.patch"} {
+				proofWrite(t, dir, name, name, 0644)
+			}
+			reply := loop.TuneReply{Command: "sh answer_test.sh", Patches: []loop.TunePatch{{File: filepath.Join(dir, "source.patch"), Kind: "source"}, {File: filepath.Join(dir, "test.patch"), Kind: "test"}}}
+			old := runTuneProof
+			defer func() { runTuneProof = old }()
+			runTuneProof = func(context.Context, prove.Options) prove.Result {
+				if change == "patch changes during proof" {
+					proofWrite(t, dir, "source.patch", "changed during proof", 0644)
+				}
+				return prove.Result{Status: "proved"}
+			}
+			hooks, _, err := tuneHooks(root, root, head, runID, t.TempDir(), dir, setup, &bytes.Buffer{}, time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			proof, err := hooks.Prove(t.Context(), reply, 1)
+			if err != nil || !proof.Proved {
+				t.Fatal(proof, err)
+			}
+			switch change {
+			case "config bytes":
+				proofWrite(t, root, loop.ConfigFile, initRead(t, root, loop.ConfigFile)+"\n# edited\n", 0644)
+			case "config mode":
+				if err := os.Chmod(filepath.Join(root, loop.ConfigFile), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "script mode":
+				if err := os.Chmod(filepath.Join(root, "scripts/verify"), 0700); err != nil {
+					t.Fatal(err)
+				}
+			case "patch bytes":
+				proofWrite(t, dir, "source.patch", "different patch", 0644)
+			case "patch order":
+				reply.Patches[0], reply.Patches[1] = reply.Patches[1], reply.Patches[0]
+			case "patch kind":
+				reply.Patches[0].Kind = "test"
+			}
+			kept, _, _, err := hooks.Keep(reply, 2)
+			if err != nil || kept != (change == "none") {
+				t.Fatal(kept, err)
+			}
+		})
+	}
+}
+
+func TestTuneVerifyKeepsTheProvedSetupAfterAFailedOrInvalidLaterRound(t *testing.T) {
+	for _, mode := range []string{"failed revision", "invalid revision", "outside revision", "invalid setup revision"} {
+		t.Run(mode, func(t *testing.T) {
+			root := tuneFixture(t)
+			tuneRounds(t)
+			srv := (&tuneCAO{mode: mode}).serve(t)
+			code, out := tuneCall(t, "verify", "-worktree", root, "-cao", srv.URL, "-json")
+			var sum ensembleSummary
+			if code != 0 || json.Unmarshal([]byte(out), &sum) != nil || sum.Outcome != loop.Approved || !strings.Contains(sum.Reason, "later revision was not adopted") || sum.Tune.Status != "proved" {
+				t.Fatal(code, out)
+			}
+			script, _ := initrepo.RenderVerify("sh answer_test.sh")
+			if initRead(t, root, "scripts/verify") != script {
+				t.Fatal("proved setup lost")
+			}
+		})
+	}
+}
+
+func TestTuneVerifyCountsPreparationTimeInItsWholeRunBudget(t *testing.T) {
+	root := tuneFixture(t)
+	var mu sync.Mutex
+	now := time.Unix(1, 0)
+	old := tuneClock
+	tuneClock = func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+	defer func() { tuneClock = old }()
+	f := &tuneCAO{afterSeat: func() { mu.Lock(); now = now.Add(time.Minute); mu.Unlock() }}
+	srv := f.serve(t)
+	code, out := tuneCall(t, "verify", "-worktree", root, "-cao", srv.URL, "-budget", "1m", "-json")
+	var sum ensembleSummary
+	if code != 1 || json.Unmarshal([]byte(out), &sum) != nil || sum.Outcome != loop.BudgetExhausted || len(f.steps) != 0 {
+		t.Fatal(code, out, f.steps)
 	}
 }
