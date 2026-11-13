@@ -46,7 +46,8 @@ installing the base chair profiles below.
 ## Commands
 
 ```sh
-km init [-worktree DIR] [-dry-run] [-json] [-verify CMD] [-check CMD] [-no-run] [-timeout D]  # draft setup and prove verify
+km init [-worktree DIR] [-dry-run] [-json] [-verify CMD] [-check CMD] [-no-run] [-timeout D]  # write config and an unfinished verify script
+km prove [-worktree DIR] [-break PATCH]... [-timeout D] [-json]  # prove verify on clean copies and broken code
 km run -repo ~/Code/app [-base BRANCH] -task-file task.md [-ensemble thorough] [-detach]  # one ensemble
 km audition -worktree DIR [-ensemble thorough]   # can this ensemble play? no real work
 km rehearse -worktree DIR -task-file task.md [-ensemble thorough]  # brief and leave standing
@@ -64,10 +65,12 @@ km profiles install [-cao URL] [-replace] [AGENT ...]  # install base chair prof
 km version                                       # print the version
 ```
 
-To start a repository, run `km init` in its checkout (or `km init -worktree DIR`). It drafts
-repository configuration and a verify script from root files, then runs verify once. It needs
-only km and the repository's toolchain; CAO, user configuration and configured agents are not
-needed. Review and commit the drafts, then use `km preflight -worktree .` and
+To start a repository, run `km init` in its checkout (or `km init -worktree DIR`). It writes
+repository configuration pointing to `scripts/verify` and an executable, unfinished verify script.
+Write the repository's verify command in that script and remove its unfinished marker, then use
+`km prove -break PATCH` to check it on clean copies and broken code. With `-verify CMD`, init wraps
+the supplied command and runs it once. Neither command needs CAO, user configuration or agents.
+Review and commit the setup, then use `km preflight -worktree .` and
 `km run -repo . -task-file task.md`. Preview exact contents with `km init -dry-run`.
 
 ## Run
@@ -814,57 +817,73 @@ escalate_after = 2                  # rounds without approval before the impleme
 Without `[test]`, kapellmeister falls back to executable `.kapellmeister/verify` and `.kapellmeister/check` scripts; `-verify`
 overrides both.
 
-`km init` drafts `.kapellmeister/config.toml` with `[test] verify` and, when it can derive a
-focused test command, `check` using `{args}`. It generates executable `scripts/verify` unless a
-verify command is supplied, already configured, or available as an executable `scripts/verify`
-or `.kapellmeister/verify`. Resolution is `-verify`, the existing repository config or hook,
-then `scripts/verify`, then generation. An existing config is always kept, including when it has
-no verify; init then explains the setting to add by hand and runs the chosen script once.
+`km init` writes `.kapellmeister/config.toml` with `[test] verify = "scripts/verify"` and
+executable `scripts/verify`, even when no toolchain is recognised. Without `-verify`, the script
+runs no command and exits non-zero with a message: verify must pass on a clean checkout, fail
+when code or a test is broken, and finish in reasonable time. Init reports `unfinished` and
+succeeds without running the stub. Its exact marker line is `: km-unfinished-verify`; replace
+the stub with the real command and remove that marker before proving it. A run's baseline verify
+refuses the stub and shows its message.
 
-Detection reads only root files, in the order below. It reports each source file and any lockfile
-used to select a runner. No installed-tool probing or agent guesses are involved.
+With `km init -verify CMD`, the script wraps that command and init runs it once. The POSIX `sh`
+wrapper works on Linux and macOS, prints one success line, and on failure names the step and exit
+status, shows at most 40 lines of 300 characters each, and prints the full log's temporary path.
+Successful logs are removed. Init reports duration and bounds existing commands' output too.
+Failed or timed-out verifies leave the files in place and make init exit unsuccessfully.
 
-| Toolchain | Root evidence | Generated steps | Derived `check` |
-|---|---|---|---|
-| Go | `go.mod` | `gofmt` check, `go vet ./...`, `go build ./...`, `go test ./...` | `go test {args}` |
-| .NET | Exactly one `*.sln` or `*.slnx` | `dotnet format --verify-no-changes`, `dotnet build --nologo`, `dotnet test --nologo` | `dotnet test --nologo {args}` |
-| Rust | `Cargo.toml` | `cargo fmt --check`, `cargo build`, `cargo test` | `cargo test {args}` |
-| Node | `package.json` with a nonempty `test` script other than npm's placeholder | `<pm> run lint` and `<pm> run build` when defined, then `<pm> run test` | None |
-| Python | pytest configuration or a declared pytest dependency | `<runner> -q` | `<runner> {args}` |
-| Make | A `test:` target in the Makefile selected by make | `make test` | None |
+Detection supplies hints for whoever writes the command: root toolchain files, a `test:` target
+in the first existing `GNUmakefile`, `makefile` or `Makefile`, and CI workflow files. It reports
+these in text and the JSON `hints` array, never in a written file. Toolchain files alone cannot
+tell km the repository's test target, CI commands, or required services, so hints never choose
+a command or derive a focused `check` command.
 
-Multiple toolchains contribute all their steps in that order. Multiple .NET solutions are reported
-but skipped because the commands would be ambiguous. Make is used only when no other toolchain
-is used; Makefile selection follows `GNUmakefile`, `makefile`, `Makefile`. `check` is derived only
-when exactly one toolchain is used and it has a focused command.
+Existing files are never edited or overwritten. Existing repository verify configuration or an
+executable `.kapellmeister/verify` hook is honoured without creating a replacement script.
+An existing executable `scripts/verify` is kept and used; an existing stub stays `unfinished`.
+A non-executable script must be made executable or removed first. An existing config without
+verify is kept, and init explains the setting to add by hand. `-verify` overrides the command
+for that invocation when existing setup is kept; `-check CMD` adds a focused command using
+`{args}` only to a new config. Init never commits or changes Git state.
 
-Node chooses the first lockfile present: `pnpm-lock.yaml` (pnpm), `yarn.lock` (yarn),
-`bun.lock` or `bun.lockb` (bun), `package-lock.json` (npm); without one it uses npm.
-Python recognizes `pytest.ini`, `[pytest]` in `tox.ini`, `[tool:pytest]` in `setup.cfg`,
-`[tool.pytest]` in `pyproject.toml`, or pytest declared in that file's project dependencies,
-optional dependencies, dependency groups or Poetry dependency tables. It also recognizes pytest
-requirements in root `requirements*.txt` and `*-requirements.txt` files. Plugins such as
-`pytest-cov` alone are insufficient, and invalid TOML is reported as unusable evidence. Python
-uses `uv run pytest` with `uv.lock`, then `poetry run pytest` with `poetry.lock`, otherwise
-`python3 -m pytest`.
+`-no-run` writes files without running verify, `-timeout D` changes the default `10m` limit,
+and `-dry-run` prints exact contents without writing or running anything. `-json` reports the
+same file decisions, hints, verify result and next steps as one object, including on failure.
 
-The generated POSIX shell script runs on macOS and Linux. It checks formatting or lint where the
-toolchain provides a standard command, builds, and tests. Success prints one short line; failure
-names the step and its exit status, shows at most 40 lines of 300 characters each, and prints the
-path to the failing step's full log in the temporary directory. Successful logs are removed.
-Init also bounds the output of an existing or supplied verify command and reports its status
-and duration. A failure or timeout exits unsuccessfully and leaves drafted files for review.
+### Proving verify
 
-Existing files are never edited or overwritten, and a second init reports that nothing was
-written while running verify again. A non-executable `scripts/verify` must be made executable or
-removed before initialization. Init never commits or changes Git state. If no usable verify
-command or toolchain is found, it fails without drafting files or a `[test]` table; supply
-`-verify CMD` to provide a command explicitly. `-verify` overrides the command for that invocation
-and is saved only when creating a config; `-check CMD` supplies the focused command for a new
-config. `-no-run` drafts without executing verify, `-timeout D` changes the default `10m` limit,
-and `-dry-run` prints exact drafts without writing or running anything. `-json` reports the same
-file decisions, detection evidence, verify result and next steps as a single JSON object,
-including on failure.
+```sh
+km prove [-worktree DIR] [-break PATCH]... [-timeout D] [-json]
+```
+
+Prove runs verify twice, each time in a fresh clean scratch copy of the checkout's HEAD plus
+the current `.kapellmeister/config.toml` and `scripts/verify`. Those two files may be uncommitted;
+all other uncommitted changes, untracked files and ignored files are absent. The directory must
+be the checkout's top level and HEAD must exist. Both runs must pass; one pass and one failure
+is flaky. Each run's duration is reported. The checkout is left untouched, including when verify
+writes files. Copies and their temporary logs live outside the checkout and are removed on
+completion, failure, timeout or a handled interrupt.
+
+For each `-break PATCH`, prove makes another fresh copy, applies the patch and requires verify
+to fail. A patch that does not apply, is empty or unreadable, or changes `.kapellmeister/` or
+`scripts/verify` is refused. A timeout never counts as a successful break. Proved means two
+clean passes and at least one break patch, with every patch making verify fail. Without a patch,
+it reports "passes, not proved" and asks for `-break PATCH`.
+
+| Exit status | Meaning |
+|---|---|
+| 0 | Proved: two clean passes and every break patch made verify fail |
+| 1 | Command, Git or filesystem error, or interrupted |
+| 3 | A verify run timed out |
+| 10 | Refused: unfinished stub, verify not configured, invalid checkout, or bad/setup-touching patch |
+| 11 | Passes twice, not proved: no break patch supplied |
+| 12 | Verify failed or was flaky on clean copies |
+| 13 | A break patch left verify passing |
+
+`-timeout D` is a positive limit per verify run, default `10m`. Output names each clean run and
+patch, reports exit codes and durations, and bounds verify output to 40 lines of 300 characters.
+`-json` carries the same facts in `worktree`, `command`, `status`, `exit_status`, `reason`, `runs`
+and `breaks`, including failures and skipped patches. Prove needs Git and the verify command's
+tools; it starts no agents or CAO sessions and makes no network requests of its own.
 
 ### Tiers
 

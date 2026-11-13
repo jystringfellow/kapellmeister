@@ -68,37 +68,50 @@ func initSnapshot(t *testing.T, root string) map[string]string {
 	return out
 }
 
-func TestInitWritesTheConfigAndScriptForEachSupportedToolchain(t *testing.T) {
-	for _, tt := range []struct{ file, content, command, check string }{
-		{"go.mod", "module fixture\n", "go test ./...", "go test {args}"},
-		{"example.sln", "", "dotnet test --nologo", "dotnet test --nologo {args}"},
-		{"Cargo.toml", "", "cargo test", "cargo test {args}"},
-		{"package.json", `{"scripts":{"test":"test"}}`, "npm run test", ""},
-		{"pytest.ini", "", "python3 -m pytest -q", "python3 -m pytest {args}"},
-		{"Makefile", "test:\n", "make test", ""},
+func TestInitWritesTheConfigAndAStubInARepositoryWithNoRecognisedToolchain(t *testing.T) {
+	root := t.TempDir()
+	out, err := initCall(t, root)
+	if err != nil || !strings.Contains(out, "unfinished") || len(initSnapshot(t, root)) != 2 {
+		t.Fatal(out, err)
+	}
+	if got := initRead(t, root, ".kapellmeister/config.toml"); got != "[test]\nverify = \"scripts/verify\"\n" {
+		t.Fatal(got)
+	}
+	script := initRead(t, root, "scripts/verify")
+	if !strings.Contains(script, ": km-unfinished-verify\n") {
+		t.Fatal(script)
+	}
+	info, err := os.Stat(filepath.Join(root, "scripts/verify"))
+	if err != nil || info.Mode().Perm() != 0755 {
+		t.Fatal(info, err)
+	}
+	before := initSnapshot(t, root)
+	out, err = initCall(t, root)
+	if err != nil || !strings.Contains(out, "unfinished") || !reflect.DeepEqual(before, initSnapshot(t, root)) {
+		t.Fatal(out, err)
+	}
+}
+
+func TestInitWritesTheSameFilesWhateverToolchainIsPresent(t *testing.T) {
+	plain := t.TempDir()
+	if out, err := initCall(t, plain); err != nil {
+		t.Fatal(out, err)
+	}
+	for _, tt := range []struct{ file, content string }{
+		{"go.mod", "module fixture\n"}, {"example.sln", ""}, {"Cargo.toml", ""},
+		{"package.json", "invalid JSON"}, {"pytest.ini", ""}, {"Makefile", "test:\n"},
+		{".github/workflows/test.yml", "name: tests\n"},
 	} {
 		t.Run(tt.file, func(t *testing.T) {
 			root := initFixture(t, map[string]string{tt.file: tt.content})
-			out, err := initCall(t, root, "-no-run")
-			if err != nil {
+			out, err := initCall(t, root)
+			if err != nil || !strings.Contains(out, "hint:") || !strings.Contains(out, tt.file) {
 				t.Fatal(out, err)
 			}
-			config := "[test]\nverify = \"scripts/verify\"\n"
-			if tt.check != "" {
-				config += "check  = \"" + tt.check + "\"\n"
-			}
-			if got := initRead(t, root, ".kapellmeister/config.toml"); got != config {
-				t.Fatal(got)
-			}
-			if script := initRead(t, root, "scripts/verify"); !strings.Contains(script, tt.command) {
-				t.Fatal(script)
-			}
-			info, err := os.Stat(filepath.Join(root, "scripts/verify"))
-			if err != nil || info.Mode().Perm()&0111 == 0 {
-				t.Fatal(info, err)
-			}
-			if len(initSnapshot(t, root)) != 3 || !strings.Contains(out, "scripts/verify: written") || !strings.Contains(out, ".kapellmeister/config.toml: written") {
-				t.Fatal(out)
+			for _, file := range []string{"scripts/verify", ".kapellmeister/config.toml"} {
+				if initRead(t, root, file) != initRead(t, plain, file) {
+					t.Fatal("hint changed", file)
+				}
 			}
 		})
 	}
@@ -177,7 +190,7 @@ func TestInitDryRunWritesAndRunsNothingAndPrintsTheExactContents(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &report); err != nil {
 		t.Fatal(out, err)
 	}
-	if !reflect.DeepEqual(before, initSnapshot(t, root)) || report.Changed || report.Verify.Status != "skipped" {
+	if !reflect.DeepEqual(before, initSnapshot(t, root)) || report.Changed || report.Verify.Status != "unfinished" {
 		t.Fatal(out)
 	}
 	if out, err := initCall(t, root, "-no-run"); err != nil {
@@ -190,26 +203,13 @@ func TestInitDryRunWritesAndRunsNothingAndPrintsTheExactContents(t *testing.T) {
 	}
 }
 
-func TestInitFailsWithoutWritingAVerifyCommandWhenNothingIsDetected(t *testing.T) {
-	root := t.TempDir()
-	out, err := initCall(t, root)
-	entries, _ := os.ReadDir(root)
-	if err == nil || len(entries) != 0 || !strings.Contains(out, "nothing detected") || !strings.Contains(out, "-verify CMD") {
-		t.Fatal(out, err)
-	}
-	out, err = initCall(t, root, "-dry-run")
-	if err == nil || !strings.Contains(out, "nothing detected") {
-		t.Fatal(out, err)
-	}
-}
-
 func TestInitAcceptsAVerifyFlagWhenNothingIsDetected(t *testing.T) {
 	root := t.TempDir()
 	out, err := initCall(t, root, "-verify", "printf explicit", "-check", "echo {args}")
-	if err != nil || !strings.Contains(out, "passed in") || initRead(t, root, ".kapellmeister/config.toml") != "[test]\nverify = \"printf explicit\"\ncheck  = \"echo {args}\"\n" {
+	if err != nil || !strings.Contains(out, "passed in") || initRead(t, root, ".kapellmeister/config.toml") != "[test]\nverify = \"scripts/verify\"\ncheck  = \"echo {args}\"\n" {
 		t.Fatal(out, err)
 	}
-	if len(initSnapshot(t, root)) != 1 {
+	if len(initSnapshot(t, root)) != 2 {
 		t.Fatal(initSnapshot(t, root))
 	}
 }
@@ -251,10 +251,10 @@ func TestInitNoRunSkipsTheVerifyRun(t *testing.T) {
 	}
 }
 
-func TestInitRunsTheGeneratedScriptForARealPassingGoModule(t *testing.T) {
+func TestInitWithoutVerifyDoesNotRunTheStubAndSaysItIsUnfinished(t *testing.T) {
 	root := initFixture(t, map[string]string{"go.mod": "module fixture\n\ngo 1.21\n", "pass.go": "package fixture\n"})
 	out, err := initCall(t, root)
-	if err != nil || !strings.Contains(out, "scripts/verify passed in") {
+	if err != nil || !strings.Contains(out, "unfinished") {
 		t.Fatal(out, err)
 	}
 }
@@ -309,11 +309,11 @@ func TestInitVerifyFlagOverridesAnExistingConfigOnlyForTheRun(t *testing.T) {
 	}
 }
 
-func TestInitRunsANewScriptAndExplainsHowToUseItWhenTheExistingConfigHasNoVerify(t *testing.T) {
+func TestInitExplainsHowToConfigureANewStubWhenTheExistingConfigHasNoVerify(t *testing.T) {
 	root := initFixture(t, map[string]string{"go.mod": "module fixture\n\ngo 1.21\n", "pass.go": "package fixture\n", ".kapellmeister/config.toml": "[test]\ncheck = 'go test {args}'\n"})
 	before := initRead(t, root, ".kapellmeister/config.toml")
 	out, err := initCall(t, root)
-	if err != nil || !strings.Contains(out, `add verify = "scripts/verify"`) || !strings.Contains(out, "passed in") || initRead(t, root, ".kapellmeister/config.toml") != before {
+	if err != nil || !strings.Contains(out, `add verify = "scripts/verify"`) || !strings.Contains(out, "unfinished") || initRead(t, root, ".kapellmeister/config.toml") != before {
 		t.Fatal(out, err)
 	}
 }
@@ -332,7 +332,7 @@ func TestInitJSONCarriesTheSameFactsAsTheText(t *testing.T) {
 	if err := json.Unmarshal([]byte(data), &r); err != nil {
 		t.Fatal(err)
 	}
-	if len(r.Detected) != 1 || r.Detected[0].Toolchain != "node" || r.Detected[0].File != "package.json" || r.Detected[0].Lockfile != "pnpm-lock.yaml" || !r.Detected[0].Used || r.Verify.Command != "scripts/verify" {
+	if len(r.Hints) != 1 || r.Hints[0].Kind != "toolchain" || r.Hints[0].File != "package.json" || r.Verify.Command != "scripts/verify" {
 		t.Fatal(data)
 	}
 	for _, f := range r.Files {
@@ -357,11 +357,11 @@ func TestInitLeavesUnrelatedFilesAloneAndNeedsNoUserConfigOrAgents(t *testing.T)
 	}
 }
 
-func TestInitKeepsBothDraftsWhenTheGeneratedGoScriptFails(t *testing.T) {
+func TestInitKeepsBothFilesWhenAnExplicitGoVerifyFails(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	root := initFixture(t, map[string]string{"go.mod": "module fixture\n\ngo 1.21\n", "pass.go": "package fixture\n", "fail_test.go": "package fixture\n\nimport \"testing\"\n\nfunc TestFail(t *testing.T) { t.Fatal(\"failure\") }\n"})
-	out, err := initCall(t, root)
-	if err == nil || !strings.Contains(out, "step: go test") || !strings.Contains(out, "full log:") {
+	out, err := initCall(t, root, "-verify", "go test ./...")
+	if err == nil || !strings.Contains(out, "step: verify") || !strings.Contains(out, "full log:") {
 		t.Fatal(out, err)
 	}
 	if len(initSnapshot(t, root)) != 5 {
@@ -375,21 +375,46 @@ func TestInitKeepsTheFailingStepAndLogPathWhenTheGeneratedScriptPrintsItsFullTai
 		"go.mod":       "module fixture\n\ngo 1.21\n",
 		"fail_test.go": "package fixture\n\nimport (\n\t\"fmt\"\n\t\"testing\"\n)\n\nfunc TestFail(t *testing.T) {\n\tfor i := 0; i < 500; i++ {\n\t\tfmt.Println(i, \"failure\")\n\t}\n\tt.Fail()\n}\n",
 	})
-	out, err := initCall(t, root, "-json")
+	out, err := initCall(t, root, "-json", "-verify", "go test ./...")
 	var r initrepo.Result
 	if e := json.Unmarshal([]byte(out), &r); e != nil {
 		t.Fatal(out, e)
 	}
-	if err == nil || !strings.Contains(r.Verify.Output, "step: go test (exit 1)") || !strings.Contains(r.Verify.Output, "full log:") || strings.Count(r.Verify.Output, "\n") > 40 {
+	if err == nil || !strings.Contains(r.Verify.Output, "step: verify (exit 1)") || !strings.Contains(r.Verify.Output, "full log:") || strings.Count(r.Verify.Output, "\n") > 40 {
 		t.Fatal(out, err)
 	}
 }
 
-func TestInitReportsAnExistingConfigAsKeptEvenWhenNoVerifyCanBeDerived(t *testing.T) {
+func TestInitKeepsAnExistingConfigWithoutVerifyAndWritesAStub(t *testing.T) {
 	root := initFixture(t, map[string]string{".kapellmeister/config.toml": "[test]\ncheck = 'echo {args}'\n"})
-	before := initSnapshot(t, root)
+	before := initRead(t, root, ".kapellmeister/config.toml")
 	out, err := initCall(t, root, "-no-run")
-	if err == nil || !strings.Contains(out, ".kapellmeister/config.toml: kept, it already exists") || !reflect.DeepEqual(before, initSnapshot(t, root)) {
+	if err != nil || !strings.Contains(out, ".kapellmeister/config.toml: kept, it already exists") || before != initRead(t, root, ".kapellmeister/config.toml") || !strings.Contains(out, "unfinished") {
+		t.Fatal(out, err)
+	}
+}
+
+func TestInitWithVerifyWritesTheWrapperAroundThatCommandAndRunsItOnce(t *testing.T) {
+	root := t.TempDir()
+	command := `printf '%s\n' 'one run' >> counter`
+	out, err := initCall(t, root, "-verify", command)
+	if err != nil || !strings.Contains(out, "passed in") || initRead(t, root, "counter") != "one run\n" {
+		t.Fatal(out, err)
+	}
+	want, err := initrepo.RenderVerify(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if initRead(t, root, "scripts/verify") != want || initRead(t, root, ".kapellmeister/config.toml") != "[test]\nverify = \"scripts/verify\"\n" {
+		t.Fatal("command was not wrapped")
+	}
+}
+
+func TestInitCheckFlagNeverEditsAnExistingConfig(t *testing.T) {
+	root := initFixture(t, map[string]string{".kapellmeister/config.toml": "[test]\nverify = 'true'\ncheck = 'old {args}'\n"})
+	before := initSnapshot(t, root)
+	out, err := initCall(t, root, "-check", "new {args}")
+	if err != nil || !reflect.DeepEqual(before, initSnapshot(t, root)) {
 		t.Fatal(out, err)
 	}
 }

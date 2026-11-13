@@ -285,7 +285,7 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 			return e.fail(res, err), nil
 		}
 		if baseline.ExitCode != 0 {
-			return e.fail(res, fmt.Errorf("verify already fails before any change (exit %d); see %s", baseline.ExitCode, baselinePath)), nil
+			return e.fail(res, fmt.Errorf("verify already fails before any change (exit %d); see %s\n%s", baseline.ExitCode, baselinePath, tail(strings.TrimRight(baseline.Output, "\n"), 20))), nil
 		}
 	}
 

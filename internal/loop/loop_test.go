@@ -678,3 +678,14 @@ func TestAChairsOwnTimeoutBoundsItsStepsAndTheStepTimeoutBoundsTheRest(t *testin
 		}
 	}
 }
+
+func TestABaselineVerifyFailureShowsTheLastLinesOfItsOutputInTheRefusal(t *testing.T) {
+	verify := func(context.Context, string) (VerifyResult, error) {
+		return VerifyResult{ExitCode: 1, Output: strings.Repeat("earlier output\n", 50) + "The verify command has not been written; km prove checks it.\n"}, nil
+	}
+	eng, _, _ := newEngine(t, verify)
+	res := run(t, eng)
+	if res.Outcome != Failed || !strings.Contains(res.Reason, "km prove checks it") || strings.Count(res.Reason, "earlier output") != 19 {
+		t.Fatal(res.Reason)
+	}
+}
