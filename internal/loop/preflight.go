@@ -31,6 +31,7 @@ type PreflightResult struct {
 	Blocker        string   `json:"blocker,omitempty"`
 	Error          string   `json:"error,omitempty"`
 	Retried        bool     `json:"retried,omitempty"`
+	TimedOut       bool     `json:"timed_out,omitempty"`
 	Model          string   `json:"model,omitempty"`
 	Honored        *bool    `json:"model_honored,omitempty"`
 }
@@ -243,6 +244,7 @@ func preflightChair(ctx context.Context, stepper interface {
 	if err == nil {
 		var out StepResult
 		out, err = stepper.Run(ctx, Step{Name: "preflight", Label: TerminalLabel("preflight", chair.Provider), Chair: chair, Prompt: preflightPrompt(rel), Dir: worktree, ReplyPath: rel, Timeout: timeout, ReuseTerminal: seat.TerminalID})
+		res.TimedOut = errors.Is(err, context.DeadlineExceeded)
 		if out.ReportedModel != "" {
 			res.Model = out.ReportedModel
 		}

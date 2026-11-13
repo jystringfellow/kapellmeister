@@ -861,6 +861,11 @@ func preflight(ctx context.Context, client *cao.Client, worktree string, timeout
 			fmt.Printf("  ok      %s (%s)%s\n", r.Chair, d, modelNote(r)+seatRetryNote(r))
 			continue
 		}
+		if r.TimedOut {
+			fmt.Printf("  BLOCKED %s (%s): did not answer within %s%s\n", r.Chair, d, timeout, seatRetryNote(r))
+			blocked = append(blocked, strings.ReplaceAll(preflightTimeoutMessage(r, timeout), "\n", "\n  "))
+			continue
+		}
 		fmt.Printf("  BLOCKED %s (%s): %s\n", r.Chair, d, firstNonEmpty(r.Blocker, r.Error)+seatRetryNote(r))
 		hint := r.Chair.String()
 		if r.Session != "" {
@@ -872,6 +877,19 @@ func preflight(ctx context.Context, client *cao.Client, worktree string, timeout
 		return fmt.Errorf("preflight failed for %d chair(s):\n  %s", len(blocked), strings.Join(blocked, "\n  "))
 	}
 	return nil
+}
+
+func preflightTimeoutMessage(r loop.PreflightResult, timeout time.Duration) string {
+	var out strings.Builder
+	fmt.Fprintf(&out, "chair %s started but did not answer within %s; this can happen when the agent or the server has only just started\n  1. run the command again", r.Chair, timeout)
+	if r.Session != "" {
+		fmt.Fprintf(&out, "\n  2. if it happens again, attach with `tmux attach -t %s` to see what the agent is waiting for, then detach with Ctrl-b d", r.Session)
+	}
+	if r.Blocker != "" {
+		fmt.Fprintf(&out, "\nthe agent's screen shows: %s", r.Blocker)
+	}
+	fmt.Fprintf(&out, "\nserver detail: %s", r.Error)
+	return out.String()
 }
 
 func seatRetryNote(r loop.PreflightResult) string {
@@ -1117,9 +1135,13 @@ func gitDiffStat(worktree, base string) (string, error) {
 var errNotApproved = errors.New("run was not approved")
 
 func finishRun(w io.Writer, sum ensembleSummary) error {
+	return finishRunDetail(w, sum, true)
+}
+
+func finishRunDetail(w io.Writer, sum ensembleSummary, detail bool) error {
 	printOutcome(w, sum)
 	if sum.Tune != nil {
-		printTune(w, sum)
+		printTune(w, sum, detail)
 		if sum.Outcome != loop.Approved {
 			fmt.Fprintf(w, "  the worktree was kept at %s\n", sum.Worktree)
 		}

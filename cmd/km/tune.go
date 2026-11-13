@@ -41,6 +41,9 @@ type tuneSummary struct {
 
 func tuneCommand(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 || args[0] != "verify" {
+		if len(args) > 0 {
+			fmt.Fprintf(stderr, "km tune: unknown subject %q\n", args[0])
+		}
 		fmt.Fprintln(stderr, tuneSubjects)
 		return &exitStatusError{code: 2}
 	}
@@ -253,7 +256,7 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 		}
 		return nil
 	}
-	return finishRun(stdout, sum)
+	return finishRunDetail(stdout, sum, false)
 }
 
 func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]tuneFile, progress io.Writer) (*loop.TuneHooks, *tuneSummary, error) {
@@ -448,6 +451,9 @@ func tuneSeat(ctx context.Context, client *cao.Client, root string, timeout time
 		}
 		r := results[0]
 		if !r.OK {
+			if r.TimedOut {
+				return errors.New(preflightTimeoutMessage(r, timeout))
+			}
 			fix := "check the provider's login and permissions"
 			if r.Session != "" {
 				fix = "resolve it with `tmux attach -t " + r.Session + "`, then detach with Ctrl-b d"
@@ -565,7 +571,7 @@ func tuneTree(root string) (map[string]string, error) {
 	return state, nil
 }
 
-func printTune(w io.Writer, s ensembleSummary) {
+func printTune(w io.Writer, s ensembleSummary, detail bool) {
 	t := s.Tune
 	fmt.Fprintf(w, "  tune verify: %s\n", t.Command)
 	if len(t.LeftOut) == 0 {
@@ -579,7 +585,7 @@ func printTune(w io.Writer, s ensembleSummary) {
 	for _, patch := range t.Breaks {
 		proof.Breaks = append(proof.Breaks, patch.BreakResult)
 	}
-	printProof(w, proof)
+	printProofDetail(w, proof, detail)
 	if s.Outcome == loop.Approved {
 		fmt.Fprintf(w, "  left uncommitted in %s\n", s.Worktree)
 	}

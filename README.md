@@ -337,6 +337,19 @@ A seat launch is bounded at three-eighths of `preflight_timeout` (90s by default
 and never longer than the CAO client's 90s launch bound; other seats wait for that launch to finish.
 Deleting a session also waits its turn, so a deletion never overlaps another chair's creation.
 
+When a chair starts but does not answer before the preflight limit, `km preflight`, `km run`
+and `km tune verify` explain that this can happen when the agent or the server has only just
+started. Run the command again first. If it happens again, use the reported session name to
+attach and see what the agent is waiting for, then detach with Ctrl-b d. For example:
+
+```text
+chair mock started but did not answer within 4m0s; this can happen when the agent or the server has only just started
+  1. run the command again
+  2. if it happens again, attach with `tmux attach -t cao-km-preflight-example` to see what the agent is waiting for, then detach with Ctrl-b d
+```
+
+The agent's screen and raw server detail follow on separate lines when available.
+
 km cleans up failed launches by their exact chosen session names, deletes passing chairs' sessions,
 and keeps blocked chairs' attach targets. SIGINT, SIGTERM or SIGHUP waits for any bounded launch already
 in progress, then tears down this preflight's sessions. Cancellation also stops queued seats and
@@ -891,11 +904,14 @@ Tune uses `[run] rounds` and `[run] timeout`; `-timeout D` changes each agent st
 Each verification in prove keeps its `10m` limit. On approval, only the two setup files are copied
 back, and the temporary worktree is removed. If setup changed while tune ran, copy-back is
 refused. Failed worktrees are kept for inspection. Nothing is staged or committed. The summary
-shows the chosen command, omissions and reasons, both clean durations and each break result.
-Break patches live in the run record. `km status`, `km wait` and `km report` identify it as
-`tune verify`. With `-detach`, the launcher returns a run id, PID, checkout and output path;
+shows the chosen command, omissions and reasons, both clean durations and one line per break
+patch with its result. Proof detail, including bounded failure output, appears once as progress;
+the final foreground summary does not repeat it. `km wait RUN` shows the complete summary,
+including that failure output, on its own. Break patches live in the run record. `km status`,
+`km wait` and `km report` identify it as `tune verify`. With `-detach`, the launcher returns a run id, PID, checkout and output path;
 use `km wait RUN -json` for the final JSON summary. `-json` without detach prints it directly.
-Bare `km tune` and unknown subjects list the supported subjects and exit non-zero.
+Bare `km tune` lists the supported subjects and exits 2. An unknown subject first prints
+`km tune: unknown subject "SUBJECT"`, then the same list, and also exits 2.
 
 For a person or another agent, `km tune verify -guide` prints the procedure without needing a
 checkout, configuration or CAO. The Claude Code skill is a thin wrapper around that command.

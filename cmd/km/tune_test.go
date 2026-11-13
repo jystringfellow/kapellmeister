@@ -101,6 +101,11 @@ func (f *tuneCAO) serve(t *testing.T) *httptest.Server {
 			if f.hold != nil {
 				<-f.hold
 			}
+			if f.mode == "timeout" {
+				f.steps = append(f.steps, "preflight")
+				http.Error(w, preflightTimeoutBody, 504)
+				return
+			}
 			if f.mode == "blocked" {
 				f.steps = append(f.steps, "preflight")
 				http.Error(w, "chair needs confirmation", 409)
@@ -129,6 +134,12 @@ func (f *tuneCAO) serve(t *testing.T) *httptest.Server {
 				source := "diff --git a/answer.sh b/answer.sh\n--- a/answer.sh\n+++ b/answer.sh\n@@ -1 +1 @@\n-answer() { echo 42; }\n+answer() { echo 0; }\n"
 				test := "diff --git a/answer_test.sh b/answer_test.sh\n--- a/answer_test.sh\n+++ b/answer_test.sh\n@@ -1,2 +1,2 @@\n . ./answer.sh\n-test \"$(answer)\" = 42\n+test \"$(answer)\" = 0\n"
 				command := "sh answer_test.sh"
+				if f.mode == "output" {
+					command = "sh answer_test.sh || { echo BREAK_FAILURE_$(. ./answer.sh; answer); false; }"
+				}
+				if f.mode == "surviving output" {
+					command = "sh answer_test.sh || echo SURVIVING_BREAK_$(. ./answer.sh; answer)"
+				}
 				if f.mode == "survives" {
 					command = "true"
 				}
@@ -172,12 +183,19 @@ func (f *tuneCAO) serve(t *testing.T) *httptest.Server {
 	return srv
 }
 
-func TestBareTuneAndAnUnknownSubjectListTheSubjectsAndExitNonZero(t *testing.T) {
-	for _, args := range [][]string{nil, {"unknown"}} {
-		code, out := tuneCall(t, args...)
-		if code != 2 || !strings.Contains(out, "subjects:") || !strings.Contains(out, "verify") {
+func TestAnUnknownTuneSubjectIsNamedBeforeTheSubjectsAreListed(t *testing.T) {
+	for _, subject := range []string{"unknown", "bad\nsubject"} {
+		code, out := tuneCall(t, subject)
+		if code != 2 || out != fmt.Sprintf("km tune: unknown subject %q\n%s\n", subject, tuneSubjects) {
 			t.Fatal(code, out)
 		}
+	}
+}
+
+func TestBareTuneListsTheSubjectsWithoutNamingAnUnknownOne(t *testing.T) {
+	code, out := tuneCall(t)
+	if code != 2 || out != tuneSubjects+"\n" {
+		t.Fatal(code, out)
 	}
 }
 
@@ -386,7 +404,7 @@ func TestATuneIsRecordedAsARunThatStatusWaitAndReportSee(t *testing.T) {
 			close(hold)
 		}
 	}()
-	f := &tuneCAO{hold: hold}
+	f := &tuneCAO{hold: hold, mode: "output"}
 	srv := f.serve(t)
 	cmd := kmSubprocess("tune", "verify", "-worktree", root, "-cao", srv.URL, "-detach", "--")
 	var diag bytes.Buffer
@@ -418,6 +436,7 @@ func TestATuneIsRecordedAsARunThatStatusWaitAndReportSee(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "left uncommitted") || !strings.Contains(out, "proved:") {
 		t.Fatal(code, out, errors)
 	}
+	assertCompleteTuneSummary(t, out)
 	var sum ensembleSummary
 	data, err := os.ReadFile(filepath.Join(loop.StateDir(), "runs", id, "result.json"))
 	if err != nil || json.Unmarshal(data, &sum) != nil || sum.Outcome != loop.Approved {
@@ -485,6 +504,10 @@ func TestTuneStopsAtABlockedSeatAndNamesTheSessionToFix(t *testing.T) {
 	if code != 1 || strings.Count(out, "tmux attach -t tune-fake") != 1 || len(f.steps) != 1 || f.steps[0] != "preflight" {
 		t.Fatal(code, out, f.steps)
 	}
+	want := "km: chair test:mock cannot answer preflight: Permission rule requires confirmation. Do you want to proceed?; resolve it with `tmux attach -t tune-fake`, then detach with Ctrl-b d\n"
+	if !strings.HasSuffix(out, want) {
+		t.Fatal(out)
+	}
 	if initRead(t, root, "scripts/verify") != before || initRead(t, loop.Home(), "config.toml") != config || len(f.writes) != 0 {
 		t.Fatal("preflight mutated configuration")
 	}
@@ -523,5 +546,137 @@ func TestTuneCannotProveADifferentCommandWhileLeavingTheScriptUnfinished(t *test
 	}
 	if initRead(t, root, "scripts/verify") != before {
 		t.Fatal("unproved script copied back")
+	}
+}
+
+func TestAForegroundTuneShowsABreakPatchsFailureOutputOnce(t *testing.T) {
+	for _, mode := range []string{"output", "surviving output"} {
+		t.Run(mode, func(t *testing.T) {
+			root := tuneFixture(t)
+			srv := (&tuneCAO{mode: mode}).serve(t)
+			code, out := tuneCall(t, "verify", "-worktree", root, "-cao", srv.URL)
+			wantCode := 0
+			if mode == "surviving output" {
+				wantCode = 1
+			}
+			if code != wantCode {
+				t.Fatal(code, out)
+			}
+			if mode == "surviving output" {
+				if strings.Count(out, "\nverify ok: verify\n") != 2 {
+					t.Fatal(out)
+				}
+				return
+			}
+			for _, value := range []string{"0", "42"} {
+				if strings.Count(out, "\nBREAK_FAILURE_"+value+"\n") != 1 {
+					t.Fatal(out)
+				}
+			}
+		})
+	}
+}
+
+func TestTheForegroundTuneSummaryHasOneLinePerBreakPatchWithItsResult(t *testing.T) {
+	root := tuneFixture(t)
+	srv := (&tuneCAO{mode: "output"}).serve(t)
+	code, out := tuneCall(t, "verify", "-worktree", root, "-cao", srv.URL)
+	if code != 0 {
+		t.Fatal(code, out)
+	}
+	_, summary, found := strings.Cut(out, "approved")
+	if !found {
+		t.Fatal(out)
+	}
+	for _, want := range []string{"tune verify: sh answer_test.sh", "left out: integration — requires a service", "clean run 1: passed (exit 0) in ", "clean run 2: passed (exit 0) in ", "source.patch: breaks (exit 1) in ", "test.patch: breaks (exit 1) in ", "proved:", "left uncommitted"} {
+		if strings.Count(summary, want) != 1 {
+			t.Fatalf("%q: %s", want, summary)
+		}
+	}
+	for _, unwanted := range []string{"verify failed, as required", "\nBREAK_FAILURE_"} {
+		if strings.Contains(summary, unwanted) {
+			t.Fatal(summary)
+		}
+	}
+}
+
+func assertCompleteTuneSummary(t *testing.T, out string) {
+	t.Helper()
+	for _, want := range []string{"tune verify: sh answer_test.sh", "left out: integration — requires a service", "clean run 1: passed", "clean run 2: passed", "source.patch: breaks", "test.patch: breaks", "verify failed, as required", "\nBREAK_FAILURE_0\n", "\nBREAK_FAILURE_42\n", "left uncommitted"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q: %s", want, out)
+		}
+	}
+}
+
+func TestKmWaitOnAFinishedTuneStillShowsACompleteSummaryOnItsOwn(t *testing.T) {
+	for _, asJSON := range []bool{false, true} {
+		t.Run(fmt.Sprint(asJSON), func(t *testing.T) {
+			root := tuneFixture(t)
+			srv := (&tuneCAO{mode: "output"}).serve(t)
+			args := []string{"verify", "-worktree", root, "-cao", srv.URL}
+			if asJSON {
+				args = append(args, "-json")
+			}
+			code, out := tuneCall(t, args...)
+			if code != 0 {
+				t.Fatal(code, out)
+			}
+			entries, err := os.ReadDir(filepath.Join(loop.StateDir(), "runs"))
+			if err != nil || len(entries) != 1 {
+				t.Fatal(entries, err)
+			}
+			var waited, diag bytes.Buffer
+			if err := waitCommand([]string{entries[0].Name(), loop.StateDir()}, &waited, &diag); err != nil {
+				t.Fatal(err, diag.String())
+			}
+			assertCompleteTuneSummary(t, waited.String())
+			waited.Reset()
+			if err := waitCommand([]string{entries[0].Name(), "-json", loop.StateDir()}, &waited, &diag); err != nil {
+				t.Fatal(err)
+			}
+			var result waitResult
+			if err := json.Unmarshal(waited.Bytes(), &result); err != nil {
+				t.Fatal(err)
+			}
+			if result.Result == nil || result.Result.Tune == nil {
+				t.Fatal(waited.String())
+			}
+			sum := result.Result
+			if len(sum.Tune.Runs) != 2 || len(sum.Tune.Breaks) != 2 {
+				t.Fatal(sum.Tune)
+			}
+			for i, value := range []string{"0", "42"} {
+				if !strings.Contains(sum.Tune.Breaks[i].Output, "\nBREAK_FAILURE_"+value+"\n") {
+					t.Fatal(sum.Tune.Breaks)
+				}
+			}
+			if asJSON {
+				var foreground ensembleSummary
+				if err := json.Unmarshal([]byte(out), &foreground); err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(foreground.Tune, sum.Tune) {
+					t.Fatal("JSON facts changed", out, waited.String())
+				}
+			}
+		})
+	}
+}
+
+func TestTuneVerifyExplainsAPreflightTimeoutInPlainWords(t *testing.T) {
+	root := tuneFixture(t)
+	proofWrite(t, loop.Home(), "config.toml", "[agents]\navailable = ['mock']\n[agents.define]\nmock = 'test:mock'\n[run]\npreflight_timeout = '1s'\n", 0644)
+	srv := (&tuneCAO{mode: "timeout"}).serve(t)
+	code, out := tuneCall(t, "verify", "-worktree", root, "-cao", srv.URL)
+	if code != 1 {
+		t.Fatal(code, out)
+	}
+	assertPreflightTimeoutAdvice(t, out, "tune-fake")
+	if entries, _ := os.ReadDir(filepath.Join(loop.StateDir(), "runs")); len(entries) != 0 {
+		t.Fatal(entries)
+	}
+	if got := proofGit(t, root, "worktree", "list", "--porcelain"); strings.Count(got, "worktree ") != 1 {
+		t.Fatal(got)
 	}
 }

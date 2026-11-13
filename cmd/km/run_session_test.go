@@ -20,20 +20,21 @@ import (
 )
 
 type runCAO struct {
-	mu              sync.Mutex
-	created         []cao.Launch
-	deleted         []string
-	terminalDeletes []string
-	polled          int
-	fake            playCAO
-	interrupt       bool
-	signal          os.Signal
-	watch           bool
-	deleteFails     bool
-	createFails     bool
-	hold            <-chan struct{}
-	poll            chan struct{}
-	once            sync.Once
+	mu               sync.Mutex
+	created          []cao.Launch
+	deleted          []string
+	terminalDeletes  []string
+	polled           int
+	fake             playCAO
+	interrupt        bool
+	signal           os.Signal
+	watch            bool
+	deleteFails      bool
+	createFails      bool
+	preflightTimeout bool
+	hold             <-chan struct{}
+	poll             chan struct{}
+	once             sync.Once
 }
 
 func (f *runCAO) serve(t *testing.T) *httptest.Server {
@@ -82,6 +83,10 @@ func (f *runCAO) serve(t *testing.T) *httptest.Server {
 			json.NewEncoder(w).Encode(map[string]string{"output": "Permission rule Bash(cp*) requires confirmation for this command.\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\nEsc to cancel · Tab to amend"})
 			return
 		case r.Method == "POST" && r.URL.Path == "/terminals/run-step":
+			if f.preflightTimeout {
+				http.Error(w, preflightTimeoutBody, 504)
+				return
+			}
 			if f.hold != nil {
 				select {
 				case <-f.hold:

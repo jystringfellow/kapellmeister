@@ -54,9 +54,13 @@ func proveAt(args []string, stdout, stderr io.Writer) error {
 }
 
 func printProof(out io.Writer, r prove.Result) {
+	printProofDetail(out, r, true)
+}
+
+func printProofDetail(out io.Writer, r prove.Result, detail bool) {
 	for _, run := range r.Runs {
 		fmt.Fprintf(out, "%s: %s (exit %d) in %s\n", run.Name, run.Status, run.ExitCode, time.Duration(run.DurationMS)*time.Millisecond)
-		if run.Status != "passed" && run.Output != "" {
+		if detail && run.Status != "passed" && run.Output != "" {
 			fmt.Fprintln(out, run.Output)
 		}
 	}
@@ -66,6 +70,9 @@ func printProof(out io.Writer, r prove.Result) {
 			fmt.Fprintf(out, " (exit %d) in %s", *b.ExitCode, time.Duration(*b.DurationMS)*time.Millisecond)
 		}
 		fmt.Fprintln(out)
+		if !detail {
+			continue
+		}
 		if b.Status == "breaks" {
 			fmt.Fprintln(out, "verify failed, as required")
 		}

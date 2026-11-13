@@ -148,3 +148,96 @@ func TestAnInterruptedPreflightCommandReturnsTheSignalNotContextCanceled(t *test
 		t.Errorf("error %v; output %s", err, output)
 	}
 }
+
+const preflightTimeoutBody = `{"detail":{"message":"step on terminal t did not complete within 240.0s","kind":"timeout","terminal_id":"writer"}}`
+
+func assertPreflightTimeoutAdvice(t *testing.T, out, session string) {
+	t.Helper()
+	start := strings.Index(out, "started but did not answer within 1s")
+	if start < 0 {
+		t.Fatal(out)
+	}
+	line, _, _ := strings.Cut(out[start:], "\n")
+	if !strings.Contains(line, "this can happen when the agent or the server has only just started") || strings.Contains(line, "HTTP 504") || strings.Contains(line, "run-step") {
+		t.Fatal(out)
+	}
+	retry := strings.Index(out, "1. run the command again")
+	attach := strings.Index(out, "2. if it happens again, attach with `tmux attach -t "+session+"`")
+	detail := strings.Index(out, "server detail: POST /terminals/run-step: HTTP 504:")
+	if retry <= start || attach <= retry || detail <= attach || !strings.Contains(out, "to see what the agent is waiting for, then detach with Ctrl-b d") || !strings.Contains(out, preflightTimeoutBody) {
+		t.Fatal(out)
+	}
+	if strings.Count(out, "tmux attach -t "+session) != 1 {
+		t.Fatal(out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "BLOCKED") && (!strings.Contains(line, "did not answer within 1s") || strings.Contains(line, "HTTP 504") || strings.Contains(line, "run-step")) {
+			t.Fatal(out)
+		}
+	}
+}
+
+func TestPreflightExplainsATimeoutInPlainWordsAndNamesTheSession(t *testing.T) {
+	for _, command := range []bool{false, true} {
+		t.Run(fmt.Sprint(command), func(t *testing.T) {
+			root := tuneFixture(t)
+			srv := (&tuneCAO{mode: "timeout"}).serve(t)
+			out, err := captureStdout(t, func() error {
+				if command {
+					return preflightCommand([]string{"-worktree", root, "-cao", srv.URL, "-timeout", "1s"})
+				}
+				return preflight(context.Background(), cao.NewClient(srv.URL), root, time.Second, loop.Chair{Provider: "test", Profile: "mock"})
+			})
+			if err == nil {
+				t.Fatal(out)
+			}
+			assertPreflightTimeoutAdvice(t, out+err.Error(), "tune-fake")
+		})
+	}
+}
+
+func TestPreflightKeepsTheMessageOfANonTimeoutFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/sessions":
+			json.NewEncoder(w).Encode(cao.Terminal{ID: "ours", SessionName: "preflight-fake"})
+		case r.URL.Path == "/terminals/run-step":
+			http.Error(w, "check failed", 400)
+		default:
+			w.Write([]byte(`{}`))
+		}
+	}))
+	defer srv.Close()
+	out, err := captureStdout(t, func() error {
+		return preflight(context.Background(), cao.NewClient(srv.URL), t.TempDir(), time.Second, loop.Chair{Provider: "a"})
+	})
+	want := "preflight failed for 1 chair(s):\n  a:: resolve it with `tmux attach -t preflight-fake`, then detach with Ctrl-b d"
+	if err == nil || err.Error() != want || !strings.Contains(out, "BLOCKED a: (") || !strings.Contains(out, "): POST /terminals/run-step: HTTP 400: check failed\n") {
+		t.Fatal(out, err)
+	}
+}
+
+func TestRunExplainsAPreflightTimeoutInPlainWordsAndNamesTheSession(t *testing.T) {
+	f := &runCAO{preflightTimeout: true}
+	_, args := runSessionArgs(t, f)
+	args = append(args, "-preflight-timeout", "1s")
+	out, err := captureStdout(t, func() error { return runCommand(args) })
+	if err == nil {
+		t.Fatal(out)
+	}
+	if !strings.Contains(err.Error(), "preflight failed for") {
+		t.Fatal(out, err)
+	}
+	advice := strings.Split(err.Error(), "\n  chair ")[1:]
+	if len(advice) == 0 {
+		t.Fatal(out, err)
+	}
+	for i, message := range advice {
+		if i == 0 {
+			message = out + "chair " + message
+		} else {
+			message = "chair " + message
+		}
+		assertPreflightTimeoutAdvice(t, message, "cao-run")
+	}
+}
