@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -330,6 +331,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 	worktree := fs.String("worktree", "", "use this existing worktree instead of creating one")
 	roles := chairFlags(fs, loop.AllRoles()...)
 	ensemble := fs.String("ensemble", "", ensembleHelp)
+	hideFlags(fs, "detached-launch")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -1143,6 +1145,7 @@ func finishRun(w io.Writer, sum ensembleSummary) error {
 
 func finishRunDetail(w io.Writer, sum ensembleSummary, detail bool) error {
 	printOutcome(w, sum)
+	printRestores(w, sum.Restores)
 	if sum.Tune != nil {
 		printTune(w, sum, detail)
 		if sum.Outcome != loop.Approved {
@@ -1305,4 +1308,40 @@ func timeoutRetryNote(r loop.PreflightResult, timeout time.Duration) string {
 		return "; first attempt also timed out and was retried once"
 	}
 	return fmt.Sprintf("; first attempt timed out after %s, second attempt failed", timeout)
+}
+
+func hideFlags(fs *flag.FlagSet, names ...string) {
+	fs.Usage = func() {
+		visible := flag.NewFlagSet(fs.Name(), flag.ContinueOnError)
+		visible.SetOutput(fs.Output())
+		fs.VisitAll(func(f *flag.Flag) {
+			if slices.Contains(names, f.Name) {
+				return
+			}
+			visible.Var(f.Value, f.Name, f.Usage)
+			visible.Lookup(f.Name).DefValue = f.DefValue
+		})
+		fmt.Fprintf(fs.Output(), "Usage of %s:\n", fs.Name())
+		visible.PrintDefaults()
+	}
+}
+
+func printRestores(w io.Writer, restores []loop.Restore) {
+	for _, r := range restores {
+		outcome := "step retried"
+		if r.Outcome == "failed" {
+			outcome = "step failed without retry"
+			for _, prior := range restores {
+				if prior.Step == r.Step && prior.Round == r.Round && prior.Outcome == "retried" {
+					outcome = "failed after a second change"
+					break
+				}
+			}
+		}
+		more := ""
+		if r.PathsMore > 0 {
+			more = fmt.Sprintf(" (+%d more)", r.PathsMore)
+		}
+		fmt.Fprintf(w, "  restored  %s[%d] %s: %d paths changed (%s)%s, work restored, %s\n", r.Step, r.Round, strings.Join(r.Chairs, ", "), len(r.Paths)+r.PathsMore, strings.Join(r.Paths, ", "), more, outcome)
+	}
 }

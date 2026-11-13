@@ -36,6 +36,9 @@ type TuneHooks struct {
 }
 
 func (e *Engine) Tune(ctx context.Context, hooks TuneHooks) (res Result, err error) {
+	defer e.cleanupSnapshot()
+	e.restores = nil
+	defer func() { res.Restores = e.restores }()
 	cfg := e.Config
 	res = Result{RunID: cfg.RunID, Worktree: cfg.Worktree, RunDir: filepath.Join(cfg.Worktree, RunDirRel(cfg.RunID))}
 	e.mu.Lock()

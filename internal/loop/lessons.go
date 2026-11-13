@@ -185,25 +185,18 @@ func (e *Engine) proposeLessons(ctx context.Context, res Result) (lessons []Less
 	}
 	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
-	before, err := e.treeState()
-	if err != nil {
-		report.Reason = "lessons step failed: could not inspect the worktree"
-		return
-	}
 	path := e.rel("lessons-reply.json")
-	_, stepErr := e.step(ctx, Step{Name: "lessons", Round: res.Rounds, Chair: e.Config.Chairs.Gate, ReplyPath: path, Timeout: limit, FreshTerminal: true,
-		Prompt: lessonsPrompt(e.Config.Task, res, e.lessonFiles(), path, e.seatedParts())})
-	after, err := e.treeState()
-	if err != nil {
-		report.Reason = "lessons step failed: could not inspect the worktree"
+	errs, guardErr := e.readOnlySteps(ctx, []Step{{Name: "lessons", Round: res.Rounds, Chair: e.Config.Chairs.Gate, ReplyPath: path, Timeout: limit, FreshTerminal: true,
+		Prompt: lessonsPrompt(e.Config.Task, res, e.lessonFiles(), path, e.seatedParts())}})
+	if guardErr != nil {
+		report.Reason = "lessons step failed: " + guardErr.Error()
+		if strings.Contains(guardErr.Error(), "modified the worktree") {
+			report.Reason = "lessons step modified the worktree"
+			e.progress("km: lessons step modified the worktree")
+		}
 		return
 	}
-	if before != after {
-		report.Reason = "lessons step modified the worktree"
-		e.record(Record{RunID: e.Config.RunID, Round: res.Rounds, Step: "lessons", TreeChanged: true, Error: report.Reason})
-		e.progress("km: lessons step modified the worktree")
-		return
-	}
+	stepErr := errs[0]
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(stepErr, context.DeadlineExceeded) {
 		report.Reason = fmt.Sprintf("lessons step failed: timed out after %s", limit)
 		return

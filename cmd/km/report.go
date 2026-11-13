@@ -25,6 +25,8 @@ import (
 )
 
 type reportRun struct {
+	Retries    int         `json:"retries,omitempty"`
+	Restores   int         `json:"restores,omitempty"`
 	Command    string      `json:"command,omitempty"`
 	RunID      string      `json:"run_id"`
 	Path       string      `json:"path"`
@@ -46,6 +48,8 @@ type reportRun struct {
 }
 
 type reportTotals struct {
+	Retries         int                         `json:"retries,omitempty"`
+	Restores        int                         `json:"restores,omitempty"`
 	Usage           reportUsageTotal            `json:"usage"`
 	EnsembleUsage   map[string]reportUsageTotal `json:"ensemble_usage"`
 	RepositoryUsage map[string]reportUsageTotal `json:"repository_usage"`
@@ -122,6 +126,12 @@ func reportCommand(args []string, stdout, stderr io.Writer) error {
 		}
 		report.Runs = append(report.Runs, run)
 		report.Totals.Runs++
+		if run.Restores > 0 {
+			report.Totals.Restores++
+		}
+		if run.Retries > 0 {
+			report.Totals.Retries++
+		}
 		report.Totals.Usage.add(run.Usage)
 		addReportGroupUsage(report.Totals.EnsembleUsage, reportKnown(run.Ensemble), run.Usage)
 		addReportGroupUsage(report.Totals.RepositoryUsage, reportKnown(run.Repository), run.Usage)
@@ -197,6 +207,7 @@ func readReportRun(dir *os.File, hasResult, hasTelemetry, hasCurrent, hasConfig 
 		path := filepath.Join(dir.Name(), "result.json")
 		data, err := readReportFile(dir, "result.json", false)
 		var recorded *struct {
+			Restores   []loop.Restore  `json:"restores"`
 			Command    string          `json:"command"`
 			RunID      string          `json:"run_id"`
 			Repository string          `json:"repository"`
@@ -223,6 +234,12 @@ func readReportRun(dir *os.File, hasResult, hasTelemetry, hasCurrent, hasConfig 
 		}
 		run.Repository, run.Ensemble = recorded.Repository, recorded.Ensemble
 		run.Command = recorded.Command
+		run.Restores = len(recorded.Restores)
+		for _, restore := range recorded.Restores {
+			if restore.Outcome == "retried" {
+				run.Retries++
+			}
+		}
 		run.Outcome, run.Reason = recorded.Outcome, recorded.Reason
 		run.Rounds, run.DurationMS = recorded.Rounds, recorded.DurationMS
 		run.Usage = readReportUsage(recorded.Usage)
@@ -441,6 +458,12 @@ func printReport(stdout io.Writer, report runReport) error {
 		return err
 	}
 	fmt.Fprintf(w, "\nruns: %d\n", report.Totals.Runs)
+	if report.Totals.Restores > 0 {
+		fmt.Fprintf(w, "restored: %d\n", report.Totals.Restores)
+	}
+	if report.Totals.Retries > 0 {
+		fmt.Fprintf(w, "retried: %d\n", report.Totals.Retries)
+	}
 	conflicts := 0
 	for _, run := range report.Runs {
 		if run.Conflict {

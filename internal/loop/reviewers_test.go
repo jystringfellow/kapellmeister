@@ -480,6 +480,7 @@ func TestAReviewerThatChangesTheTreeFailsTheRoundNamingItEvenAfterAnotherReviewW
 	eng, fake, records := newEngine(t, passing)
 	twoReviewers(eng)
 	classified := make(chan struct{})
+	var once sync.Once
 	fake.actions["review"] = func(s Step) {
 		if s.ChairName == "reviewer-2" {
 			select {
@@ -494,14 +495,14 @@ func TestAReviewerThatChangesTheTreeFailsTheRoundNamingItEvenAfterAnotherReviewW
 	fake.actions["classify-review"] = func(s Step) {
 		fake.write(s.ReplyPath, "APPROVE")
 		if s.ChairName == "reviewer-1" {
-			close(classified)
+			once.Do(func() { close(classified) })
 		}
 	}
 	res := run(t, eng)
 	if res.Outcome != Failed || !strings.Contains(res.Reason, "reviewer-2") || !strings.Contains(res.Reason, "modified the worktree") {
 		t.Fatal(res)
 	}
-	if recs := recordsOf(t, records, "verdict-review"); len(recs) != 2 {
+	if recs := recordsOf(t, records, "verdict-review"); len(recs) != 4 {
 		t.Fatalf("completed verdicts: %+v", recs)
 	}
 	changed := false
