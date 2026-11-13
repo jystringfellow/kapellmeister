@@ -14,6 +14,7 @@ import (
 )
 
 type Client struct {
+	BeforeLaunch  func(provider, dir string)
 	BaseURL       string
 	HTTP          *http.Client
 	Timeout       time.Duration
@@ -57,6 +58,9 @@ type Terminal struct {
 }
 
 func (c *Client) RunStep(ctx context.Context, req StepRequest) (StepResponse, error) {
+	if req.ReuseTerminalID == "" {
+		c.beforeLaunch(req.Provider, req.WorkingDirectory)
+	}
 	var resp StepResponse
 	var limit time.Duration
 	if req.Timeout > 0 {
@@ -103,6 +107,7 @@ func (l Launch) query() url.Values {
 }
 
 func (c *Client) CreateSession(ctx context.Context, name string, l Launch) (Terminal, error) {
+	c.beforeLaunch(l.Provider, l.WorkingDirectory)
 	q := l.query()
 	q.Set("session_name", name)
 	var t Terminal
@@ -111,6 +116,7 @@ func (c *Client) CreateSession(ctx context.Context, name string, l Launch) (Term
 }
 
 func (c *Client) AddTerminal(ctx context.Context, session string, l Launch) (Terminal, error) {
+	c.beforeLaunch(l.Provider, l.WorkingDirectory)
 	var t Terminal
 	err := c.call(ctx, c.LaunchTimeout, http.MethodPost, "/sessions/"+url.PathEscape(session)+"/terminals?"+l.query().Encode(), nil, &t)
 	return t, err
@@ -270,4 +276,10 @@ func (c *Client) CreateProfile(ctx context.Context, name, content string) error 
 
 func (c *Client) DeleteProfile(ctx context.Context, name string) error {
 	return c.call(ctx, c.Timeout, http.MethodDelete, "/agents/profiles/"+url.PathEscape(name), nil, nil)
+}
+
+func (c *Client) beforeLaunch(provider, dir string) {
+	if c.BeforeLaunch != nil && provider != "" && dir != "" {
+		c.BeforeLaunch(provider, dir)
+	}
 }

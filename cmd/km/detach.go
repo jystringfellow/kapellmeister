@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -14,6 +15,8 @@ import (
 )
 
 type detachedLaunchRecord struct {
+	Command         string `json:"command,omitempty"`
+	Checkout        string `json:"checkout,omitempty"`
 	RunID           string `json:"run_id"`
 	Worktree        string `json:"worktree"`
 	BaseBranch      string `json:"base_branch"`
@@ -51,7 +54,9 @@ func startDetached(ctx context.Context, args []string, dir string, launch detach
 	if err != nil {
 		return detachedHandle{}, err
 	}
-	cmd := exec.Command(executable, append([]string{"run", "-detached-launch", path}, args...)...)
+	child := strings.Fields(firstNonEmpty(launch.Command, "run"))
+	child = append(child, "-detached-launch", path)
+	cmd := exec.Command(executable, append(child, args...)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdout, cmd.Stderr = log, log
 	if err := cmd.Start(); err != nil {
@@ -106,6 +111,10 @@ func recordDetachedFailure(ctx context.Context, dir string, launch detachedLaunc
 	}
 	base, _ := gitOutput(launch.Worktree, "rev-parse", "HEAD")
 	sum := ensembleSummary{Result: loop.Result{RunID: launch.RunID, Worktree: launch.Worktree, RunDir: filepath.Join(launch.Worktree, loop.RunDirRel(launch.RunID)), Outcome: loop.Failed, Reason: reason}, Ensemble: state.Ensemble, Repository: state.Repository, BaseBranch: launch.BaseBranch, Base: base, DurationMS: time.Since(state.Started).Milliseconds()}
+	if launch.Command == "tune verify" {
+		sum.Command = launch.Command
+		sum.Tune = &tuneSummary{}
+	}
 	if err := writeJSON(filepath.Join(dir, "result.json"), sum); err != nil {
 		fmt.Fprintln(os.Stderr, "km: writing result.json:", err)
 		return

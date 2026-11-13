@@ -36,6 +36,7 @@ type TestConfig struct {
 type RunConfig struct {
 	BaseBranch       string `toml:"base"`
 	WorktreeDir      string `toml:"worktree_dir"`
+	TrustFolder      *bool  `toml:"trust_folder"`
 	LearnedBudget    *int   `toml:"learned_budget"`
 	Lessons          *bool  `toml:"lessons"`
 	LessonsTimeout   string `toml:"lessons_timeout"`
@@ -131,6 +132,7 @@ type Settings struct {
 	Defined          Agents              `json:"-"`
 	BaseBranch       string              `json:"base_branch"`
 	WorktreeDir      string              `json:"worktree_dir"`
+	TrustFolder      bool                `json:"trust_folder"`
 	LearnedBudget    int                 `json:"learned_budget"`
 	Lessons          bool                `json:"lessons"`
 	LessonsTimeout   time.Duration       `json:"lessons_timeout"`
@@ -392,7 +394,10 @@ func refuseRepoConfig(cfg loadedConfig, userPath string) error {
 	if err := refuseSections(cfg, ConfigFile, userOnlySections, userPath); err != nil {
 		return err
 	}
-	return refuseRunKey(cfg, "worktree_dir", userPath)
+	if err := refuseRunKey(cfg, "worktree_dir", userPath); err != nil {
+		return err
+	}
+	return refuseRunKey(cfg, "trust_folder", userPath)
 }
 
 func RepoBaseBranch(data []byte) (string, error) {
@@ -420,6 +425,9 @@ func refuseSections(cfg loadedConfig, name string, sections []string, home strin
 
 func (s *Settings) applyRun(layer loadedConfig) error {
 	r := layer.Run
+	if r.TrustFolder != nil {
+		s.TrustFolder = *r.TrustFolder
+	}
 	if layer.md.IsDefined("run", "base") {
 		s.BaseBranch = r.BaseBranch
 	}

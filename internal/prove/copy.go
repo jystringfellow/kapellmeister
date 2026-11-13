@@ -80,31 +80,46 @@ func cleanCopy(ctx context.Context, root, head, scratch, name string, setup map[
 	if _, err := git(ctx, dir, "checkout", "-q", "--detach", head); err != nil {
 		return "", err
 	}
+	if err := writeSetup(dir, setup); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+func OverlaySetup(src, dst string) error {
+	setup, err := readSetup(src)
+	if err != nil {
+		return err
+	}
+	return writeSetup(dst, setup)
+}
+
+func writeSetup(dir string, setup map[string]setupFile) error {
 	for name, file := range setup {
 		path := filepath.Join(dir, name)
 		parent := filepath.Dir(path)
 		if info, err := os.Lstat(parent); err == nil && !info.IsDir() {
-			return "", fmt.Errorf("setup parent %s must be a directory", name)
+			return fmt.Errorf("setup parent %s must be a directory", name)
 		} else if err != nil && !os.IsNotExist(err) {
-			return "", err
+			return err
 		}
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return "", err
+			return err
 		}
 		if !file.exists {
 			continue
 		}
 		if err := os.MkdirAll(parent, 0755); err != nil {
-			return "", err
+			return err
 		}
 		if err := os.WriteFile(path, file.body, file.mode); err != nil {
-			return "", err
+			return err
 		}
 		if err := os.Chmod(path, file.mode); err != nil {
-			return "", err
+			return err
 		}
 	}
-	return dir, nil
+	return nil
 }
 
 type fileState struct {

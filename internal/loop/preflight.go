@@ -30,7 +30,9 @@ type PreflightResult struct {
 	Session        string   `json:"session,omitempty"`
 	Blocker        string   `json:"blocker,omitempty"`
 	Error          string   `json:"error,omitempty"`
+	TimeoutRetried bool     `json:"timeout_retried,omitempty"`
 	Retried        bool     `json:"retried,omitempty"`
+	TimedOut       bool     `json:"timed_out,omitempty"`
 	Model          string   `json:"model,omitempty"`
 	Honored        *bool    `json:"model_honored,omitempty"`
 }
@@ -113,6 +115,7 @@ func preflightChairAttempts(ctx context.Context, stepper interface {
 
 	var res PreflightResult
 	var err error
+	timeoutRetried := false
 	seatRetries := 0
 	seatRetryError := ""
 	for attempt := 0; ; attempt++ {
@@ -126,6 +129,14 @@ func preflightChairAttempts(ctx context.Context, stepper interface {
 		unseated += res.Unseated
 		teardownErrors = append(teardownErrors, res.TeardownErrors...)
 		res.Retried = attempt > 0
+		if !res.OK && res.TimedOut && res.Blocker == "" && ctx.Err() == nil && !timeoutRetried {
+			if res.Session != "" {
+				unseat(res.Session)
+				res.Session, res.TerminalID = "", ""
+			}
+			timeoutRetried = true
+			continue
+		}
 		if res.OK || res.Blocker != "" || ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
 			break
 		}
@@ -155,6 +166,7 @@ func preflightChairAttempts(ctx context.Context, stepper interface {
 			seatRetries++
 		}
 	}
+	res.TimeoutRetried = timeoutRetried
 	res.SeatRetries, res.SeatRetryError = seatRetries, seatRetryError
 
 	if res.Session != "" {
@@ -243,6 +255,7 @@ func preflightChair(ctx context.Context, stepper interface {
 	if err == nil {
 		var out StepResult
 		out, err = stepper.Run(ctx, Step{Name: "preflight", Label: TerminalLabel("preflight", chair.Provider), Chair: chair, Prompt: preflightPrompt(rel), Dir: worktree, ReplyPath: rel, Timeout: timeout, ReuseTerminal: seat.TerminalID})
+		res.TimedOut = errors.Is(err, context.DeadlineExceeded)
 		if out.ReportedModel != "" {
 			res.Model = out.ReportedModel
 		}

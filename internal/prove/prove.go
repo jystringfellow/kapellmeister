@@ -30,8 +30,8 @@ type RunResult struct {
 type BreakResult struct {
 	Patch      string `json:"patch"`
 	Status     string `json:"status"`
-	ExitCode   int    `json:"exit_code"`
-	DurationMS int64  `json:"duration_ms"`
+	ExitCode   *int   `json:"exit_code,omitempty"`
+	DurationMS *int64 `json:"duration_ms,omitempty"`
 	Output     string `json:"output"`
 	Reason     string `json:"reason"`
 }
@@ -117,7 +117,7 @@ func Prove(ctx context.Context, options Options) (result Result) {
 		return fail(err)
 	}
 	defer func() {
-		if err := os.RemoveAll(scratch); err != nil {
+		if err := removeScratch(scratch); err != nil {
 			result.Status, result.ExitStatus, result.Reason = "error", 1, "remove scratch copies: "+err.Error()
 		}
 	}()
@@ -140,6 +140,39 @@ func Prove(ctx context.Context, options Options) (result Result) {
 		}
 		prefix := "unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_OBJECT_DIRECTORY\nTMPDIR='" + strings.ReplaceAll(tmp, "'", "'\"'\"'") + "'\nexport TMPDIR\n"
 		return initrepo.Run(ctx, dir, prefix+command, options.Timeout), nil
+	}
+	breakDirs := make([]string, len(options.Breaks))
+	for i, patch := range options.Breaks {
+		dir, err := cleanCopy(ctx, root, head, scratch, fmt.Sprintf("break-%d", i+1), setup)
+		if err != nil {
+			return fail(err)
+		}
+		before, err := setupSnapshot(dir)
+		if err != nil {
+			return fail(err)
+		}
+		patchFile := filepath.Join(scratch, "break.patch")
+		if err := os.WriteFile(patchFile, patches[i], 0600); err != nil {
+			return fail(err)
+		}
+		_, applyErr := git(ctx, dir, "apply", "--whitespace=nowarn", patchFile)
+		reason := ""
+		if applyErr != nil {
+			reason = fmt.Sprintf("break %s: patch did not apply: %s", patch, applyErr)
+		} else {
+			after, err := setupSnapshot(dir)
+			if err != nil {
+				return fail(err)
+			}
+			if !reflect.DeepEqual(before, after) {
+				reason = fmt.Sprintf("break %s: patch touches setup files (.kapellmeister/ or scripts/verify)", patch)
+			}
+		}
+		if reason != "" {
+			result.Breaks[i].Status, result.Breaks[i].Reason = "refused", reason
+			return refuse(reason)
+		}
+		breakDirs[i] = dir
 	}
 	failures := 0
 	for i := 1; i <= 2; i++ {
@@ -171,41 +204,13 @@ func Prove(ctx context.Context, options Options) (result Result) {
 	}
 	survived := []string{}
 	for i, patch := range options.Breaks {
-		dir, err := cleanCopy(ctx, root, head, scratch, fmt.Sprintf("break-%d", i+1), setup)
-		if err != nil {
-			return fail(err)
-		}
-		before, err := setupSnapshot(dir)
-		if err != nil {
-			return fail(err)
-		}
-		patchFile := filepath.Join(scratch, "break.patch")
-		if err := os.WriteFile(patchFile, patches[i], 0600); err != nil {
-			return fail(err)
-		}
-		_, applyErr := git(ctx, dir, "apply", "--whitespace=nowarn", patchFile)
-		reason := ""
-		if applyErr != nil {
-			reason = fmt.Sprintf("break %s: patch did not apply: %s", patch, applyErr)
-		} else {
-			after, err := setupSnapshot(dir)
-			if err != nil {
-				return fail(err)
-			}
-			if !reflect.DeepEqual(before, after) {
-				reason = fmt.Sprintf("break %s: patch touches setup files (.kapellmeister/ or scripts/verify)", patch)
-			}
-		}
-		if reason != "" {
-			result.Breaks[i].Status, result.Breaks[i].Reason = "refused", reason
-			return refuse(reason)
-		}
+		dir := breakDirs[i]
 		run, err := runVerify(dir)
 		if err != nil {
 			return fail(err)
 		}
 		b := &result.Breaks[i]
-		b.Status, b.ExitCode, b.DurationMS, b.Output = "breaks", run.ExitCode, run.DurationMS, run.Output
+		b.Status, b.ExitCode, b.DurationMS, b.Output = "breaks", &run.ExitCode, &run.DurationMS, run.Output
 		if ctx.Err() != nil {
 			b.Status = "interrupted"
 			return finish("interrupted", 1, "interrupted")
@@ -226,5 +231,15 @@ func Prove(ctx context.Context, options Options) (result Result) {
 	if len(options.Breaks) == 0 {
 		return finish("not_proved", 11, "passes, not proved; a break patch is needed: -break PATCH")
 	}
-	return finish("proved", 0, "proved: passed twice and every break patch made verify fail")
+	return finish("proved", 0, "passed twice and every break patch made verify fail")
+}
+
+func removeScratch(root string) error {
+	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err == nil && entry.IsDir() {
+			_ = os.Chmod(path, 0700)
+		}
+		return nil
+	})
+	return os.RemoveAll(root)
 }

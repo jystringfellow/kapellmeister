@@ -13,7 +13,6 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/jystringfellow/kapellmeister/internal/cao"
 	"github.com/jystringfellow/kapellmeister/internal/ensemble"
 	"github.com/jystringfellow/kapellmeister/internal/loop"
 )
@@ -59,7 +58,7 @@ func auditionCommand(args []string) error {
 	sizeMembers(policy, members)
 	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
-	client := cao.NewClient(firstNonEmpty(*caoURL, s.CAOURL))
+	client := newClient(firstNonEmpty(*caoURL, s.CAOURL), s, os.Stdout)
 	if err := ensureProfiles(ctx, client, &policy, stepChairs(chairs)); err != nil {
 		return err
 	}

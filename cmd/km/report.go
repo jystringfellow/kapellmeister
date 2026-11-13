@@ -25,6 +25,7 @@ import (
 )
 
 type reportRun struct {
+	Command    string      `json:"command,omitempty"`
 	RunID      string      `json:"run_id"`
 	Path       string      `json:"path"`
 	Started    *time.Time  `json:"started,omitempty"`
@@ -196,6 +197,7 @@ func readReportRun(dir *os.File, hasResult, hasTelemetry, hasCurrent, hasConfig 
 		path := filepath.Join(dir.Name(), "result.json")
 		data, err := readReportFile(dir, "result.json", false)
 		var recorded *struct {
+			Command    string          `json:"command"`
 			RunID      string          `json:"run_id"`
 			Repository string          `json:"repository"`
 			Ensemble   string          `json:"ensemble"`
@@ -220,6 +222,7 @@ func readReportRun(dir *os.File, hasResult, hasTelemetry, hasCurrent, hasConfig 
 			hasRecordedID = true
 		}
 		run.Repository, run.Ensemble = recorded.Repository, recorded.Ensemble
+		run.Command = recorded.Command
 		run.Outcome, run.Reason = recorded.Outcome, recorded.Reason
 		run.Rounds, run.DurationMS = recorded.Rounds, recorded.DurationMS
 		run.Usage = readReportUsage(recorded.Usage)
@@ -238,6 +241,9 @@ func readReportRun(dir *os.File, hasResult, hasTelemetry, hasCurrent, hasConfig 
 			diagnose(filepath.Join(dir.Name(), "current.json"), err)
 		} else {
 			run.state = state
+			if state.Command == "tune verify" {
+				run.Command = state.Command
+			}
 			run.Repository, run.Ensemble = state.Repository, state.Ensemble
 			started := state.Started.UTC()
 			run.Started, run.roughStart = &started, true
@@ -425,7 +431,11 @@ func printReport(stdout io.Writer, report runReport) error {
 				tokens = "≥" + tokens
 			}
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", reportCell(started, 19), reportCell(reportKnown(run.Repository), 20), reportCell(reportKnown(run.Ensemble), 8), reportCell(reportKnown(run.Outcome), 16), reportCell(rounds, 7), reportCell(took, 7), plain(tokens))
+		repoWidth, ensembleWidth := 20, 8
+		if run.Command == "tune verify" {
+			repoWidth, ensembleWidth = 17, 11
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", reportCell(started, 19), reportCell(reportKnown(run.Repository), repoWidth), reportCell(reportRunLabel(run.Ensemble, run.Command), ensembleWidth), reportCell(reportKnown(run.Outcome), 16), reportCell(rounds, 7), reportCell(took, 7), plain(tokens))
 	}
 	if err := w.Flush(); err != nil {
 		return err
@@ -495,4 +505,11 @@ func printReportNotSearched(w io.Writer, report runReport) error {
 	}
 	_, err := fmt.Fprintf(w, "not searched: %d directories (see stderr)\n", report.NotSearchedTotal)
 	return err
+}
+
+func reportRunLabel(ensemble, command string) string {
+	if ensemble == "" && command == "tune verify" {
+		return command
+	}
+	return reportKnown(ensemble)
 }

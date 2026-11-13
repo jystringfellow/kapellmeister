@@ -38,6 +38,7 @@ func proofGit(t *testing.T, root string, args ...string) string {
 			cmd.Env = append(cmd.Env, value)
 		}
 	}
+	cmd.Env = append(cmd.Env, "GIT_CONFIG_COUNT=2", "GIT_CONFIG_KEY_0=maintenance.auto", "GIT_CONFIG_VALUE_0=false", "GIT_CONFIG_KEY_1=gc.auto", "GIT_CONFIG_VALUE_1=0")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v: %s: %v", args, out, err)
@@ -52,7 +53,7 @@ func proofFixture(t *testing.T, command string) string {
 	root := initFixture(t, map[string]string{"file": "ok\n", "other": "old\n", ".gitignore": "ignored\n"})
 	proofGit(t, root, "init", "-q")
 	proofGit(t, root, "add", ".")
-	proofGit(t, root, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "maintenance.auto=false", "-c", "gc.auto=0", "commit", "-qm", "fixture")
+	proofGit(t, root, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "fixture")
 	if command != "" {
 		proofWrite(t, root, ".kapellmeister/config.toml", "[test]\nverify = "+fmt.Sprintf("%q", command)+"\n", 0644)
 	}
@@ -309,6 +310,20 @@ func TestProveLeavesTheCheckoutUnchangedAndRemovesItsScratchCopies(t *testing.T)
 	}
 }
 
+func TestProveRemovesScratchCopiesThatVerifyLeftReadOnly(t *testing.T) {
+	root := proofFixture(t, `mkdir -p "$TMPDIR/kept/inner" ro/inner && touch "$TMPDIR/kept/inner/file" ro/inner/file && chmod 500 "$TMPDIR/kept/inner" "$TMPDIR/kept" ro/inner ro`)
+	scratch := t.TempDir()
+	t.Setenv("TMPDIR", scratch)
+	r := proofJSON(t, root)
+	if r.ExitStatus != 11 {
+		t.Fatal(r)
+	}
+	entries, err := os.ReadDir(scratch)
+	if err != nil || len(entries) != 0 {
+		t.Fatal(entries, err)
+	}
+}
+
 func TestProveTimesOutAHungVerifyWithItsOwnStatus(t *testing.T) {
 	root := proofFixture(t, "sleep 30 & wait")
 	scratch := t.TempDir()
@@ -478,7 +493,7 @@ func TestProveNeverCountsATimedOutBreakAsProved(t *testing.T) {
 func TestProveRefusalTakesPrecedenceOverAPatchThatSurvived(t *testing.T) {
 	root := proofFixture(t, "true")
 	r := proofJSON(t, root, "-break", proofPatch(t, "other", "old", "new"), "-break", proofPatch(t, "file", "missing", "bad"))
-	if r.ExitStatus != 10 || r.Status != "refused" || r.Breaks[0].Status != "survives" || r.Breaks[1].Status != "refused" {
+	if r.ExitStatus != 10 || r.Status != "refused" || r.Breaks[0].Status != "skipped" || r.Breaks[1].Status != "refused" || len(r.Runs) != 0 {
 		t.Fatal(r)
 	}
 }
@@ -523,5 +538,72 @@ new file mode 120000
 	r := proofJSON(t, root, "-break", path)
 	if r.ExitStatus != 10 || r.Breaks[0].Status != "refused" {
 		t.Fatal(r)
+	}
+}
+
+func TestProveProvedLinePrintsItsStatusOnce(t *testing.T) {
+	root := proofFixture(t, "grep -q ok file")
+	code, out := proofCall(t, root, "-break", proofPatch(t, "file", "ok", "bad"))
+	if code != 0 || !strings.Contains(out, "proved: passed twice") || strings.Contains(out, "proved: proved:") {
+		t.Fatal(code, out)
+	}
+	r := proofJSON(t, root, "-break", proofPatch(t, "file", "ok", "bad"))
+	if strings.HasPrefix(r.Reason, "proved:") {
+		t.Fatal(r)
+	}
+}
+
+func TestProveReportsARefusedPatchWithoutAnExitCodeOrDuration(t *testing.T) {
+	root := proofFixture(t, "true")
+	_, out := proofCall(t, root, "-break", proofPatch(t, "file", "missing", "bad"), "-break", proofPatch(t, "other", "old", "new"))
+	for _, line := range strings.Split(out, "\n") {
+		if (strings.Contains(line, ": refused") || strings.Contains(line, ": skipped")) && (strings.Contains(line, "exit ") || strings.Contains(line, " in ")) {
+			t.Fatal(line)
+		}
+	}
+}
+
+func TestProveChecksEveryBreakPatchBeforeSpendingAnyCleanRun(t *testing.T) {
+	for _, kind := range []string{"missing", "empty", "does not apply", "setup"} {
+		t.Run(kind, func(t *testing.T) {
+			marker := filepath.Join(t.TempDir(), "ran")
+			root := proofFixture(t, "echo ran >> '"+marker+"'")
+			bad := filepath.Join(t.TempDir(), "missing.patch")
+			switch kind {
+			case "empty":
+				proofWrite(t, filepath.Dir(bad), filepath.Base(bad), "", 0644)
+			case "does not apply":
+				bad = proofPatch(t, "file", "absent", "bad")
+			case "setup":
+				proofWrite(t, root, "scripts/verify", "true\n", 0755)
+				bad = proofPatch(t, "scripts/verify", "true", "false")
+			}
+			r := proofJSON(t, root, "-break", proofPatch(t, "file", "ok", "bad"), "-break", bad)
+			if r.Status != "refused" || len(r.Runs) != 0 {
+				t.Fatal(r)
+			}
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Fatalf("verify ran before patch validation: %v", err)
+			}
+		})
+	}
+}
+
+func TestProveRefusedAndSkippedPatchesHaveNoExitCodeOrDurationInJSON(t *testing.T) {
+	root := proofFixture(t, "true")
+	_, out := proofCall(t, root, "-json", "-break", proofPatch(t, "file", "missing", "bad"), "-break", proofPatch(t, "other", "old", "new"))
+	var report struct {
+		Breaks []map[string]any `json:"breaks"`
+	}
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatal(err, out)
+	}
+	for _, patch := range report.Breaks {
+		if _, ok := patch["exit_code"]; ok {
+			t.Fatal(patch)
+		}
+		if _, ok := patch["duration_ms"]; ok {
+			t.Fatal(patch)
+		}
 	}
 }

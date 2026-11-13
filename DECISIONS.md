@@ -581,3 +581,60 @@ failure skips patches. Evidence: `TestProveProvesWhenEveryBreakPatchMakesVerifyF
 `TestProveRefusesAPatchThatTouchesKapellmeisterOrScriptsVerify`,
 `TestProveLeavesTheCheckoutUnchangedAndRemovesItsScratchCopies` and
 `TestProveRemovesItsScratchCopiesWhenInterrupted`.
+
+## 2026-11-13: Tune verify with two chairs and let prove judge
+
+Tune seats the configured implementer and first reviewer; one available agent can play both.
+Writing the command and reading it against CI need judgement, while planner, gate and classifier
+add no judgement that `km prove` needs. Approval requires km's own proof and the reviewer's
+approval in the same round. Tune carries one procedure for the guide and task; the Claude Code
+skill reads the guide. Work starts from HEAD in a detached worktree with current setup overlaid.
+Only `scripts/verify` and `.kapellmeister/config.toml` are copied back, after checking that the
+proved setup and the person's setup have not changed. Break patches stay in the run record.
+The agent-step timeout is configurable; each proof verification retains prove's 10m default.
+Evidence: `TestTuneVerifyIsApprovedOnlyWhenKmProveReportsProvedAndLeavesOnlySetupUncommitted`,
+`TestAnUnprovedOrOutOfScopeTuneIsRefusedAndLeavesTheCheckoutUntouched`,
+`TestTuneVerifyPreflightFailsFirstAndNamesOneFixPerFailure`,
+`TestATuneIsRecordedAsARunThatStatusWaitAndReportSee` and real Claude runs
+`20261113-130007-8c6a0d` (detached) and `20261113-130600-d56805` (foreground, `-again`), both
+approved with two clean passes and failing source and test breaks. This extends the init and
+prove decisions above; normal run still refuses a failing baseline.
+
+
+## 2026-11-13: Opt into Codex folder trust and retry a preflight check timeout once
+
+`[run] trust_folder` defaults off because editing agent configuration and granting trust require
+a person's opt-in. It is user-only: a repository must not grant itself trust. The CAO client
+launch seam covers all chair starts. km appends only, preserving existing bytes, entries and
+unparseable files; it records the main repository root because live Codex 0.167.0 probes on
+2026-11-13 wrote that key from linked worktrees and subdirectories, resolving symlinks.
+Claude Code, Copilot CLI and Antigravity need no km change because CAO 2.5.4 accepts their dialogs.
+Codex's per-launch override cannot pass CAO's scalar-only `codexConfig` and restricted keys.
+Off cannot promise a folder stays untrusted: km cannot stop CAO accepting recognised dialogs.
+For Codex, off retains the first-message loss in awslabs/cli-agent-orchestrator#1319.
+
+A preflight check timeout now tears down that chair and seats it once more; Codex saves trust
+when the first message's Enter accepts its dialog, so the next attempt can answer. This narrows
+the 2026-11-11 no-timeout-retry decision: seat timeouts, blockers, cancellation and real work
+still get no added retry. The second timeout retains its attach target. Evidence:
+`TestCodexEntryIsAppendedOnceAndTheRestOfTheFileIsByteIdentical`,
+`TestAnExistingEntryForTheFolderIsLeftAloneWhateverItsTrustLevel`,
+`TestTrustFolderBelongsInTheUserConfigAndIsRefusedInTheRepositoryConfig`,
+`TestTheTrustKeyIsTheMainRepositoryRootForALinkedWorktreeAndASubdirectory`,
+`TestPreflightTearsDownAChairThatTimedOutAndStartsItOnceMoreReportingTheRetry` and
+`TestPreflightKeepsTheSecondTimeoutAndItsAttachTargetAfterOneRetry`.
+
+## 2026-11-13: Tune installs km's own effort variants
+
+On a first run, tune refused `effort profile km-codex-high is not installed or loadable in CAO`
+after only base profiles had been installed. Tune now shares `ensureProfilesTo` with run before
+seating its chairs. Effort variants are km-derived files generated from an installed base, so
+installing them is outside the base-profile installation that tune was told to avoid. Tune never
+writes or replaces a base profile or edits user configuration; the shared CAO home proof,
+live-run guard and refusal to replace variants km did not generate still apply. `km preflight`
+had no gap: without `-tier` it uses bases, and with `-tier` it already prepares variants before
+seating. Its implementation is unchanged. Evidence:
+`TestTuneVerifyInstallsMissingEffortVariantsBeforeItSeatsAnyChair`,
+`TestTuneVerifyNeverInstallsOrReplacesABaseProfile`,
+`TestTuneVerifyRefusesAVariantKapellmeisterDidNotGenerateAndInstallsNothing` and
+`TestPreflightWithATierInstallsItsEffortVariantsAndWithoutOneSeatsTheBaseProfile`.

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,6 +12,54 @@ import (
 
 	"github.com/jystringfellow/kapellmeister/internal/initrepo"
 )
+
+func TestInitSummarisesCIWorkflowHintsWhenThereAreMoreThanThree(t *testing.T) {
+	for _, count := range []int{3, 4} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			files := map[string]string{".gitlab-ci.yml": "stages: [test]\n"}
+			for i := 0; i < count; i++ {
+				ext := "yml"
+				if i%2 == 1 {
+					ext = "yaml"
+				}
+				files[fmt.Sprintf(".github/workflows/test%d.%s", i, ext)] = "name: test\n"
+			}
+			root := initFixture(t, files)
+			out, err := initCall(t, root, "-dry-run")
+			if err != nil || !strings.Contains(out, "hint: ci .gitlab-ci.yml\n") || !strings.Contains(out, "hints are not written to any file\n") {
+				t.Fatal(out, err)
+			}
+			if count > 3 {
+				if strings.Count(out, "hint: ci 4 workflow files in .github/workflows\n") != 1 || strings.Contains(out, "hint: ci .github/workflows/") {
+					t.Fatal(out)
+				}
+			} else {
+				if strings.Contains(out, "workflow files in") {
+					t.Fatal(out)
+				}
+				for file := range files {
+					if !strings.Contains(out, "hint: ci "+file+"\n") {
+						t.Fatal(out)
+					}
+				}
+			}
+			out, err = initCall(t, root, "-dry-run", "-json")
+			var result initrepo.Result
+			if err != nil || json.Unmarshal([]byte(out), &result) != nil || len(result.Hints) != count+1 {
+				t.Fatal(out, err)
+			}
+			for _, hint := range result.Hints {
+				if _, ok := files[hint.File]; !ok || hint.Kind != "ci" {
+					t.Fatal(result.Hints)
+				}
+				delete(files, hint.File)
+			}
+			if len(files) != 0 {
+				t.Fatal("JSON omitted files", files)
+			}
+		})
+	}
+}
 
 func initFixture(t *testing.T, files map[string]string) string {
 	t.Helper()

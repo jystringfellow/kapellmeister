@@ -39,7 +39,7 @@ run() {
 func RenderStub() string {
 	return scriptPrelude + StubMarker + `
 rm -f "$log"
-printf '%s\n' 'The verify command has not been written.' 'A verify must pass on a clean checkout, fail when the code or a test is broken, and finish in reasonable time.' 'km prove checks it.' >&2
+printf '%s\n' 'The verify command has not been written.' 'A verify must pass on a clean checkout, fail when the code or a test is broken, and finish in reasonable time.' 'Run km tune verify to write and prove it with your ensemble, or write it by hand and run km prove.' >&2
 exit 1
 `
 }

@@ -47,6 +47,7 @@ installing the base chair profiles below.
 
 ```sh
 km init [-worktree DIR] [-dry-run] [-json] [-verify CMD] [-check CMD] [-no-run] [-timeout D]  # write config and an unfinished verify script
+km tune verify [-worktree DIR] [-detach] [-timeout D] [-json] [-again] [-guide]  # write and prove verify
 km prove [-worktree DIR] [-break PATCH]... [-timeout D] [-json]  # prove verify on clean copies and broken code
 km run -repo ~/Code/app [-base BRANCH] -task-file task.md [-ensemble thorough] [-detach]  # one ensemble
 km audition -worktree DIR [-ensemble thorough]   # can this ensemble play? no real work
@@ -67,9 +68,14 @@ km version                                       # print the version
 
 To start a repository, run `km init` in its checkout (or `km init -worktree DIR`). It writes
 repository configuration pointing to `scripts/verify` and an executable, unfinished verify script.
-Write the repository's verify command in that script and remove its unfinished marker, then use
-`km prove -break PATCH` to check it on clean copies and broken code. With `-verify CMD`, init wraps
-the supplied command and runs it once. Neither command needs CAO, user configuration or agents.
+Then run `km tune verify`: your ensemble reads the repository's CI and test instructions, writes
+verify and proves it with deliberate source and test breaks. The result stays uncommitted for you
+to read. This needs one configured agent and `km profiles install AGENT` to install its base
+profile; no earlier `km run` is needed. Tune prepares its effort variants automatically. Two
+chairs write and review, and one agent can play both. `km tune verify -guide` prints the same
+procedure to follow by hand.
+With `-verify CMD`, init wraps the supplied command and runs it once. Init and the manual route,
+`km prove -break PATCH`, need no CAO or agents.
 Review and commit the setup, then use `km preflight -worktree .` and
 `km run -repo . -task-file task.md`. Preview exact contents with `km init -dry-run`.
 
@@ -328,10 +334,29 @@ configure them before contacting CAO. Checks run concurrently once their chairs 
 5xx errors and a 400 saying the requested session was not found get up to three retries, after
 1, 2 and 4 seconds plus up to half as much again at random, under distinct names ending in `r`, `r2` and `r3`. The `ok` or `BLOCKED` line
 reports `seat retried N time(s) after <first error>`. Other failures keep one immediate retry;
-CAO call timeouts, including an expired launch context, and permission blockers are not retried.
+a preflight check timeout gets one fresh chair and one retry. km reports whether that second
+attempt passed or failed. Two timeouts can take two full `preflight_timeout`s plus CAO's readiness
+margins and seating time. Seat call timeouts, including an expired launch context, and permission
+blockers are not retried. Real work steps get no additional retry.
 A seat launch is bounded at three-eighths of `preflight_timeout` (90s by default, at least 10s),
 and never longer than the CAO client's 90s launch bound; other seats wait for that launch to finish.
 Deleting a session also waits its turn, so a deletion never overlaps another chair's creation.
+
+When a chair starts but does not answer before the preflight limit, `km preflight`, `km run`
+and `km tune verify` explain that this can happen when the agent or the server has only just
+started, or a trust or approval prompt may have consumed its first message. See
+[Trusting the folder](#trusting-the-folder) for the known Codex case. Run the command again first. If it happens again, use the reported session name to
+attach and see what the agent is waiting for, then detach with Ctrl-b d. For example:
+
+```text
+chair mock started but did not answer within 4m0s; this can happen when the agent or the server has only just started
+  1. run the command again
+  2. if it happens again, attach with `tmux attach -t cao-km-preflight-example` to see what the agent is waiting for, then detach with Ctrl-b d
+the agent may be waiting at a trust or approval prompt, or a prompt may have been answered automatically and km's first message lost with it
+[run] trust_folder = true in ~/.kapellmeister/config.toml avoids the known Codex case (see the README)
+```
+
+The agent's screen and raw server detail follow on separate lines when available.
 
 km cleans up failed launches by their exact chosen session names, deletes passing chairs' sessions,
 and keeps blocked chairs' attach targets. SIGINT, SIGTERM or SIGHUP waits for any bounded launch already
@@ -560,7 +585,8 @@ available agent in your user config.
 
 The repository's values win for `[run]` rounds, retries, `lessons`, `lessons_timeout` and `learned_budget`, `[steps]` and `[sizing]`; yours win
 for `[tiers]`, because only you know what your accounts can run. `[cao]`, `[chairs]`, `[agents]`,
-`[ensembles]`, `[report]` and `[run] worktree_dir` are machine-only; `[test]` and `[run] base` are repository-only.
+`[ensembles]`, `[report]`, `[run] worktree_dir` and `[run] trust_folder` are machine-only
+(see [Trusting the folder](#trusting-the-folder)); `[test]` and `[run] base` are repository-only.
 Putting one in the wrong file is an error.
 `$CAO_API_BASE_URL` overrides `[cao] url`. State lives in `~/.kapellmeister/state` (`$KAPELLMEISTER_STATE_DIR`).
 User-only `[report] dirs` adds search directories to `<state>/runs` for bare report, status and
@@ -639,6 +665,7 @@ preflight_timeout = "4m"
 blocker_poll = "20s"
 lessons = true                     # off by default; proposals need human review
 worktree_dir = "~/Code/worktrees"   # optional; defaults to the system temp directory
+trust_folder = false              # optional; record Codex repository trust before launching
 lessons_timeout = "5m"
 learned_budget = 4000              # bytes of lesson text per chair; at least 1
 
@@ -797,6 +824,29 @@ With one reviewer, replies remain `review-<round>.md` and the terminal label rem
 that file and the classifier step. Replies live under
 `.kapellmeister/runs/<run>/` in the worktree.
 
+### Trusting the folder
+
+`[run] trust_folder = true` opts into recording trust before chairs launch. It defaults to false
+and belongs only in your user config; a repository cannot grant itself trust. `km config` shows it.
+For Codex, km appends `[projects."<repository root>"]` with `trust_level = "trusted"` to
+`$CODEX_HOME/config.toml` (or `~/.codex/config.toml`). The path resolves symlinks and uses the main
+repository root for linked worktrees, as Codex does, rather than the chair's worktree path.
+Non-git folders need no entry. km preserves every existing byte and never changes an existing
+entry for the root or launch folder. If parsing or safely appending fails, km leaves the file alone
+and prints a diagnostic. It prints one line when it records trust. km and cao-server must share
+`CODEX_HOME` so the chair reads the same config.
+
+For Claude Code, Copilot CLI and Antigravity, km writes nothing: CAO 2.5.4 accepts their trust
+dialogs. km also does nothing for other providers. With the setting **off**, km changes nothing,
+but CAO still accepts the dialogs it recognises; off does not mean a folder stays untrusted.
+
+Codex supports a per-launch override, `-c 'projects={"/path"={trust_level="trusted"}}'`, which saves
+nothing. CAO cannot carry it: profile `codexConfig` keys must match `[A-Za-z0-9_.-]` and values must
+be scalars. CAO 2.5.4 does not recognise Codex 0.167.0's "Trust this folder?" menu, so km's first
+message can be lost when its trailing Enter accepts trust. The preflight timeout retry helps
+because Codex saves trust on that first attempt. This is reported upstream as
+[awslabs/cli-agent-orchestrator#1319](https://github.com/awslabs/cli-agent-orchestrator/issues/1319).
+
 ## Repository configuration
 
 ```toml
@@ -838,9 +888,10 @@ Failed or timed-out verifies leave the files in place and make init exit unsucce
 
 Detection supplies hints for whoever writes the command: root toolchain files, a `test:` target
 in the first existing `GNUmakefile`, `makefile` or `Makefile`, and CI workflow files. It reports
-these in text and the JSON `hints` array, never in a written file. Toolchain files alone cannot
-tell km the repository's test target, CI commands, or required services, so hints never choose
-a command or derive a focused `check` command.
+these in text and the JSON `hints` array, never in a written file. More than three GitHub workflow
+files become one text line, such as `hint: ci 15 workflow files in .github/workflows`; `-json`
+still lists every file. Toolchain files alone cannot tell km the repository's test target, CI
+commands, or required services, so hints never choose a command or derive a focused `check` command.
 
 Existing files are never edited or overwritten. Existing repository verify configuration or an
 executable `.kapellmeister/verify` hook is honoured without creating a replacement script.
@@ -853,6 +904,64 @@ for that invocation when existing setup is kept; `-check CMD` adds a focused com
 `-no-run` writes files without running verify, `-timeout D` changes the default `10m` limit,
 and `-dry-run` prints exact contents without writing or running anything. `-json` reports the
 same file decisions, hints, verify result and next steps as one object, including on failure.
+
+### Tuning verify
+
+```sh
+km init
+km tune verify [-worktree DIR] [-detach] [-timeout D] [-json] [-again]
+km tune verify -guide
+```
+
+Tune uses the implementer and the first reviewer from your configured chairs, with the same
+available-agent defaults as run. Override them with `-implementer SPEC` and `-reviewer SPEC`;
+`-cao URL` selects CAO. No planner, gate or classifier is needed. Before agent work, tune checks
+configuration, CAO and installed base profiles, then prepares effort variants through the same
+path as run before seating each distinct chair and asking it to answer. It prints
+`→ installed CAO profile NAME from PATH` for each new variant. A failure stops there and names
+one remedy. Tune never installs or replaces a base profile or edits your user configuration.
+For a missing built-in base, use the reported `km profiles install AGENT` command. To inherit a
+provider tier's effort, write a per-tier entry such as `medium = { effort = "inherit" }` under
+`[tiers.codex]`; repeat for each tier whose effort you want to inherit.
+`[run] preflight_timeout = "0s"` skips seating checks, as with run.
+
+The checkout must have a HEAD commit and the setup from init. An already written verify is
+refused unless `-again` is given. An executable `.kapellmeister/verify` hook must first be moved
+to `scripts/verify` with `[test] verify` updated. Tune starts with the failing unfinished stub;
+`km run` still refuses a failing baseline.
+
+The writer follows the guide, keeps the bounded-output wrapper, explains checks omitted because
+they need services, and writes at least two break patches outside the checkout: one breaks
+covered source code and one breaks a test expectation. Work takes place in a temporary detached
+worktree. Changes to any checkout file besides `scripts/verify` and `.kapellmeister/config.toml`
+are refused. km itself runs `km prove` with those patches. Only a proved result followed by the
+reviewer's approval can be approved; a chair's opinion alone cannot approve it.
+
+Tune uses `[run] rounds` and `[run] timeout`; `-timeout D` changes each agent step's limit.
+Each verification in prove keeps its `10m` limit. On approval, only the two setup files are copied
+back, and the temporary worktree is removed. If setup changed while tune ran, copy-back is
+refused. Failed worktrees are kept for inspection. Nothing is staged or committed. The summary
+shows the chosen command, omissions and reasons, both clean durations and one line per break
+patch with its result. Proof detail, including bounded failure output, appears once as progress;
+the final foreground summary does not repeat it. `km wait RUN` shows the complete summary,
+including that failure output, on its own. Break patches live in the run record. `km status`,
+`km wait` and `km report` identify it as `tune verify`. With `-detach`, the launcher returns a run id, PID, checkout and output path;
+use `km wait RUN -json` for the final JSON summary. `-json` without detach prints it directly.
+Bare `km tune` lists the supported subjects and exits 2. An unknown subject first prints
+`km tune: unknown subject "SUBJECT"`, then the same list, and also exits 2.
+
+For a person or another agent, `km tune verify -guide` prints the procedure without needing a
+checkout, configuration or CAO. The Claude Code skill is a thin wrapper around that command.
+Install it personally from this repository:
+
+```sh
+mkdir -p ~/.claude/skills
+cp -R skills/km-tune-verify ~/.claude/skills/
+```
+
+Or copy `skills/km-tune-verify` into a project's `.claude/skills/` directory. Invoke
+`/km-tune-verify` there; it reads the guide and follows it, finishing with `km prove`.
+The skill carries no copy of the procedure.
 
 ### Proving verify
 
@@ -868,8 +977,8 @@ is flaky. Each run's duration is reported. The checkout is left untouched, inclu
 writes files. Copies and their temporary logs live outside the checkout and are removed on
 completion, failure, timeout or a handled interrupt.
 
-For each `-break PATCH`, prove makes another fresh copy, applies the patch and requires verify
-to fail. A patch that does not apply, is empty or unreadable, or changes `.kapellmeister/` or
+Before either clean run, prove checks every `-break PATCH` in a fresh copy. It then requires
+verify to fail in each patched copy. A patch that does not apply, is empty or unreadable, or changes `.kapellmeister/` or
 `scripts/verify` is refused. A timeout never counts as a successful break. Proved means two
 clean passes and at least one break patch, with every patch making verify fail. Without a patch,
 it reports "passes, not proved" and asks for `-break PATCH`.
@@ -919,11 +1028,13 @@ A pin needs a `[tiers.<provider>]` table (built in or configured) with the tier 
 An explicit model (`provider:profile:model`) cannot also carry `@tier`.
 
 Models must be IDs (CAO rejects display names). Effort applies to Claude Code and Codex only,
-because CAO cannot pass it to the others; `effort = "inherit"` uses the CLI's own setting. kapellmeister
-generates and installs each `<profile>-<effort>` variant it needs from the installed base profile,
+because CAO cannot pass it to the others. A per-tier entry such as
+`medium = { effort = "inherit" }` under `[tiers.codex]` uses the CLI's own setting for that tier.
+kapellmeister generates and installs each `<profile>-<effort>` variant it needs from the installed
+base profile,
 including user-named profiles. A missing base is an error naming that base. Permissions are copied
-as described above; the base's system prompt and other fields are not. `effort = "inherit"`
-uses the base directly and installs nothing. Explicit models and providers without tier tables
+as described above; the base's system prompt and other fields are not. A tier with inherited effort
+uses the base directly and needs no variant. Explicit models and providers without tier tables
 also need no variants.
 
 ### Sizing

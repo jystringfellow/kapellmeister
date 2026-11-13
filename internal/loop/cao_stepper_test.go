@@ -30,7 +30,7 @@ func hungCAOPreflight(t *testing.T) ([]PreflightResult, int64, time.Duration) {
 			_ = json.NewEncoder(w).Encode(cao.Terminal{ID: name, SessionName: name})
 			return
 		}
-		if r.Method == "PATCH" || r.Method == "GET" {
+		if r.Method == "PATCH" || r.Method == "GET" || r.Method == "DELETE" {
 			_, _ = w.Write([]byte(`{}`))
 			return
 		}
@@ -67,7 +67,7 @@ func hungCAOPreflight(t *testing.T) ([]PreflightResult, int64, time.Duration) {
 	return results, calls.Load(), elapsed
 }
 
-func TestPreflightAgainstAHungCAOFailsEachChairWithinItsTimeoutPlusTheMargin(t *testing.T) {
+func TestPreflightAgainstAHungCAOFailsEachChairWithinTwoTimeoutsPlusTheirMargins(t *testing.T) {
 	results, _, elapsed := hungCAOPreflight(t)
 	if len(results) != 3 {
 		t.Fatalf("results = %+v", results)
@@ -82,14 +82,14 @@ func TestPreflightAgainstAHungCAOFailsEachChairWithinItsTimeoutPlusTheMargin(t *
 	}
 }
 
-func TestPreflightDoesNotRetryAChairWhoseCAOCallTimedOut(t *testing.T) {
+func TestPreflightRetriesAChairWhoseCheckCallTimedOutOnce(t *testing.T) {
 	results, calls, _ := hungCAOPreflight(t)
-	if calls != int64(len(results)) {
-		t.Errorf("requests = %d, want %d", calls, len(results))
+	if calls != 2*int64(len(results)) {
+		t.Errorf("requests = %d, want %d", calls, 2*len(results))
 	}
 	for _, res := range results {
-		if res.Retried {
-			t.Errorf("timed out chair was retried: %+v", res)
+		if !res.Retried || !res.TimeoutRetried {
+			t.Errorf("timed out check was not retried: %+v", res)
 		}
 	}
 }
