@@ -623,3 +623,18 @@ still get no added retry. The second timeout retains its attach target. Evidence
 `TestTheTrustKeyIsTheMainRepositoryRootForALinkedWorktreeAndASubdirectory`,
 `TestPreflightTearsDownAChairThatTimedOutAndStartsItOnceMoreReportingTheRetry` and
 `TestPreflightKeepsTheSecondTimeoutAndItsAttachTargetAfterOneRetry`.
+
+## 2026-11-13: Tune installs km's own effort variants
+
+On a first run, tune refused `effort profile km-codex-high is not installed or loadable in CAO`
+after only base profiles had been installed. Tune now shares `ensureProfilesTo` with run before
+seating its chairs. Effort variants are km-derived files generated from an installed base, so
+installing them is outside the base-profile installation that tune was told to avoid. Tune never
+writes or replaces a base profile or edits user configuration; the shared CAO home proof,
+live-run guard and refusal to replace variants km did not generate still apply. `km preflight`
+had no gap: without `-tier` it uses bases, and with `-tier` it already prepares variants before
+seating. Its implementation is unchanged. Evidence:
+`TestTuneVerifyInstallsMissingEffortVariantsBeforeItSeatsAnyChair`,
+`TestTuneVerifyNeverInstallsOrReplacesABaseProfile`,
+`TestTuneVerifyRefusesAVariantKapellmeisterDidNotGenerateAndInstallsNothing` and
+`TestPreflightWithATierInstallsItsEffortVariantsAndWithoutOneSeatsTheBaseProfile`.

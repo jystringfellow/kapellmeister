@@ -277,6 +277,16 @@ func EffortProfile(base, effort string) string {
 	return base + "-" + effort
 }
 
+func (p *Policy) InheritAdvice(provider, effort string) string {
+	lines := []string{fmt.Sprintf("[tiers.%s]", provider)}
+	for _, tier := range TierNames {
+		if p.Tiers[provider][tier].Effort == effort {
+			lines = append(lines, fmt.Sprintf("%s = { effort = %q }", tier, InheritEffort))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
 func tierIndex(name string) int {
 	return slices.Index(TierNames, name)
 }

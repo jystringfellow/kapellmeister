@@ -61,12 +61,14 @@ func tuneFixture(t *testing.T) string {
 }
 
 type tuneCAO struct {
-	mu       sync.Mutex
-	mode     string
-	steps    []string
-	writes   []string
-	profiles []cao.Profile
-	hold     <-chan struct{}
+	mu          sync.Mutex
+	mode        string
+	steps       []string
+	writes      []string
+	profiles    []cao.Profile
+	permissions map[string]cao.ProfilePermissions
+	seated      []string
+	hold        <-chan struct{}
 }
 
 func (f *tuneCAO) serve(t *testing.T) *httptest.Server {
@@ -74,6 +76,9 @@ func (f *tuneCAO) serve(t *testing.T) *httptest.Server {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		if profileProbe(w, r, os.Getenv("CAO_HOME_DIR")) {
+			return
+		}
 		switch {
 		case r.Method == "GET" && r.URL.Path == "/agents/profiles":
 			profiles := f.profiles
@@ -82,12 +87,23 @@ func (f *tuneCAO) serve(t *testing.T) *httptest.Server {
 			}
 			json.NewEncoder(w).Encode(profiles)
 		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/agents/profiles/"):
-			json.NewEncoder(w).Encode(map[string]string{"name": filepath.Base(r.URL.Path)})
+			name := filepath.Base(r.URL.Path)
+			if f.permissions != nil {
+				p, ok := f.permissions[name]
+				if !ok {
+					http.NotFound(w, r)
+					return
+				}
+				json.NewEncoder(w).Encode(p)
+			} else {
+				json.NewEncoder(w).Encode(map[string]string{"name": name})
+			}
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/output"):
 			json.NewEncoder(w).Encode(map[string]string{"output": "Permission rule requires confirmation. Do you want to proceed?"})
 		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/terminals/"):
 			json.NewEncoder(w).Encode(cao.Terminal{ID: "writer"})
 		case r.Method == "POST" && r.URL.Path == "/sessions":
+			f.seated = append(f.seated, r.URL.Query().Get("agent_profile"))
 			json.NewEncoder(w).Encode(cao.Terminal{ID: "podium", SessionName: "tune-fake"})
 		case r.Method == "DELETE" || r.Method == "PATCH":
 			w.Write([]byte(`{}`))
@@ -230,7 +246,7 @@ func TestTuneVerifyRefusesAFinishedVerifyUnlessAgainIsGiven(t *testing.T) {
 }
 
 func TestTuneVerifyPreflightFailsFirstAndNamesOneFixPerFailure(t *testing.T) {
-	for _, kind := range []string{"no chairs", "server", "profile", "variant"} {
+	for _, kind := range []string{"no chairs", "server", "profile"} {
 		t.Run(kind, func(t *testing.T) {
 			root := tuneFixture(t)
 			f := &tuneCAO{}
@@ -248,10 +264,6 @@ func TestTuneVerifyPreflightFailsFirstAndNamesOneFixPerFailure(t *testing.T) {
 				proofWrite(t, loop.Home(), "config.toml", "[agents]\navailable = ['claude']\n", 0644)
 				f.profiles = []cao.Profile{}
 				want = "km profiles install claude"
-			case "variant":
-				proofWrite(t, loop.Home(), "config.toml", "[agents]\navailable = ['claude']\n", 0644)
-				f.profiles = []cao.Profile{{Name: "km-claude", Loadable: true}}
-				want = `effort = "inherit"`
 			}
 			before := initSnapshot(t, root)
 			config := initRead(t, loop.Home(), "config.toml")

@@ -21,6 +21,18 @@ func defaultPolicy() *Policy {
 	return &p
 }
 
+func TestInheritAdviceNamesEveryTierWithTheRequestedEffortInTierOrder(t *testing.T) {
+	home := writeUserConfig(t, "[tiers.claude_code]\nsmall = { effort = 'high' }\nmedium = { effort = 'high' }\n")
+	s, err := LoadSettings(home, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "[tiers.claude_code]\nsmall = { effort = \"inherit\" }\nmedium = { effort = \"inherit\" }"
+	if got := s.Policy.InheritAdvice("claude_code", "high"); got != want {
+		t.Fatalf("advice = %q, want %q", got, want)
+	}
+}
+
 func TestEachStepResolvesToItsTierModelAndEffortProfile(t *testing.T) {
 	p := defaultPolicy()
 	chair, a := p.Chair("implement", claudeChair, "", 0)
@@ -98,6 +110,7 @@ escalate_after = 0
 
 func TestPolicyRejectsSettingsCAOCannotApply(t *testing.T) {
 	cases := map[string]string{
+		"provider effort":       "[tiers.codex]\neffort = \"inherit\"\n",
 		"effort for copilot":    "[tiers.copilot_cli]\nlarge = { effort = \"high\" }\n",
 		"unknown effort":        "[tiers.claude_code]\nlarge = { effort = \"ultra\" }\n",
 		"inverted bounds":       "[steps.review]\nmin = \"large\"\n",

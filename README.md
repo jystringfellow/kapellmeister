@@ -70,8 +70,10 @@ To start a repository, run `km init` in its checkout (or `km init -worktree DIR`
 repository configuration pointing to `scripts/verify` and an executable, unfinished verify script.
 Then run `km tune verify`: your ensemble reads the repository's CI and test instructions, writes
 verify and proves it with deliberate source and test breaks. The result stays uncommitted for you
-to read. This needs one configured, installed agent; two chairs write and review, and one agent
-can play both. `km tune verify -guide` prints the same procedure to follow by hand.
+to read. This needs one configured agent and `km profiles install AGENT` to install its base
+profile; no earlier `km run` is needed. Tune prepares its effort variants automatically. Two
+chairs write and review, and one agent can play both. `km tune verify -guide` prints the same
+procedure to follow by hand.
 With `-verify CMD`, init wraps the supplied command and runs it once. Init and the manual route,
 `km prove -break PATCH`, need no CAO or agents.
 Review and commit the setup, then use `km preflight -worktree .` and
@@ -886,9 +888,10 @@ Failed or timed-out verifies leave the files in place and make init exit unsucce
 
 Detection supplies hints for whoever writes the command: root toolchain files, a `test:` target
 in the first existing `GNUmakefile`, `makefile` or `Makefile`, and CI workflow files. It reports
-these in text and the JSON `hints` array, never in a written file. Toolchain files alone cannot
-tell km the repository's test target, CI commands, or required services, so hints never choose
-a command or derive a focused `check` command.
+these in text and the JSON `hints` array, never in a written file. More than three GitHub workflow
+files become one text line, such as `hint: ci 15 workflow files in .github/workflows`; `-json`
+still lists every file. Toolchain files alone cannot tell km the repository's test target, CI
+commands, or required services, so hints never choose a command or derive a focused `check` command.
 
 Existing files are never edited or overwritten. Existing repository verify configuration or an
 executable `.kapellmeister/verify` hook is honoured without creating a replacement script.
@@ -913,10 +916,13 @@ km tune verify -guide
 Tune uses the implementer and the first reviewer from your configured chairs, with the same
 available-agent defaults as run. Override them with `-implementer SPEC` and `-reviewer SPEC`;
 `-cao URL` selects CAO. No planner, gate or classifier is needed. Before agent work, tune checks
-configuration, CAO, installed base and effort profiles, then seats each distinct chair and asks
-it to answer. A failure stops there and names one remedy. Tune never installs profiles or edits
-your user configuration. For a missing built-in base, use the reported `km profiles install AGENT`
-command; for a missing effort variant, set `effort = "inherit"` on the selected provider tier.
+configuration, CAO and installed base profiles, then prepares effort variants through the same
+path as run before seating each distinct chair and asking it to answer. It prints
+`→ installed CAO profile NAME from PATH` for each new variant. A failure stops there and names
+one remedy. Tune never installs or replaces a base profile or edits your user configuration.
+For a missing built-in base, use the reported `km profiles install AGENT` command. To inherit a
+provider tier's effort, write a per-tier entry such as `medium = { effort = "inherit" }` under
+`[tiers.codex]`; repeat for each tier whose effort you want to inherit.
 `[run] preflight_timeout = "0s"` skips seating checks, as with run.
 
 The checkout must have a HEAD commit and the setup from init. An already written verify is
@@ -1022,11 +1028,13 @@ A pin needs a `[tiers.<provider>]` table (built in or configured) with the tier 
 An explicit model (`provider:profile:model`) cannot also carry `@tier`.
 
 Models must be IDs (CAO rejects display names). Effort applies to Claude Code and Codex only,
-because CAO cannot pass it to the others; `effort = "inherit"` uses the CLI's own setting. kapellmeister
-generates and installs each `<profile>-<effort>` variant it needs from the installed base profile,
+because CAO cannot pass it to the others. A per-tier entry such as
+`medium = { effort = "inherit" }` under `[tiers.codex]` uses the CLI's own setting for that tier.
+kapellmeister generates and installs each `<profile>-<effort>` variant it needs from the installed
+base profile,
 including user-named profiles. A missing base is an error naming that base. Permissions are copied
-as described above; the base's system prompt and other fields are not. `effort = "inherit"`
-uses the base directly and installs nothing. Explicit models and providers without tier tables
+as described above; the base's system prompt and other fields are not. A tier with inherited effort
+uses the base directly and needs no variant. Explicit models and providers without tier tables
 also need no variants.
 
 ### Sizing
