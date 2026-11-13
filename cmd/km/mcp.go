@@ -220,7 +220,7 @@ func mcpOutput(ctx context.Context, raw json.RawMessage) (any, error) {
 		limit = 65536
 	}
 	var diag bytes.Buffer
-	run, err := findWaitRun(a.Run, nil, 64, 1000000, &diag)
+	run, skippedDirs, err := findWaitRun(a.Run, nil, 64, 1000000, &diag)
 	if err != nil {
 		return nil, err
 	}
@@ -261,6 +261,9 @@ func mcpOutput(ctx context.Context, raw json.RawMessage) (any, error) {
 		}
 	}
 	result := map[string]any{"run_id": run.RunID, "path": filepath.Join(run.Path, "output.log"), "size": size, "returned": len(data), "truncated": int64(len(data)) < size, "text": string(data)}
+	if len(skippedDirs) > 0 {
+		result["skipped_dirs"] = skippedDirs
+	}
 	var out bytes.Buffer
 	if err := printReportJSON(&out, result); err != nil {
 		return nil, err

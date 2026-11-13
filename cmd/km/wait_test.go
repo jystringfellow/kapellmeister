@@ -262,3 +262,54 @@ func TestWaitStillAcceptsTwoCharacterPrefixesAndExactOneCharacterRunIds(t *testi
 		}
 	}
 }
+
+func TestWaitFindsARunInTheConfiguredDirectoriesThatExistWhenAnotherDoesNot(t *testing.T) {
+	isolateReportConfig(t)
+	root, missing := t.TempDir(), filepath.Join(t.TempDir(), "absent")
+	reportFixture(t, root, "configured", "", "app", "quick", "approved")
+	for _, skip := range []bool{true, false} {
+		setReportDirs(t, root)
+		wantDiag := ""
+		if skip {
+			setReportDirs(t, missing, root)
+			wantDiag = "km: wait: " + missing + ": not searched: directory does not exist\n"
+		}
+		for _, flags := range [][]string{nil, {"-json"}} {
+			out, diag, code := waitSubprocess(t, append([]string{"configured"}, flags...)...)
+			if code != 0 || diag != wantDiag {
+				t.Fatalf("exit = %d, stdout = %s, stderr = %s", code, out, diag)
+			}
+			if len(flags) == 0 {
+				if !strings.Contains(out, "approved after") {
+					t.Fatal(out)
+				}
+				continue
+			}
+			var doc map[string]any
+			if err := json.Unmarshal([]byte(out), &doc); err != nil {
+				t.Fatal(err)
+			}
+			if skip {
+				dirs, ok := doc["skipped_dirs"].([]any)
+				if !ok || len(dirs) != 1 || dirs[0] != missing {
+					t.Fatal(doc)
+				}
+			} else if _, exists := doc["skipped_dirs"]; exists {
+				t.Fatal(doc)
+			}
+		}
+	}
+}
+
+func TestWaitNamesSkippedDirectoriesEvenWhenTheRunIsUnknown(t *testing.T) {
+	isolateReportConfig(t)
+	missing := filepath.Join(t.TempDir(), "absent")
+	for _, dirs := range [][]string{{missing}, {missing, t.TempDir()}} {
+		setReportDirs(t, dirs...)
+		out, diag, code := waitSubprocess(t, "unknown")
+		want := "km: wait: " + missing + ": not searched: directory does not exist\nkm: wait: unknown run \"unknown\"\n"
+		if code != 1 || out != "" || diag != want {
+			t.Fatalf("exit = %d, stdout = %s, stderr = %s", code, out, diag)
+		}
+	}
+}

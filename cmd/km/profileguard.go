@@ -68,7 +68,7 @@ func guardProfile(home, name, source string) error {
 	if bytes.Equal(data, []byte(source)) {
 		return nil
 	}
-	found, _, err := findRuns([]string{filepath.Join(loop.StateDir(), "runs")}, true, 64, 1000000, true, false)
+	found, _, err := findRuns([]string{filepath.Join(loop.StateDir(), "runs")}, defaultRecordDirs, 64, 1000000, true, false)
 	if err != nil {
 		return nil
 	}
