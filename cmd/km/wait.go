@@ -42,6 +42,10 @@ type waitResult struct {
 var waitPollInterval = time.Second
 
 func waitCommand(args []string, stdout, stderr io.Writer) error {
+	return waitAt(nil, args, stdout, stderr)
+}
+
+func waitAt(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("wait", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	timeout := fs.Duration("timeout", 0, "maximum wait; 0 waits until the run finishes")
@@ -65,35 +69,21 @@ func waitCommand(args []string, stdout, stderr io.Writer) error {
 	if strings.TrimSpace(id) == "" {
 		return errors.New("wait: RUN must not be empty")
 	}
-	named := positional[1:]
-	dirs, configured, source, err := recordDirs(named)
-	if err != nil {
-		return fmt.Errorf("wait: %s", plain(err.Error()))
-	}
-	found, scan, err := findRuns(dirs, len(named) == 0 && !configured, *maxDepth, *maxEntries, true, false)
-	if err != nil {
-		if configured {
-			err = fmt.Errorf("%w (from [report] dirs in %s)", err, source)
-		}
-		return fmt.Errorf("wait: %s", plain(err.Error()))
-	}
-	run, err := resolveWaitRun(id, found)
+	run, err := findWaitRun(id, positional[1:], *maxDepth, *maxEntries, stderr)
 	if err != nil {
 		return err
 	}
-	for _, diagnostic := range scan.diagnostics {
-		if strings.Contains(diagnostic, plain(filepath.Join(run.Path, "result.json"))+":") {
-			continue
-		}
-		fmt.Fprintln(stderr, strings.Replace(diagnostic, "km: report:", "km: wait:", 1))
-	}
+
 	dir, err := os.OpenFile(run.Path, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_DIRECTORY, 0)
 	if err != nil {
 		return fmt.Errorf("wait: %s", plain(err.Error()))
 	}
 	defer dir.Close()
-	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-	defer stop()
+	if ctx == nil {
+		var stop context.CancelFunc
+		ctx, stop = loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+		defer stop()
+	}
 	if *timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, *timeout)
@@ -212,4 +202,32 @@ func readWaitResult(dir *os.File) (ensembleSummary, error) {
 		return sum, errors.New("result.json has no run_id or outcome")
 	}
 	return sum, nil
+}
+
+func findWaitRun(id string, named []string, maxDepth, maxEntries int, stderr io.Writer) (reportRun, error) {
+	if strings.TrimSpace(id) == "" {
+		return reportRun{}, errors.New("wait: RUN must not be empty")
+	}
+	dirs, configured, source, err := recordDirs(named)
+	if err != nil {
+		return reportRun{}, fmt.Errorf("wait: %s", plain(err.Error()))
+	}
+	found, scan, err := findRuns(dirs, len(named) == 0 && !configured, maxDepth, maxEntries, true, false)
+	if err != nil {
+		if configured {
+			err = fmt.Errorf("%w (from [report] dirs in %s)", err, source)
+		}
+		return reportRun{}, fmt.Errorf("wait: %s", plain(err.Error()))
+	}
+	run, err := resolveWaitRun(id, found)
+	if err != nil {
+		return reportRun{}, err
+	}
+	for _, diagnostic := range scan.diagnostics {
+		if strings.Contains(diagnostic, plain(filepath.Join(run.Path, "result.json"))+":") {
+			continue
+		}
+		fmt.Fprintln(stderr, strings.Replace(diagnostic, "km: report:", "km: wait:", 1))
+	}
+	return run, nil
 }

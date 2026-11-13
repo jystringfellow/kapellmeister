@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,32 +23,39 @@ type detachedLaunchRecord struct {
 
 var detachedLaunchTimeout = 30 * time.Second
 
-func startDetached(ctx context.Context, args []string, dir string, launch detachedLaunchRecord, opening []byte, stdout io.Writer) error {
+type detachedHandle struct {
+	RunID    string `json:"run_id"`
+	PID      int    `json:"pid"`
+	Worktree string `json:"worktree"`
+	Output   string `json:"output"`
+}
+
+func startDetached(ctx context.Context, args []string, dir string, launch detachedLaunchRecord, opening []byte) (detachedHandle, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
+		return detachedHandle{}, err
 	}
 	path := filepath.Join(dir, "launch.json")
 	if err := writeJSON(path, launch); err != nil {
-		return err
+		return detachedHandle{}, err
 	}
 	logPath := filepath.Join(dir, "output.log")
 	log, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
-		return err
+		return detachedHandle{}, err
 	}
 	defer log.Close()
 	if _, err := log.Write(opening); err != nil {
-		return err
+		return detachedHandle{}, err
 	}
 	executable, err := os.Executable()
 	if err != nil {
-		return err
+		return detachedHandle{}, err
 	}
 	cmd := exec.Command(executable, append([]string{"run", "-detached-launch", path}, args...)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdout, cmd.Stderr = log, log
 	if err := cmd.Start(); err != nil {
-		return err
+		return detachedHandle{}, err
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
@@ -57,31 +63,31 @@ func startDetached(ctx context.Context, args []string, dir string, launch detach
 	defer deadline.Stop()
 	tick := time.NewTicker(10 * time.Millisecond)
 	defer tick.Stop()
-	ready := func() bool { _, err := os.Stat(filepath.Join(dir, "current.json")); return err == nil }
-	handle := func() error {
-		_, err := fmt.Fprintf(stdout, "run       %s\npid       %d\nworktree  %s\noutput    %s\n", launch.RunID, cmd.Process.Pid, launch.Worktree, logPath)
-		return err
+	ready := func() bool {
+		_, err := os.Stat(filepath.Join(dir, "current.json"))
+		return err == nil
 	}
+	handle := detachedHandle{RunID: launch.RunID, PID: cmd.Process.Pid, Worktree: launch.Worktree, Output: logPath}
 	for {
 		if ready() {
-			return handle()
+			return handle, nil
 		}
 		select {
 		case err := <-done:
 			if ready() {
-				return handle()
+				return handle, nil
 			}
 			data, _ := os.ReadFile(logPath)
 			if len(data) > 65536 {
 				data = data[len(data)-65536:]
 			}
-			return fmt.Errorf("detached run exited before recording its state: %v\n%s", err, data)
+			return detachedHandle{}, fmt.Errorf("detached run exited before recording its state: %v\n%s", err, data)
 		case <-ctx.Done():
 			_ = cmd.Process.Signal(syscall.SIGTERM)
-			return ctx.Err()
+			return detachedHandle{}, ctx.Err()
 		case <-deadline.C:
 			_ = cmd.Process.Signal(syscall.SIGTERM)
-			return fmt.Errorf("detached run did not record its state within %s; output: %s", detachedLaunchTimeout, logPath)
+			return detachedHandle{}, fmt.Errorf("detached run did not record its state within %s; output: %s", detachedLaunchTimeout, logPath)
 		case <-tick.C:
 		}
 	}

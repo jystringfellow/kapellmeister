@@ -41,6 +41,7 @@ const usage = `usage:
   km cue done -queue FILE CUE [NOTE]                         close a cue (chairs run this)
   km preflight -worktree DIR [-agents LIST] [-tier T]       check each agent starts and answers
   km profiles install [-cao URL] [-replace] [AGENT ...]       install embedded base chair profiles
+  km mcp                                                    serve run tools over MCP stdio
   km version                                                print the version
   km config [-worktree DIR]                                  show the effective settings and the files they come from`
 
@@ -69,6 +70,14 @@ func execute(args []string, stderr io.Writer) int {
 			return 2
 		}
 		err = profilesCommand(args[1:], os.Stdout)
+	case "mcp":
+		if len(args) != 1 {
+			fmt.Fprintln(stderr, "usage: km mcp")
+			return 2
+		}
+		ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+		defer stop()
+		err = mcpAt(ctx, os.Stdin, os.Stdout)
 	case "run":
 		err = runCommand(args[1:])
 	case "audition":
@@ -302,8 +311,13 @@ func checkPin(policy loop.Policy, part, name, spec string, chair loop.Chair) err
 	return nil
 }
 
-func runCommand(args []string) (runErr error) {
+func runCommand(args []string) error {
+	return runAt(nil, args, os.Stdout, os.Stderr, nil)
+}
+
+func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle *detachedHandle) (runErr error) {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	fs.SetOutput(stderr)
 	c := commonFlags(fs)
 	detach := fs.Bool("detach", false, "return a run id and PID while the run continues, with output in its record")
 	detachedLaunch := fs.String("detached-launch", "", "internal detached run hand-off")
@@ -341,12 +355,12 @@ func runCommand(args []string) (runErr error) {
 		}
 	}
 	var opening bytes.Buffer
-	var output io.Writer = os.Stdout
+	var output io.Writer = stdout
 	if *detach && *detachedLaunch == "" {
 		output = &opening
 		defer func() {
 			if runErr != nil {
-				fmt.Fprint(os.Stdout, opening.String())
+				fmt.Fprint(stdout, opening.String())
 			}
 		}()
 	}
@@ -366,7 +380,7 @@ func runCommand(args []string) (runErr error) {
 	}
 	defer func() {
 		if runErr != nil && createdWorktree != "" && !summarized {
-			fmt.Fprintf(os.Stderr, "km: the worktree was kept at %s\n", createdWorktree)
+			fmt.Fprintf(stderr, "km: the worktree was kept at %s\n", createdWorktree)
 		}
 	}()
 	if wt == "" {
@@ -435,8 +449,11 @@ func runCommand(args []string) (runErr error) {
 	if err != nil {
 		return err
 	}
-	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-	defer stop()
+	if ctx == nil {
+		var stop context.CancelFunc
+		ctx, stop = loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+		defer stop()
+	}
 	client := cao.NewClient(s.CAOURL)
 	if *detachedLaunch != "" {
 		state := initialRunState(runID, "run", wt, *ensemble, s.Rounds, time.Now())
@@ -467,7 +484,16 @@ func runCommand(args []string) (runErr error) {
 		return err
 	}
 	if *detach && *detachedLaunch == "" {
-		return startDetached(ctx, args, runDir, detachedLaunchRecord{RunID: runID, Worktree: wt, BaseBranch: baseBranch, CreatedWorktree: createdWorktree, Task: text}, opening.Bytes(), os.Stdout)
+		h, err := startDetached(ctx, args, runDir, detachedLaunchRecord{RunID: runID, Worktree: wt, BaseBranch: baseBranch, CreatedWorktree: createdWorktree, Task: text}, opening.Bytes())
+		if err != nil {
+			return err
+		}
+		if handle != nil {
+			*handle = h
+			return nil
+		}
+		_, err = fmt.Fprintf(stdout, "run       %s\npid       %d\nworktree  %s\noutput    %s\n", h.RunID, h.PID, h.Worktree, h.Output)
+		return err
 	}
 	if err := preflight(ctx, client, wt, s.PreflightTimeout, defaultChairs(&policy, chairs)...); err != nil {
 		return err
@@ -481,7 +507,7 @@ func runCommand(args []string) (runErr error) {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
 		if err := client.DeleteSession(cleanupCtx, podium.SessionName); err != nil {
-			fmt.Fprintf(os.Stderr, "km: deleting session %s: %v\n", podium.SessionName, err)
+			fmt.Fprintf(stderr, "km: deleting session %s: %v\n", podium.SessionName, err)
 		}
 	}()
 	sum, err := runEnsemble(ctx, ensembleRun{
@@ -492,13 +518,13 @@ func runCommand(args []string) (runErr error) {
 			LearnedBudget: s.LearnedBudget, BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, CheckCommand: checkCmd, Policy: &policy,
 		},
 		Watcher: loop.CAOWatcher{Client: client, Session: podium.SessionName},
-		Stepper: loop.CAOStepper{Client: client, Session: podium.SessionName}, Verify: loop.Retrying(loop.CommandVerifier(verifyCmd), s.VerifyRetries), Progress: os.Stdout,
+		Stepper: loop.CAOStepper{Client: client, Session: podium.SessionName}, Verify: loop.Retrying(loop.CommandVerifier(verifyCmd), s.VerifyRetries), Progress: stdout,
 	})
 	if err != nil {
 		return err
 	}
 	summarized = true
-	return finishRun(os.Stdout, sum)
+	return finishRun(stdout, sum)
 }
 
 func preflightCommand(args []string) error {
