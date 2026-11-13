@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -61,11 +63,12 @@ func TestBareStatusCoversEveryConfiguredDirectory(t *testing.T) {
 	}
 }
 
-func TestRecordDirectoriesOnTheCommandLineReplaceTheConfiguredOnes(t *testing.T) {
+func TestCommandLineDirectoriesReplaceTheStateRunsAndTheConfiguredOnes(t *testing.T) {
 	for name, command := range recordCommands() {
 		t.Run(name, func(t *testing.T) {
 			isolateReportConfig(t)
 			configured, named := t.TempDir(), t.TempDir()
+			statusFixture(t, filepath.Join(loop.StateDir(), "runs"), "state")
 			statusFixture(t, configured, "configured")
 			statusFixture(t, named, "named")
 			for _, malformed := range []bool{false, true} {
@@ -90,24 +93,30 @@ func TestRecordDirectoriesOnTheCommandLineReplaceTheConfiguredOnes(t *testing.T)
 	}
 }
 
-func TestConfiguredReportDirsDoNotAddTheStateRunsUnlessListed(t *testing.T) {
-	isolateReportConfig(t)
-	stateRuns, kept := filepath.Join(loop.StateDir(), "runs"), t.TempDir()
-	statusFixture(t, stateRuns, "state")
-	statusFixture(t, kept, "kept")
-	setReportDirs(t, kept)
-	if rows := reportRows(t); len(rows) != 1 || rows[0].(map[string]any)["run_id"] != "kept" {
-		t.Fatal(rows)
-	}
-	if rows := statusRows(t); len(rows) != 1 || rows[0].RunID != "kept" {
-		t.Fatal(rows)
-	}
-	setReportDirs(t, kept, stateRuns)
-	if rows := reportRows(t); len(rows) != 2 {
-		t.Fatal(rows)
-	}
-	if rows := statusRows(t); len(rows) != 2 {
-		t.Fatal(rows)
+func TestConfiguredReportDirsAreSearchedInAdditionToTheStateRuns(t *testing.T) {
+	for name, command := range recordCommands() {
+		t.Run(name, func(t *testing.T) {
+			isolateReportConfig(t)
+			stateRuns, kept := filepath.Join(loop.StateDir(), "runs"), t.TempDir()
+			statusFixture(t, stateRuns, "state")
+			statusFixture(t, kept, "kept")
+			setReportDirs(t, kept)
+			var out, diag bytes.Buffer
+			if err := command([]string{"-json"}, &out, &diag); err != nil {
+				t.Fatal(err)
+			}
+			var doc struct {
+				Runs []struct {
+					RunID string `json:"run_id"`
+				} `json:"runs"`
+			}
+			if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+				t.Fatal(err)
+			}
+			if len(doc.Runs) != 2 || doc.Runs[0].RunID != "kept" || doc.Runs[1].RunID != "state" || diag.Len() != 0 {
+				t.Fatalf("stdout = %s, stderr = %s", &out, &diag)
+			}
+		})
 	}
 }
 
@@ -190,25 +199,171 @@ func TestRecordCommandsNameTheConfiguredDirectoriesTheySearchedInTextAndJSON(t *
 	}
 }
 
-func TestAConfiguredDirectoryThatDoesNotExistFailsBeforePrintingAndNamesTheSetting(t *testing.T) {
-	for name, command := range recordCommands() {
+func TestAConfiguredPathThatIsNotADirectoryFailsBeforePrintingAndNamesTheSetting(t *testing.T) {
+	for name, command := range recordDiscoveryCommands() {
 		t.Run(name, func(t *testing.T) {
 			isolateReportConfig(t)
 			good := t.TempDir()
 			statusFixture(t, good, "good")
-			for _, file := range []bool{false, true} {
-				missing := filepath.Join(t.TempDir(), "unusable")
-				if file {
-					writeFile(t, missing, "")
+			file := filepath.Join(t.TempDir(), "file")
+			writeFile(t, file, "")
+			setReportDirs(t, good, file)
+			var out, diag bytes.Buffer
+			err := command(nil, &out, &diag)
+			if err == nil || out.Len() != 0 || !strings.Contains(err.Error(), "not a directory") || !strings.Contains(err.Error(), file) || !strings.Contains(err.Error(), "from [report] dirs in "+loop.UserConfigPath(loop.Home())) {
+				t.Fatalf("error = %v, output = %s", err, &out)
+			}
+		})
+	}
+}
+
+func recordDiscoveryCommands() map[string]func([]string, io.Writer, io.Writer) error {
+	commands := recordCommands()
+	commands["wait"] = func(args []string, out, diag io.Writer) error {
+		return waitCommand(append([]string{"good"}, args...), out, diag)
+	}
+	return commands
+}
+
+func TestRecordCommandsSkipAConfiguredDirectoryThatDoesNotExistAndSearchTheRest(t *testing.T) {
+	for name, command := range recordCommands() {
+		t.Run(name, func(t *testing.T) {
+			isolateReportConfig(t)
+			good, missing := t.TempDir(), filepath.Join(t.TempDir(), "absent")
+			statusFixture(t, good, "found")
+			setReportDirs(t, good)
+			var before, out, diag bytes.Buffer
+			if err := command(nil, &before, &diag); err != nil {
+				t.Fatal(err)
+			}
+			setReportDirs(t, missing, good)
+			if err := command(nil, &out, &diag); err != nil {
+				t.Fatal(err)
+			}
+			wantDiag := "km: " + name + ": " + missing + ": not searched: directory does not exist\n"
+			if diag.String() != wantDiag || out.String() != before.String() || strings.Contains(out.String(), missing) || !strings.Contains(out.String(), "searched: "+good+"\n") || strings.Contains(out.String(), "not searched") {
+				t.Fatalf("stdout = %s, stderr = %s", &out, &diag)
+			}
+		})
+	}
+}
+
+func TestRecordCommandsListSkippedConfiguredDirectoriesInJSON(t *testing.T) {
+	for name, command := range recordCommands() {
+		t.Run(name, func(t *testing.T) {
+			isolateReportConfig(t)
+			good := t.TempDir()
+			statusFixture(t, good, "found")
+			missing := []string{filepath.Join(t.TempDir(), "absent"), filepath.Join(t.TempDir(), "parent", "absent")}
+			for _, skip := range []bool{true, false} {
+				setReportDirs(t, good)
+				if skip {
+					setReportDirs(t, missing[0], good, missing[1])
 				}
-				setReportDirs(t, good, missing)
 				var out, diag bytes.Buffer
-				err := command(nil, &out, &diag)
-				if err == nil || out.Len() != 0 || !strings.Contains(err.Error(), missing) || !strings.Contains(err.Error(), "from [report] dirs in "+loop.UserConfigPath(loop.Home())) {
-					t.Fatalf("error = %v, output = %s", err, &out)
+				if err := command([]string{"-json"}, &out, &diag); err != nil {
+					t.Fatal(err)
+				}
+				var doc map[string]any
+				if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(doc["searched"], []any{good}) || len(doc["runs"].([]any)) != 1 {
+					t.Fatal(doc)
+				}
+				if skip {
+					if !reflect.DeepEqual(doc["skipped_dirs"], []any{missing[0], missing[1]}) || strings.Count(diag.String(), "does not exist\n") != 2 {
+						t.Fatalf("doc = %v, stderr = %s", doc, &diag)
+					}
+				} else if _, exists := doc["skipped_dirs"]; exists || diag.Len() != 0 {
+					t.Fatalf("doc = %v, stderr = %s", doc, &diag)
+				}
+				if name == "report" && (doc["not_searched_total"] != float64(0) || len(doc["not_searched"].([]any)) != 0) {
+					t.Fatal(doc)
 				}
 			}
 		})
+	}
+}
+
+func TestRecordCommandsSucceedWithNoRunsWhenEveryConfiguredDirectoryIsMissing(t *testing.T) {
+	for name, command := range recordCommands() {
+		t.Run(name, func(t *testing.T) {
+			isolateReportConfig(t)
+			missing := filepath.Join(t.TempDir(), "absent")
+			setReportDirs(t, missing)
+			for _, args := range [][]string{nil, {"-json"}} {
+				var out, diag bytes.Buffer
+				if err := command(args, &out, &diag); err != nil {
+					t.Fatal(err)
+				}
+				if diag.String() != "km: "+name+": "+missing+": not searched: directory does not exist\n" {
+					t.Fatal(&diag)
+				}
+				if len(args) == 0 {
+					if !strings.HasPrefix(out.String(), "no runs") || strings.Contains(out.String(), "searched") {
+						t.Fatal(&out)
+					}
+					continue
+				}
+				var doc map[string]any
+				if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+					t.Fatal(err)
+				}
+				if len(doc["runs"].([]any)) != 0 || doc["searched"] != nil || !reflect.DeepEqual(doc["skipped_dirs"], []any{missing}) {
+					t.Fatal(doc)
+				}
+			}
+		})
+	}
+}
+
+func TestRecordCommandsStillFailOnAnExplicitMissingDirectory(t *testing.T) {
+	for name, command := range recordDiscoveryCommands() {
+		t.Run(name, func(t *testing.T) {
+			isolateReportConfig(t)
+			setReportDirs(t, t.TempDir())
+			missing := filepath.Join(t.TempDir(), "absent")
+			var out, diag bytes.Buffer
+			err := command([]string{missing}, &out, &diag)
+			if err == nil || !strings.Contains(err.Error(), missing) || !strings.Contains(err.Error(), "no such file or directory") || strings.Contains(err.Error(), "from [report] dirs") || out.Len() != 0 || diag.Len() != 0 {
+				t.Fatalf("error = %v, stdout = %s, stderr = %s", err, &out, &diag)
+			}
+		})
+	}
+}
+
+func TestAConfiguredDirectoryThatCannotBeReadStillFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can read directories without permission")
+	}
+	for name, command := range recordDiscoveryCommands() {
+		for _, inaccessibleParent := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/parent=%t", name, inaccessibleParent), func(t *testing.T) {
+				isolateReportConfig(t)
+				good, denied := t.TempDir(), t.TempDir()
+				path := denied
+				if inaccessibleParent {
+					path = filepath.Join(denied, "records")
+					if err := os.Mkdir(path, 0700); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := os.Chmod(denied, 0); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { os.Chmod(denied, 0700) })
+				if _, err := os.ReadDir(path); !errors.Is(err, fs.ErrPermission) {
+					t.Fatalf("expected permission denial, got %v", err)
+				}
+				setReportDirs(t, good, path)
+				var out, diag bytes.Buffer
+				err := command(nil, &out, &diag)
+				if err == nil || out.Len() != 0 || !strings.Contains(err.Error(), "permission denied") || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "from [report] dirs in "+loop.UserConfigPath(loop.Home())) {
+					t.Fatalf("error = %v, stdout = %s, stderr = %s", err, &out, &diag)
+				}
+			})
+		}
 	}
 }
 
@@ -389,7 +544,7 @@ func TestConfigShowsTheReportDirectoriesOnlyWhenSet(t *testing.T) {
 			t.Fatal(err)
 		}
 		if configured {
-			if !strings.Contains(out, "report dirs "+a+", "+b+"\n") {
+			if !strings.Contains(out, "report dirs "+a+", "+b+" (in addition to "+filepath.Join(loop.StateDir(), "runs")+")\n") {
 				t.Fatal(out)
 			}
 		} else if strings.Contains(out, "report dirs") {
@@ -400,5 +555,138 @@ func TestConfigShowsTheReportDirectoriesOnlyWhenSet(t *testing.T) {
 	_, err := captureStdout(t, func() error { return configCommand([]string{"-worktree", repo}) })
 	if err == nil || !strings.Contains(err.Error(), "[report] belongs in "+loop.UserConfigPath(loop.Home())) {
 		t.Fatal(err)
+	}
+}
+
+func TestSearchedListsTheStateRunsFirstWhenItExists(t *testing.T) {
+	for name, command := range recordCommands() {
+		t.Run(name, func(t *testing.T) {
+			isolateReportConfig(t)
+			stateRuns, kept := filepath.Join(loop.StateDir(), "runs"), t.TempDir()
+			statusFixture(t, stateRuns, "state")
+			setReportDirs(t, kept)
+			var out, diag bytes.Buffer
+			if err := command(nil, &out, &diag); err != nil {
+				t.Fatal(err)
+			}
+			want := "searched: " + stateRuns + "\nsearched: " + kept + "\n"
+			if !strings.HasSuffix(out.String(), want) {
+				t.Fatalf("output = %s, want suffix %q", &out, want)
+			}
+			out.Reset()
+			if err := command([]string{"-json"}, &out, &diag); err != nil {
+				t.Fatal(err)
+			}
+			var doc struct {
+				Searched []string `json:"searched"`
+			}
+			if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(doc.Searched, []string{stateRuns, kept}) {
+				t.Fatal(doc.Searched)
+			}
+		})
+	}
+}
+
+func TestListingTheStateRunsInReportDirsSearchesItOnceAndCountsEachRunOnce(t *testing.T) {
+	for name, command := range recordCommands() {
+		for _, spelling := range []string{"", "/", "/../runs"} {
+			t.Run(name+spelling, func(t *testing.T) {
+				isolateReportConfig(t)
+				stateRuns, kept := filepath.Join(loop.StateDir(), "runs"), t.TempDir()
+				statusFixture(t, stateRuns, "state")
+				statusFixture(t, kept, "kept")
+				setReportDirs(t, kept, stateRuns+spelling, stateRuns)
+				var out, diag bytes.Buffer
+				if err := command([]string{"-json"}, &out, &diag); err != nil {
+					t.Fatal(err)
+				}
+				var doc map[string]any
+				if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+					t.Fatal(err)
+				}
+				if len(doc["runs"].([]any)) != 2 || !reflect.DeepEqual(doc["searched"], []any{stateRuns, kept}) {
+					t.Fatal(doc)
+				}
+				if name == "report" && doc["totals"].(map[string]any)["runs"] != float64(2) {
+					t.Fatal(doc)
+				}
+			})
+		}
+	}
+}
+
+func TestAMissingStateRunsIsSilentWhetherOrNotReportDirsIsSet(t *testing.T) {
+	for name, command := range recordCommands() {
+		t.Run(name, func(t *testing.T) {
+			isolateReportConfig(t)
+			stateRuns, kept := filepath.Join(loop.StateDir(), "runs"), t.TempDir()
+			statusFixture(t, kept, "kept")
+			for _, dirs := range [][]string{nil, {kept}, {stateRuns, kept}, {stateRuns}} {
+				setReportDirs(t, dirs...)
+				var out, diag bytes.Buffer
+				if err := command([]string{"-json"}, &out, &diag); err != nil {
+					t.Fatal(err)
+				}
+				var doc map[string]any
+				if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+					t.Fatal(err)
+				}
+				if diag.Len() != 0 || doc["skipped_dirs"] != nil {
+					t.Fatalf("stdout = %s, stderr = %s", &out, &diag)
+				}
+				if len(dirs) > 0 && dirs[len(dirs)-1] == kept {
+					if !reflect.DeepEqual(doc["searched"], []any{kept}) || len(doc["runs"].([]any)) != 1 {
+						t.Fatal(doc)
+					}
+				} else if doc["searched"] != nil || len(doc["runs"].([]any)) != 0 {
+					t.Fatal(doc)
+				}
+			}
+		})
+	}
+}
+
+func TestAnErrorFromTheStateRunsIsNotAttributedToReportDirs(t *testing.T) {
+	for name, command := range recordDiscoveryCommands() {
+		for _, kind := range []string{"file", "loop", "denied"} {
+			t.Run(name+"/"+kind, func(t *testing.T) {
+				isolateReportConfig(t)
+				stateRuns := filepath.Join(loop.StateDir(), "runs")
+				want := ""
+				switch kind {
+				case "file":
+					writeFile(t, stateRuns, "")
+					want = "not a directory"
+				case "loop":
+					if err := os.Symlink(stateRuns, stateRuns); err != nil {
+						t.Fatal(err)
+					}
+					want = "too many"
+				case "denied":
+					if os.Geteuid() == 0 {
+						t.Skip("root can read directories without permission")
+					}
+					if err := os.Mkdir(stateRuns, 0); err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() { os.Chmod(stateRuns, 0700) })
+					want = "permission denied"
+				}
+				for _, explicit := range []bool{false, true} {
+					setReportDirs(t, t.TempDir())
+					if explicit {
+						setReportDirs(t, stateRuns)
+					}
+					var out, diag bytes.Buffer
+					err := command(nil, &out, &diag)
+					if err == nil || !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "from [report] dirs") || out.Len() != 0 {
+						t.Fatalf("error = %v, stdout = %s, stderr = %s", err, &out, &diag)
+					}
+				}
+			})
+		}
 	}
 }
