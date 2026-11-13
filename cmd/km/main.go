@@ -27,7 +27,8 @@ import (
 )
 
 const usage = `usage:
-  km init [-worktree DIR] [-dry-run] [-json] [-verify CMD] [-check CMD] [-no-run] [-timeout D]   draft .kapellmeister/config.toml and scripts/verify, then run verify
+  km init [-worktree DIR] [-dry-run] [-json] [-verify CMD] [-check CMD] [-no-run] [-timeout D]   write config and an unfinished verify, or wrap -verify CMD
+  km prove [-worktree DIR] [-break PATCH]... [-timeout D] [-json]   prove verify on clean copies and broken code
   km run -repo DIR [-base BRANCH] (-task TEXT | -task-file FILE) [-ensemble NAME] [-detach] [flags]   one ensemble
   km audition -worktree DIR [-ensemble NAME] [-keep]       boot the ensemble, cue every chair once, tear down
   km rehearse -worktree DIR (-task TEXT | -task-file FILE) [-ensemble NAME]  brief the ensemble and leave it standing
@@ -56,6 +57,8 @@ func execute(args []string, stderr io.Writer) int {
 	}
 	var err error
 	switch args[0] {
+	case "prove":
+		err = proveAt(args[1:], os.Stdout, stderr)
 	case "init":
 		err = initAt(args[1:], os.Stdout, stderr)
 	case "version":

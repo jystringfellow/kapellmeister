@@ -49,15 +49,15 @@ func initAt(args []string, stdout, stderr io.Writer) error {
 }
 
 func printInit(out io.Writer, r initrepo.Result, timeout time.Duration) {
-	for _, d := range r.Detected {
-		fmt.Fprintf(out, "detected: %s (%s)", d.Toolchain, d.File)
-		if d.Lockfile != "" {
-			fmt.Fprintf(out, ", package runner from %s", d.Lockfile)
-		}
-		if !d.Used {
-			fmt.Fprintf(out, ", not used: %s", d.Reason)
+	for _, hint := range r.Hints {
+		fmt.Fprintf(out, "hint: %s %s", hint.Kind, hint.File)
+		if hint.Note != "" {
+			fmt.Fprintf(out, " %s", hint.Note)
 		}
 		fmt.Fprintln(out)
+	}
+	if len(r.Hints) > 0 {
+		fmt.Fprintln(out, "hints are not written to any file")
 	}
 	allKept := true
 	for _, file := range r.Files {
@@ -82,6 +82,8 @@ func printInit(out io.Writer, r initrepo.Result, timeout time.Duration) {
 	}
 	duration := (time.Duration(r.Verify.DurationMS) * time.Millisecond).Round(time.Millisecond)
 	switch r.Verify.Status {
+	case "unfinished":
+		fmt.Fprintf(out, "verify: unfinished, %s\n", r.Verify.Output)
 	case "passed":
 		fmt.Fprintf(out, "verify: %s passed in %s\n", r.Verify.Command, duration)
 	case "failed":
