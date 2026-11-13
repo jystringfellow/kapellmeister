@@ -27,7 +27,8 @@ import (
 )
 
 const usage = `usage:
-  km run -repo DIR [-base BRANCH] (-task TEXT | -task-file FILE) [-ensemble NAME] [flags]   one ensemble
+  km init [-worktree DIR] [-dry-run] [-json] [-verify CMD] [-check CMD] [-no-run] [-timeout D]   draft .kapellmeister/config.toml and scripts/verify, then run verify
+  km run -repo DIR [-base BRANCH] (-task TEXT | -task-file FILE) [-ensemble NAME] [-detach] [flags]   one ensemble
   km audition -worktree DIR [-ensemble NAME] [-keep]       boot the ensemble, cue every chair once, tear down
   km rehearse -worktree DIR (-task TEXT | -task-file FILE) [-ensemble NAME]  brief the ensemble and leave it standing
   km play SESSION [-max-rounds N] [-verify CMD] [-timeout D] [-cao URL]  run the score on a standing ensemble
@@ -35,10 +36,12 @@ const usage = `usage:
   km ensemble list                                         list standing ensembles
   km ensemble down [-cao URL] SESSION                       take down a standing ensemble
   km report [-json] [-since DATE] [-repository NAME] [-max-depth N] [-max-entries N] [DIR...]   summarize run records
+  km wait RUN [-timeout D] [-json] [-max-depth N] [-max-entries N] [DIR...]  wait for one run
   km status [-json] [-max-depth N] [-max-entries N] [DIR...]   show the runs in progress
   km cue done -queue FILE CUE [NOTE]                         close a cue (chairs run this)
   km preflight -worktree DIR [-agents LIST] [-tier T]       check each agent starts and answers
   km profiles install [-cao URL] [-replace] [AGENT ...]       install embedded base chair profiles
+  km mcp                                                    serve run tools over MCP stdio
   km version                                                print the version
   km config [-worktree DIR]                                  show the effective settings and the files they come from`
 
@@ -53,6 +56,8 @@ func execute(args []string, stderr io.Writer) int {
 	}
 	var err error
 	switch args[0] {
+	case "init":
+		err = initAt(args[1:], os.Stdout, stderr)
 	case "version":
 		if len(args) != 1 {
 			fmt.Fprintln(stderr, "usage: km version")
@@ -65,6 +70,14 @@ func execute(args []string, stderr io.Writer) int {
 			return 2
 		}
 		err = profilesCommand(args[1:], os.Stdout)
+	case "mcp":
+		if len(args) != 1 {
+			fmt.Fprintln(stderr, "usage: km mcp")
+			return 2
+		}
+		ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+		defer stop()
+		err = mcpAt(ctx, os.Stdin, os.Stdout)
 	case "run":
 		err = runCommand(args[1:])
 	case "audition":
@@ -79,6 +92,8 @@ func execute(args []string, stderr io.Writer) int {
 		err = ensembleCommand(args[1:], os.Stdout)
 	case "report":
 		err = reportCommand(args[1:], os.Stdout, stderr)
+	case "wait":
+		err = waitCommand(args[1:], os.Stdout, stderr)
 	case "status":
 		err = statusCommand(args[1:], os.Stdout, stderr)
 	case "cue":
@@ -90,6 +105,13 @@ func execute(args []string, stderr io.Writer) int {
 	default:
 		fmt.Fprintln(stderr, usage)
 		return 2
+	}
+	var status *exitStatusError
+	if errors.As(err, &status) {
+		if status.err != nil {
+			fmt.Fprintln(stderr, "km:", status.err)
+		}
+		return status.code
 	}
 	if errors.Is(err, errNotApproved) {
 		return 1
@@ -289,9 +311,16 @@ func checkPin(policy loop.Policy, part, name, spec string, chair loop.Chair) err
 	return nil
 }
 
-func runCommand(args []string) (runErr error) {
+func runCommand(args []string) error {
+	return runAt(nil, args, os.Stdout, os.Stderr, nil)
+}
+
+func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle *detachedHandle) (runErr error) {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	fs.SetOutput(stderr)
 	c := commonFlags(fs)
+	detach := fs.Bool("detach", false, "return a run id and PID while the run continues, with output in its record")
+	detachedLaunch := fs.String("detached-launch", "", "internal detached run hand-off")
 	worktree := fs.String("worktree", "", "use this existing worktree instead of creating one")
 	roles := chairFlags(fs, loop.AllRoles()...)
 	ensemble := fs.String("ensemble", "", ensembleHelp)
@@ -307,9 +336,33 @@ func runCommand(args []string) (runErr error) {
 			return fmt.Errorf("-base %w", err)
 		}
 	}
-	text, err := taskText(*c.task, *c.taskFile)
-	if err != nil {
-		return err
+	var launch detachedLaunchRecord
+	var text string
+	var err error
+	if *detachedLaunch != "" {
+		data, readErr := os.ReadFile(*detachedLaunch)
+		if readErr != nil {
+			return readErr
+		}
+		if err := json.Unmarshal(data, &launch); err != nil {
+			return err
+		}
+		text = launch.Task
+	} else {
+		text, err = taskText(*c.task, *c.taskFile)
+		if err != nil {
+			return err
+		}
+	}
+	var opening bytes.Buffer
+	var output io.Writer = stdout
+	if *detach && *detachedLaunch == "" {
+		output = &opening
+		defer func() {
+			if runErr != nil {
+				fmt.Fprint(stdout, opening.String())
+			}
+		}()
 	}
 	userSettings, err := c.settings("")
 	if err != nil {
@@ -322,9 +375,12 @@ func runCommand(args []string) (runErr error) {
 	baseBranch := ""
 	createdWorktree := ""
 	summarized := false
+	if *detachedLaunch != "" {
+		wt, baseBranch, createdWorktree = launch.Worktree, launch.BaseBranch, launch.CreatedWorktree
+	}
 	defer func() {
 		if runErr != nil && createdWorktree != "" && !summarized {
-			fmt.Fprintf(os.Stderr, "km: the worktree was kept at %s\n", createdWorktree)
+			fmt.Fprintf(stderr, "km: the worktree was kept at %s\n", createdWorktree)
 		}
 	}()
 	if wt == "" {
@@ -339,7 +395,7 @@ func runCommand(args []string) (runErr error) {
 			baseBranch = *c.base
 			commit, err = resolveBase(*c.repo, baseBranch)
 		} else {
-			baseBranch = defaultBaseBranch(*c.repo, os.Stdout)
+			baseBranch = defaultBaseBranch(*c.repo, output)
 			commit, err = resolveBase(*c.repo, baseBranch)
 			if err == nil {
 				var configured string
@@ -379,20 +435,64 @@ func runCommand(args []string) (runErr error) {
 	}
 	policy := s.Policy
 	runID := newRunID()
+	if *detachedLaunch != "" {
+		runID = launch.RunID
+	}
 	runDir := filepath.Join(loop.StateDir(), "runs", runID)
+	if *detach || *detachedLaunch != "" {
+		runDir, err = filepath.Abs(runDir)
+		if err != nil {
+			return err
+		}
+	}
 	scratch, err := prepareScratch(loop.StateDir(), runID)
 	if err != nil {
 		return err
 	}
-	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-	defer stop()
-	client := cao.NewClient(s.CAOURL)
-	printSources(os.Stdout, s)
-	if *ensemble != "" {
-		fmt.Printf("ensemble %s\n", *ensemble)
+	if ctx == nil {
+		var stop context.CancelFunc
+		ctx, stop = loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+		defer stop()
 	}
-	printPolicy(os.Stdout, &policy)
-	if err := ensureProfiles(ctx, client, &policy, stepChairs(chairs)); err != nil {
+	client := cao.NewClient(s.CAOURL)
+	if *detachedLaunch != "" {
+		state := initialRunState(runID, "run", wt, *ensemble, s.Rounds, time.Now())
+		if err := os.MkdirAll(runDir, 0755); err != nil {
+			return err
+		}
+		defer func() {
+			caught := recover()
+			if caught != nil {
+				runErr = fmt.Errorf("panic: %v", caught)
+			}
+			recordDetachedFailure(ctx, runDir, launch, state, runErr)
+			if caught != nil {
+				panic(caught)
+			}
+		}()
+		if err := writeRunState(runDir, state); err != nil {
+			return err
+		}
+	} else {
+		printSources(output, s)
+		if *ensemble != "" {
+			fmt.Fprintf(output, "ensemble %s\n", *ensemble)
+		}
+		printPolicy(output, &policy)
+	}
+	if err := ensureProfilesTo(ctx, client, &policy, stepChairs(chairs), output); err != nil {
+		return err
+	}
+	if *detach && *detachedLaunch == "" {
+		h, err := startDetached(ctx, args, runDir, detachedLaunchRecord{RunID: runID, Worktree: wt, BaseBranch: baseBranch, CreatedWorktree: createdWorktree, Task: text}, opening.Bytes())
+		if err != nil {
+			return err
+		}
+		if handle != nil {
+			*handle = h
+			return nil
+		}
+		_, err = fmt.Fprintf(stdout, "run       %s\npid       %d\nworktree  %s\noutput    %s\n", h.RunID, h.PID, h.Worktree, h.Output)
 		return err
 	}
 	if err := preflight(ctx, client, wt, s.PreflightTimeout, defaultChairs(&policy, chairs)...); err != nil {
@@ -407,7 +507,7 @@ func runCommand(args []string) (runErr error) {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
 		if err := client.DeleteSession(cleanupCtx, podium.SessionName); err != nil {
-			fmt.Fprintf(os.Stderr, "km: deleting session %s: %v\n", podium.SessionName, err)
+			fmt.Fprintf(stderr, "km: deleting session %s: %v\n", podium.SessionName, err)
 		}
 	}()
 	sum, err := runEnsemble(ctx, ensembleRun{
@@ -418,13 +518,13 @@ func runCommand(args []string) (runErr error) {
 			LearnedBudget: s.LearnedBudget, BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, CheckCommand: checkCmd, Policy: &policy,
 		},
 		Watcher: loop.CAOWatcher{Client: client, Session: podium.SessionName},
-		Stepper: loop.CAOStepper{Client: client, Session: podium.SessionName}, Verify: loop.Retrying(loop.CommandVerifier(verifyCmd), s.VerifyRetries), Progress: os.Stdout,
+		Stepper: loop.CAOStepper{Client: client, Session: podium.SessionName}, Verify: loop.Retrying(loop.CommandVerifier(verifyCmd), s.VerifyRetries), Progress: stdout,
 	})
 	if err != nil {
 		return err
 	}
 	summarized = true
-	return finishRun(os.Stdout, sum)
+	return finishRun(stdout, sum)
 }
 
 func preflightCommand(args []string) error {
@@ -616,6 +716,10 @@ func defaultChairs(p *loop.Policy, s loop.Chairs) []loop.Chair {
 }
 
 func ensureProfiles(ctx context.Context, client *cao.Client, p *loop.Policy, steps map[string][]loop.Chair) error {
+	return ensureProfilesTo(ctx, client, p, steps, os.Stdout)
+}
+
+func ensureProfilesTo(ctx context.Context, client *cao.Client, p *loop.Policy, steps map[string][]loop.Chair, output io.Writer) error {
 	variants := p.EffortVariants(steps)
 	if len(variants) == 0 {
 		return nil
@@ -703,9 +807,9 @@ func ensureProfiles(ctx context.Context, client *cao.Client, p *loop.Policy, ste
 			return err
 		}
 		if have[v.name] {
-			fmt.Printf("→ reinstalled CAO profile %s: permissions now match %s\n", v.name, v.base)
+			fmt.Fprintf(output, "→ reinstalled CAO profile %s: permissions now match %s\n", v.name, v.base)
 		} else {
-			fmt.Printf("→ installed CAO profile %s from %s\n", v.name, path)
+			fmt.Fprintf(output, "→ installed CAO profile %s from %s\n", v.name, path)
 		}
 	}
 	return nil
@@ -885,10 +989,7 @@ func runEnsemble(ctx context.Context, p ensembleRun) (sum ensembleSummary, runEr
 	}
 	fmt.Fprintf(p.Progress, "  state     %s\n", p.StateDir)
 	eng := &loop.Engine{Meter: p.Meter, Watcher: p.Watcher, Config: p.Config, Stepper: p.Stepper, Verify: p.Verify, Records: telemetry, Progress: p.Progress}
-	host, _ := os.Hostname()
-	token, _ := processStart(os.Getpid())
-	began := start.UTC()
-	state := runState{RunID: p.RunID, Command: firstNonEmpty(p.Command, "run"), Ensemble: p.Ensemble, Repository: repository, Started: began, Updated: began, MaxRounds: p.Config.MaxRounds, PID: os.Getpid(), Host: host, ProcessStart: token, Playing: []loop.ActiveStep{}}
+	state := initialRunState(p.RunID, firstNonEmpty(p.Command, "run"), p.Config.Worktree, p.Ensemble, p.Config.MaxRounds, start)
 	warned := false
 	publish := func() {
 		if err := writeRunState(p.StateDir, state); err != nil && !warned {
@@ -1094,6 +1195,9 @@ func writeJSON(path string, v any) error {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
+	}
+	if filepath.Base(path) == "result.json" {
+		return writeAtomic(path, append(data, '\n'), 0644)
 	}
 	return os.WriteFile(path, append(data, '\n'), 0o644)
 }

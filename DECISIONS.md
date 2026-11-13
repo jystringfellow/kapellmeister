@@ -488,3 +488,50 @@ or ranking. Evidence: `TestPlainReportIgnoresTheStepRecordsAndPrintsWhatItAlways
 `TestReportPartsAttributesVerdictsByRoundAndChairAndCountsDownstreamFacts`,
 `TestReportPartsCountsRunOutcomesOnlyForPartsPlayedByOneModel` and
 `TestReportPartsReadsARunRecordedByTheLoopItself`.
+
+
+## 2026-11-13: Detach one run process and wait on its record
+
+`km run -detach` re-executes km in its own session with null stdin and stdout/stderr in the
+run's `output.log`, after the foreground refusals and worktree/profile preparation. No daemon
+or listening port is added. The launcher returns once `current.json` makes the run visible;
+preflight and baseline verify follow in the run process because they can take minutes and need
+CAO and the chairs. `launch.json` retains the resolved worktree/base and task text. Result writes
+use atomic rename so readers cannot observe partial records. Evidence:
+`TestDetachPrintsTheRunIdPidWorktreeAndOutputPathAndReturnsWhileTheRunIsStillGoing`,
+`TestADetachedRunFinishesAfterTheCallerHasExitedAndWaitPrintsItsSummaryAndStatus`,
+`TestADetachedRunKeepsTheLaunchersWholeOutputAndMakesOnlyOneWorktree` and
+`TestADetachedRunStopsOnSIGTERMToItsPidAndTearsTheEnsembleDown`.
+
+`km wait` shares status's discovery and process identity checks, accepts exact ids or unique
+prefixes, and prints the run's final summary. Exit statuses are 0 approved, 1 failed or command
+error, 3 timeout and 4 unfinished with no result and a gone or unverifiable process. Timeout
+never stops the run; output is read from a file to keep waiting independent from following it.
+Evidence: `TestWaitTimesOutWithItsOwnStatusAndLeavesTheRunAlone`,
+`TestWaitReportsARunWhoseProcessIsGoneOrUnknownAsUnfinishedNeverApproved`,
+`TestWaitAcceptsAUniquePrefixAndRefusesAnAmbiguousOrUnknownRun` and
+`TestRunWithoutDetachWritesNoOutputLogOrLaunchFileAndExitsAsBefore`.
+
+
+## 2026-11-13: Require a captured run id before waiting
+
+The detached-run live test found `km wait ""` could report an unrelated run's success when a
+script failed to capture its id. Reject blank RUN values before discovery and require at least
+two characters for prefixes; exact ids still win, including short ids in older records. This
+narrows the prefix rule above. Evidence:
+`TestWaitRefusesAnEmptyRunInsteadOfReportingAnotherRunsResult`,
+`TestWaitRefusesAOneCharacterPrefixEvenWhenOnlyOneRunMatches` and
+`TestWaitStillAcceptsTwoCharacterPrefixesAndExactOneCharacterRunIds`.
+
+
+## 2026-11-13: Keep MCP stdio behind a small protocol seam without a dependency
+
+Five run tools use the existing command implementations through `internal/mcp`, which owns only
+stdio framing, lifecycle, tool dispatch and cancellation. No dependency is added: the maintained
+official Go MCP SDK includes transport, authentication and schema surfaces beyond these tools.
+This follows the 2026-11-05 narrow-seam decision; reconsider the SDK when km needs resources,
+prompts, sampling, a non-stdio transport or authentication. Evidence: protocol tests in
+`internal/mcp/server_test.go` and subprocess tool tests in `cmd/km/mcp_test.go`; Claude Code
+2.1.323 negotiated 2025-11-25, listed the tools and called status in an isolated live check.
+The specification site required network approval, so supported revisions follow the tested client
+and the plan's fallback list (2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05).
