@@ -71,6 +71,11 @@ func (f *Folders) BeforeLaunch(provider, dir string) {
 	if _, ok := projects[launch]; ok {
 		return
 	}
+	for existing := range projects {
+		if resolved, err := filepath.EvalSymlinks(existing); err == nil && (resolved == key || resolved == launch) {
+			return
+		}
+	}
 	if md.Type("projects") == "Hash" && projectsAssignedAtRoot(string(data), cfg) {
 		f.diagnostic(path, fmt.Errorf("projects assignment cannot safely be extended by appending a table"))
 		return
