@@ -262,3 +262,113 @@ func TestWaitStillAcceptsTwoCharacterPrefixesAndExactOneCharacterRunIds(t *testi
 		}
 	}
 }
+
+func TestWaitFindsARunInTheConfiguredDirectoriesThatExistWhenAnotherDoesNot(t *testing.T) {
+	isolateReportConfig(t)
+	root, missing := t.TempDir(), filepath.Join(t.TempDir(), "absent")
+	reportFixture(t, root, "configured", "", "app", "quick", "approved")
+	for _, skip := range []bool{true, false} {
+		setReportDirs(t, root)
+		wantDiag := ""
+		if skip {
+			setReportDirs(t, missing, root)
+			wantDiag = "km: wait: " + missing + ": not searched: directory does not exist\n"
+		}
+		for _, flags := range [][]string{nil, {"-json"}} {
+			out, diag, code := waitSubprocess(t, append([]string{"configured"}, flags...)...)
+			if code != 0 || diag != wantDiag {
+				t.Fatalf("exit = %d, stdout = %s, stderr = %s", code, out, diag)
+			}
+			if len(flags) == 0 {
+				if !strings.Contains(out, "approved after") {
+					t.Fatal(out)
+				}
+				continue
+			}
+			var doc map[string]any
+			if err := json.Unmarshal([]byte(out), &doc); err != nil {
+				t.Fatal(err)
+			}
+			if skip {
+				dirs, ok := doc["skipped_dirs"].([]any)
+				if !ok || len(dirs) != 1 || dirs[0] != missing {
+					t.Fatal(doc)
+				}
+			} else if _, exists := doc["skipped_dirs"]; exists {
+				t.Fatal(doc)
+			}
+		}
+	}
+}
+
+func TestWaitNamesSkippedDirectoriesEvenWhenTheRunIsUnknown(t *testing.T) {
+	isolateReportConfig(t)
+	missing := filepath.Join(t.TempDir(), "absent")
+	for _, dirs := range [][]string{{missing}, {missing, t.TempDir()}} {
+		setReportDirs(t, dirs...)
+		out, diag, code := waitSubprocess(t, "unknown")
+		want := "km: wait: " + missing + ": not searched: directory does not exist\nkm: wait: unknown run \"unknown\"\n"
+		if code != 1 || out != "" || diag != want {
+			t.Fatalf("exit = %d, stdout = %s, stderr = %s", code, out, diag)
+		}
+	}
+}
+
+func TestWaitFindsARunInTheStateRunsWhenReportDirsNamesAnotherDirectory(t *testing.T) {
+	isolateReportConfig(t)
+	stateRuns, kept := filepath.Join(loop.StateDir(), "runs"), t.TempDir()
+	reportFixture(t, stateRuns, "state", "", "app", "quick", "approved")
+	reportFixture(t, kept, "kept", "", "app", "quick", "approved")
+	setReportDirs(t, kept)
+	for _, id := range []string{"state", "kept"} {
+		out, diag, code := waitSubprocess(t, id, "-json")
+		var doc waitResult
+		if err := json.Unmarshal([]byte(out), &doc); err != nil || code != 0 || diag != "" || doc.RunID != id || doc.State != "finished" {
+			t.Fatalf("exit = %d, stdout = %s, stderr = %s", code, out, diag)
+		}
+	}
+}
+
+func TestWaitSilentlySkipsAMissingStateRunsEvenWhenItIsListed(t *testing.T) {
+	isolateReportConfig(t)
+	stateRuns, kept := filepath.Join(loop.StateDir(), "runs"), t.TempDir()
+	reportFixture(t, kept, "kept", "", "app", "quick", "approved")
+	for _, dirs := range [][]string{nil, {kept}, {stateRuns, kept}} {
+		setReportDirs(t, dirs...)
+		out, diag, code := waitSubprocess(t, "kept", "-json")
+		if len(dirs) == 0 {
+			if code != 1 || diag != "km: wait: unknown run \"kept\"\n" {
+				t.Fatalf("exit = %d, stdout = %s, stderr = %s", code, out, diag)
+			}
+			continue
+		}
+		var doc waitResult
+		if err := json.Unmarshal([]byte(out), &doc); err != nil || code != 0 || diag != "" || len(doc.SkippedDirs) != 0 || doc.RunID != "kept" {
+			t.Fatalf("exit = %d, stdout = %s, stderr = %s", code, out, diag)
+		}
+	}
+}
+
+func TestWaitCommandLineDirectoriesReplaceTheDefaultAndConfigWithoutReadingIt(t *testing.T) {
+	isolateReportConfig(t)
+	stateRuns, kept, named := filepath.Join(loop.StateDir(), "runs"), t.TempDir(), t.TempDir()
+	reportFixture(t, stateRuns, "state", "", "app", "quick", "approved")
+	reportFixture(t, kept, "kept", "", "app", "quick", "approved")
+	reportFixture(t, named, "named", "", "app", "quick", "approved")
+	for _, malformed := range []bool{false, true} {
+		setReportDirs(t, kept)
+		if malformed {
+			writeFile(t, loop.UserConfigPath(loop.Home()), "[broken")
+		}
+		for _, id := range []string{"named", "state", "kept"} {
+			out, diag, code := waitSubprocess(t, id, named)
+			if id == "named" {
+				if code != 0 || diag != "" || !strings.Contains(out, "approved after") {
+					t.Fatalf("exit = %d, stdout = %s, stderr = %s", code, out, diag)
+				}
+			} else if code != 1 || !strings.Contains(diag, "unknown run") || strings.Contains(diag, "config") {
+				t.Fatalf("exit = %d, stdout = %s, stderr = %s", code, out, diag)
+			}
+		}
+	}
+}
