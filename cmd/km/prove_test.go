@@ -52,7 +52,7 @@ func proofFixture(t *testing.T, command string) string {
 	root := initFixture(t, map[string]string{"file": "ok\n", "other": "old\n", ".gitignore": "ignored\n"})
 	proofGit(t, root, "init", "-q")
 	proofGit(t, root, "add", ".")
-	proofGit(t, root, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "fixture")
+	proofGit(t, root, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "maintenance.auto=false", "-c", "gc.auto=0", "commit", "-qm", "fixture")
 	if command != "" {
 		proofWrite(t, root, ".kapellmeister/config.toml", "[test]\nverify = "+fmt.Sprintf("%q", command)+"\n", 0644)
 	}
