@@ -46,6 +46,7 @@ installing the base chair profiles below.
 ## Commands
 
 ```sh
+km init [-worktree DIR] [-dry-run] [-json] [-verify CMD] [-check CMD] [-no-run] [-timeout D]  # draft setup and prove verify
 km run -repo ~/Code/app [-base BRANCH] -task-file task.md [-ensemble thorough]  # one ensemble
 km audition -worktree DIR [-ensemble thorough]   # can this ensemble play? no real work
 km rehearse -worktree DIR -task-file task.md [-ensemble thorough]  # brief and leave standing
@@ -60,6 +61,12 @@ km config [-worktree DIR] [-cao URL]              # show the effective settings 
 km profiles install [-cao URL] [-replace] [AGENT ...]  # install base chair profiles
 km version                                       # print the version
 ```
+
+To start a repository, run `km init` in its checkout (or `km init -worktree DIR`). It drafts
+repository configuration and a verify script from root files, then runs verify once. It needs
+only km and the repository's toolchain; CAO, user configuration and configured agents are not
+needed. Review and commit the drafts, then use `km preflight -worktree .` and
+`km run -repo . -task-file task.md`. Preview exact contents with `km init -dry-run`.
 
 `km run -repo` leaves its detached worktree under the system temp directory (`wt-km-*`) and
 prints its path in the final summary whenever it leaves changes. Set `[run] worktree_dir` in your
@@ -679,6 +686,58 @@ escalate_after = 2                  # rounds without approval before the impleme
 
 Without `[test]`, kapellmeister falls back to executable `.kapellmeister/verify` and `.kapellmeister/check` scripts; `-verify`
 overrides both.
+
+`km init` drafts `.kapellmeister/config.toml` with `[test] verify` and, when it can derive a
+focused test command, `check` using `{args}`. It generates executable `scripts/verify` unless a
+verify command is supplied, already configured, or available as an executable `scripts/verify`
+or `.kapellmeister/verify`. Resolution is `-verify`, the existing repository config or hook,
+then `scripts/verify`, then generation. An existing config is always kept, including when it has
+no verify; init then explains the setting to add by hand and runs the chosen script once.
+
+Detection reads only root files, in the order below. It reports each source file and any lockfile
+used to select a runner. No installed-tool probing or agent guesses are involved.
+
+| Toolchain | Root evidence | Generated steps | Derived `check` |
+|---|---|---|---|
+| Go | `go.mod` | `gofmt` check, `go vet ./...`, `go build ./...`, `go test ./...` | `go test {args}` |
+| .NET | Exactly one `*.sln` or `*.slnx` | `dotnet format --verify-no-changes`, `dotnet build --nologo`, `dotnet test --nologo` | `dotnet test --nologo {args}` |
+| Rust | `Cargo.toml` | `cargo fmt --check`, `cargo build`, `cargo test` | `cargo test {args}` |
+| Node | `package.json` with a nonempty `test` script other than npm's placeholder | `<pm> run lint` and `<pm> run build` when defined, then `<pm> run test` | None |
+| Python | pytest configuration or a declared pytest dependency | `<runner> -q` | `<runner> {args}` |
+| Make | A `test:` target in the Makefile selected by make | `make test` | None |
+
+Multiple toolchains contribute all their steps in that order. Multiple .NET solutions are reported
+but skipped because the commands would be ambiguous. Make is used only when no other toolchain
+is used; Makefile selection follows `GNUmakefile`, `makefile`, `Makefile`. `check` is derived only
+when exactly one toolchain is used and it has a focused command.
+
+Node chooses the first lockfile present: `pnpm-lock.yaml` (pnpm), `yarn.lock` (yarn),
+`bun.lock` or `bun.lockb` (bun), `package-lock.json` (npm); without one it uses npm.
+Python recognizes `pytest.ini`, `[pytest]` in `tox.ini`, `[tool:pytest]` in `setup.cfg`,
+`[tool.pytest]` in `pyproject.toml`, or pytest declared in that file's project dependencies,
+optional dependencies, dependency groups or Poetry dependency tables. It also recognizes pytest
+requirements in root `requirements*.txt` and `*-requirements.txt` files. Plugins such as
+`pytest-cov` alone are insufficient, and invalid TOML is reported as unusable evidence. Python
+uses `uv run pytest` with `uv.lock`, then `poetry run pytest` with `poetry.lock`, otherwise
+`python3 -m pytest`.
+
+The generated POSIX shell script runs on macOS and Linux. It checks formatting or lint where the
+toolchain provides a standard command, builds, and tests. Success prints one short line; failure
+names the step and its exit status, shows at most 40 lines of 300 characters each, and prints the
+path to the failing step's full log in the temporary directory. Successful logs are removed.
+Init also bounds the output of an existing or supplied verify command and reports its status
+and duration. A failure or timeout exits unsuccessfully and leaves drafted files for review.
+
+Existing files are never edited or overwritten, and a second init reports that nothing was
+written while running verify again. A non-executable `scripts/verify` must be made executable or
+removed before initialization. Init never commits or changes Git state. If no usable verify
+command or toolchain is found, it fails without drafting files or a `[test]` table; supply
+`-verify CMD` to provide a command explicitly. `-verify` overrides the command for that invocation
+and is saved only when creating a config; `-check CMD` supplies the focused command for a new
+config. `-no-run` drafts without executing verify, `-timeout D` changes the default `10m` limit,
+and `-dry-run` prints exact drafts without writing or running anything. `-json` reports the same
+file decisions, detection evidence, verify result and next steps as a single JSON object,
+including on failure.
 
 ### Tiers
 
