@@ -332,20 +332,26 @@ configure them before contacting CAO. Checks run concurrently once their chairs 
 5xx errors and a 400 saying the requested session was not found get up to three retries, after
 1, 2 and 4 seconds plus up to half as much again at random, under distinct names ending in `r`, `r2` and `r3`. The `ok` or `BLOCKED` line
 reports `seat retried N time(s) after <first error>`. Other failures keep one immediate retry;
-CAO call timeouts, including an expired launch context, and permission blockers are not retried.
+a preflight check timeout gets one fresh chair and one retry. km reports whether that second
+attempt passed or failed. Two timeouts can take two full `preflight_timeout`s plus CAO's readiness
+margins and seating time. Seat call timeouts, including an expired launch context, and permission
+blockers are not retried. Real work steps get no additional retry.
 A seat launch is bounded at three-eighths of `preflight_timeout` (90s by default, at least 10s),
 and never longer than the CAO client's 90s launch bound; other seats wait for that launch to finish.
 Deleting a session also waits its turn, so a deletion never overlaps another chair's creation.
 
 When a chair starts but does not answer before the preflight limit, `km preflight`, `km run`
 and `km tune verify` explain that this can happen when the agent or the server has only just
-started. Run the command again first. If it happens again, use the reported session name to
+started, or a trust or approval prompt may have consumed its first message. See
+[Trusting the folder](#trusting-the-folder) for the known Codex case. Run the command again first. If it happens again, use the reported session name to
 attach and see what the agent is waiting for, then detach with Ctrl-b d. For example:
 
 ```text
 chair mock started but did not answer within 4m0s; this can happen when the agent or the server has only just started
   1. run the command again
   2. if it happens again, attach with `tmux attach -t cao-km-preflight-example` to see what the agent is waiting for, then detach with Ctrl-b d
+the agent may be waiting at a trust or approval prompt, or a prompt may have been answered automatically and km's first message lost with it
+[run] trust_folder = true in ~/.kapellmeister/config.toml avoids the known Codex case (see the README)
 ```
 
 The agent's screen and raw server detail follow on separate lines when available.
@@ -577,7 +583,8 @@ available agent in your user config.
 
 The repository's values win for `[run]` rounds, retries, `lessons`, `lessons_timeout` and `learned_budget`, `[steps]` and `[sizing]`; yours win
 for `[tiers]`, because only you know what your accounts can run. `[cao]`, `[chairs]`, `[agents]`,
-`[ensembles]`, `[report]` and `[run] worktree_dir` are machine-only; `[test]` and `[run] base` are repository-only.
+`[ensembles]`, `[report]`, `[run] worktree_dir` and `[run] trust_folder` are machine-only
+(see [Trusting the folder](#trusting-the-folder)); `[test]` and `[run] base` are repository-only.
 Putting one in the wrong file is an error.
 `$CAO_API_BASE_URL` overrides `[cao] url`. State lives in `~/.kapellmeister/state` (`$KAPELLMEISTER_STATE_DIR`).
 User-only `[report] dirs` adds search directories to `<state>/runs` for bare report, status and
@@ -656,6 +663,7 @@ preflight_timeout = "4m"
 blocker_poll = "20s"
 lessons = true                     # off by default; proposals need human review
 worktree_dir = "~/Code/worktrees"   # optional; defaults to the system temp directory
+trust_folder = false              # optional; record Codex repository trust before launching
 lessons_timeout = "5m"
 learned_budget = 4000              # bytes of lesson text per chair; at least 1
 
@@ -813,6 +821,29 @@ With one reviewer, replies remain `review-<round>.md` and the terminal label rem
 `km <run> · reviewer-<n>`. A classified review has a sibling `.verdict` file; a bare verdict skips
 that file and the classifier step. Replies live under
 `.kapellmeister/runs/<run>/` in the worktree.
+
+### Trusting the folder
+
+`[run] trust_folder = true` opts into recording trust before chairs launch. It defaults to false
+and belongs only in your user config; a repository cannot grant itself trust. `km config` shows it.
+For Codex, km appends `[projects."<repository root>"]` with `trust_level = "trusted"` to
+`$CODEX_HOME/config.toml` (or `~/.codex/config.toml`). The path resolves symlinks and uses the main
+repository root for linked worktrees, as Codex does, rather than the chair's worktree path.
+Non-git folders need no entry. km preserves every existing byte and never changes an existing
+entry for the root or launch folder. If parsing or safely appending fails, km leaves the file alone
+and prints a diagnostic. It prints one line when it records trust. km and cao-server must share
+`CODEX_HOME` so the chair reads the same config.
+
+For Claude Code, Copilot CLI and Antigravity, km writes nothing: CAO 2.5.4 accepts their trust
+dialogs. km also does nothing for other providers. With the setting **off**, km changes nothing,
+but CAO still accepts the dialogs it recognises; off does not mean a folder stays untrusted.
+
+Codex supports a per-launch override, `-c 'projects={"/path"={trust_level="trusted"}}'`, which saves
+nothing. CAO cannot carry it: profile `codexConfig` keys must match `[A-Za-z0-9_.-]` and values must
+be scalars. CAO 2.5.4 does not recognise Codex 0.167.0's "Trust this folder?" menu, so km's first
+message can be lost when its trailing Enter accepts trust. The preflight timeout retry helps
+because Codex saves trust on that first attempt. This is reported upstream as
+[awslabs/cli-agent-orchestrator#1319](https://github.com/awslabs/cli-agent-orchestrator/issues/1319).
 
 ## Repository configuration
 

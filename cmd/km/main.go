@@ -460,7 +460,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		ctx, stop = loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 		defer stop()
 	}
-	client := cao.NewClient(s.CAOURL)
+	client := newClient(s.CAOURL, s, output)
 	if *detachedLaunch != "" {
 		state := initialRunState(runID, "run", wt, *ensemble, s.Rounds, time.Now())
 		if err := os.MkdirAll(runDir, 0755); err != nil {
@@ -568,7 +568,7 @@ func preflightCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	client := cao.NewClient(firstNonEmpty(*caoURL, s.CAOURL))
+	client := newClient(firstNonEmpty(*caoURL, s.CAOURL), s, os.Stdout)
 	var chairs []loop.Chair
 	for _, a := range selected {
 		chairs = append(chairs, a.Chair)
@@ -604,8 +604,8 @@ func configCommand(args []string) error {
 		return err
 	}
 	printSources(os.Stdout, s)
-	fmt.Printf("cao    %s\nstate  %s\nrun    rounds %d, verify retries %d, step timeout %s, reply grace %s, preflight %s, blocker poll %s, lessons %s, learned budget %d bytes\n",
-		s.CAOURL, loop.StateDir(), s.Rounds, s.VerifyRetries, s.Timeout, s.ReplyGrace, s.PreflightTimeout, s.BlockerPoll, lessonsSetting(s), s.LearnedBudget)
+	fmt.Printf("cao    %s\nstate  %s\nrun    rounds %d, verify retries %d, step timeout %s, reply grace %s, preflight %s, blocker poll %s, lessons %s, learned budget %d bytes, trust folder %s\n",
+		s.CAOURL, loop.StateDir(), s.Rounds, s.VerifyRetries, s.Timeout, s.ReplyGrace, s.PreflightTimeout, s.BlockerPoll, lessonsSetting(s), s.LearnedBudget, map[bool]string{true: "on", false: "off"}[s.TrustFolder])
 	if len(s.ReportDirs) > 0 {
 		fmt.Printf("report dirs %s (in addition to %s)\n", plain(strings.Join(s.ReportDirs, ", ")), plain(defaultRunsDir()))
 	}
@@ -858,15 +858,15 @@ func preflight(ctx context.Context, client *cao.Client, worktree string, timeout
 	for _, r := range results {
 		d := (time.Duration(r.DurationMS) * time.Millisecond).Round(time.Second)
 		if r.OK {
-			fmt.Printf("  ok      %s (%s)%s\n", r.Chair, d, modelNote(r)+seatRetryNote(r))
+			fmt.Printf("  ok      %s (%s)%s\n", r.Chair, d, modelNote(r)+seatRetryNote(r)+timeoutRetryNote(r, timeout))
 			continue
 		}
 		if r.TimedOut {
-			fmt.Printf("  BLOCKED %s (%s): did not answer within %s%s\n", r.Chair, d, timeout, seatRetryNote(r))
+			fmt.Printf("  BLOCKED %s (%s): did not answer within %s%s\n", r.Chair, d, timeout, seatRetryNote(r)+timeoutRetryNote(r, timeout))
 			blocked = append(blocked, strings.ReplaceAll(preflightTimeoutMessage(r, timeout), "\n", "\n  "))
 			continue
 		}
-		fmt.Printf("  BLOCKED %s (%s): %s\n", r.Chair, d, firstNonEmpty(r.Blocker, r.Error)+seatRetryNote(r))
+		fmt.Printf("  BLOCKED %s (%s): %s\n", r.Chair, d, firstNonEmpty(r.Blocker, r.Error)+seatRetryNote(r)+timeoutRetryNote(r, timeout))
 		hint := r.Chair.String()
 		if r.Session != "" {
 			hint += fmt.Sprintf(": resolve it with `tmux attach -t %s`, then detach with Ctrl-b d", r.Session)
@@ -885,6 +885,8 @@ func preflightTimeoutMessage(r loop.PreflightResult, timeout time.Duration) stri
 	if r.Session != "" {
 		fmt.Fprintf(&out, "\n  2. if it happens again, attach with `tmux attach -t %s` to see what the agent is waiting for, then detach with Ctrl-b d", r.Session)
 	}
+	fmt.Fprintln(&out, "\nthe agent may be waiting at a trust or approval prompt, or a prompt may have been answered automatically and km's first message lost with it")
+	fmt.Fprintf(&out, "[run] trust_folder = true in %s avoids the known Codex case (see the README)", loop.UserConfigPath(loop.Home()))
 	if r.Blocker != "" {
 		fmt.Fprintf(&out, "\nthe agent's screen shows: %s", r.Blocker)
 	}
@@ -1289,4 +1291,17 @@ func copyDir(src, dst string) error {
 		}
 	}
 	return nil
+}
+
+func timeoutRetryNote(r loop.PreflightResult, timeout time.Duration) string {
+	if !r.TimeoutRetried {
+		return ""
+	}
+	if r.OK {
+		return fmt.Sprintf("; first attempt timed out after %s, second attempt passed", timeout)
+	}
+	if r.TimedOut {
+		return "; first attempt also timed out and was retried once"
+	}
+	return fmt.Sprintf("; first attempt timed out after %s, second attempt failed", timeout)
 }

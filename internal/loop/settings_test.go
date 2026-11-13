@@ -681,3 +681,31 @@ func TestRepoBaseBranchReadsRunBaseAndRejectsUnknownKeysAndUserOnlySections(t *t
 		}
 	}
 }
+
+func TestTrustFolderIsOffByDefaultAndReadFromTheUserConfig(t *testing.T) {
+	for _, body := range []string{"", "[run]\ntrust_folder = true\n", "[run]\ntrust_folder = false\n"} {
+		s, err := LoadSettings(writeUserConfig(t, body), t.TempDir())
+		data, _ := json.Marshal(s)
+		var fields map[string]any
+		json.Unmarshal(data, &fields)
+		if err != nil || fields["trust_folder"] != strings.Contains(body, "true") {
+			t.Fatal(string(data), err)
+		}
+	}
+}
+func TestTrustFolderBelongsInTheUserConfigAndIsRefusedInTheRepositoryConfig(t *testing.T) {
+	for _, value := range []string{"true", "false"} {
+		home, repo := t.TempDir(), t.TempDir()
+		t.Setenv("KAPELLMEISTER_HOME", home)
+		body := "[run]\ntrust_folder = " + value + "\n"
+		writeConfig(t, repo, body)
+		_, err := LoadSettings(home, repo)
+		if err == nil || !strings.Contains(err.Error(), "run.trust_folder belongs in "+UserConfigPath(home)) {
+			t.Fatal(err)
+		}
+		_, err = RepoBaseBranch([]byte(body))
+		if err == nil || !strings.Contains(err.Error(), "run.trust_folder belongs in "+UserConfigPath(home)) {
+			t.Fatal(err)
+		}
+	}
+}

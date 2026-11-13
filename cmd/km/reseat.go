@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/jystringfellow/kapellmeister/internal/cao"
 	"github.com/jystringfellow/kapellmeister/internal/ensemble"
 	"github.com/jystringfellow/kapellmeister/internal/loop"
 )
@@ -65,7 +64,7 @@ func reseatCommand(args []string) error {
 	}
 	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
-	client := cao.NewClient(firstNonEmpty(*caoURL, s.CAOURL))
+	client := newClient(firstNonEmpty(*caoURL, s.CAOURL), s, os.Stdout)
 	m := standing.Members()[index]
 	if flagsSet(fs)["agent"] {
 		m, err = prepareMember(ctx, client, s.Policy, s.Defined, *agent, m)

@@ -164,6 +164,12 @@ func assertPreflightTimeoutAdvice(t *testing.T, out, session string) {
 	retry := strings.Index(out, "1. run the command again")
 	attach := strings.Index(out, "2. if it happens again, attach with `tmux attach -t "+session+"`")
 	detail := strings.Index(out, "server detail: POST /terminals/run-step: HTTP 504:")
+	prompts := strings.Index(out, "trust or approval prompt")
+	setting := strings.Index(out, "[run] trust_folder = true in "+loop.UserConfigPath(loop.Home()))
+	if prompts <= attach || setting <= prompts || detail <= setting {
+		t.Fatal(out)
+	}
+
 	if retry <= start || attach <= retry || detail <= attach || !strings.Contains(out, "to see what the agent is waiting for, then detach with Ctrl-b d") || !strings.Contains(out, preflightTimeoutBody) {
 		t.Fatal(out)
 	}
@@ -239,5 +245,75 @@ func TestRunExplainsAPreflightTimeoutInPlainWordsAndNamesTheSession(t *testing.T
 			message = "chair " + message
 		}
 		assertPreflightTimeoutAdvice(t, message, "cao-run")
+	}
+}
+
+func TestATimeoutMessageNamesPromptsAndTheSetting(t *testing.T) {
+	r := loop.PreflightResult{Chair: loop.Chair{Provider: "codex"}, Session: "kept", Error: "detail"}
+	message := preflightTimeoutMessage(r, time.Second)
+	for _, text := range []string{"trust or approval prompt", "answered automatically", "km's first message lost", "[run] trust_folder = true in " + loop.UserConfigPath(loop.Home()), "known Codex case"} {
+		if !strings.Contains(message, text) {
+			t.Errorf("missing %q: %s", text, message)
+		}
+	}
+	if !(strings.Index(message, "2. if it happens again") < strings.Index(message, "trust or approval prompt") && strings.Index(message, "known Codex case") < strings.Index(message, "server detail: detail")) {
+		t.Fatal(message)
+	}
+}
+func TestPreflightReportsTheSecondAttemptAfterATimeout(t *testing.T) {
+	for _, pass := range []bool{true, false} {
+		t.Run(fmt.Sprint(pass), func(t *testing.T) {
+			dir := t.TempDir()
+			calls := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == "POST" && r.URL.Path == "/sessions":
+					json.NewEncoder(w).Encode(cao.Terminal{ID: "t", SessionName: r.URL.Query().Get("session_name")})
+				case r.URL.Path == "/terminals/run-step":
+					calls++
+					if calls == 2 && pass {
+						writeFile(t, filepath.Join(dir, loop.RunDirRel("preflight"), "0-codex.txt"), "ready")
+						json.NewEncoder(w).Encode(cao.StepResponse{TerminalID: "t", Status: "completed"})
+						return
+					}
+					w.WriteHeader(504)
+					w.Write([]byte(preflightTimeoutBody))
+				default:
+					w.Write([]byte(`{}`))
+				}
+			}))
+			defer srv.Close()
+			out, err := captureStdout(t, func() error {
+				return preflight(context.Background(), cao.NewClient(srv.URL), dir, time.Second, loop.Chair{Provider: "codex"})
+			})
+			if calls != 2 || (err == nil) != pass {
+				t.Fatal(calls, out, err)
+			}
+			want := "first attempt timed out after 1s, second attempt passed"
+			if !pass {
+				want = "first attempt also timed out and was retried once"
+			}
+			if !strings.Contains(out, want) {
+				t.Fatal(out, err)
+			}
+		})
+	}
+}
+func TestTuneVerifyReportsATimeoutRetry(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/sessions" {
+			fmt.Fprint(w, `{"id":"t","session_name":"s"}`)
+		} else if r.URL.Path == "/terminals/run-step" {
+			w.WriteHeader(504)
+			fmt.Fprint(w, preflightTimeoutBody)
+		} else {
+			fmt.Fprint(w, `{}`)
+		}
+	}))
+	defer srv.Close()
+	var out strings.Builder
+	err := tuneSeat(context.Background(), cao.NewClient(srv.URL), t.TempDir(), time.Second, &out, loop.Chair{Provider: "codex"})
+	if err == nil || !strings.Contains(out.String(), "first attempt also timed out and was retried once") {
+		t.Fatal(out.String(), err)
 	}
 }

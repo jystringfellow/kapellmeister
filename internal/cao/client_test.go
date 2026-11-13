@@ -23,3 +23,44 @@ func TestSessionTerminalsReadsStatusAndDescriptionFromTheSessionEndpoint(t *test
 		t.Fatalf("terminals = %+v", ts)
 	}
 }
+
+func TestBeforeLaunchRunsBeforeEveryRequestThatStartsATerminal(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls != 1 {
+			t.Errorf("hook calls before request = %d", calls)
+		}
+		w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL)
+	c.BeforeLaunch = func(provider, dir string) {
+		if provider != "codex" || dir != "/repo" {
+			t.Errorf("launch %s %s", provider, dir)
+		}
+		calls++
+	}
+	ctx := context.Background()
+	l := Launch{Provider: "codex", WorkingDirectory: "/repo"}
+	if _, err := c.CreateSession(ctx, "s", l); err != nil {
+		t.Fatal(err)
+	}
+	calls = 0
+	if _, err := c.AddTerminal(ctx, "s", l); err != nil {
+		t.Fatal(err)
+	}
+	calls = 0
+	if _, err := c.RunStep(ctx, StepRequest{Provider: "codex", WorkingDirectory: "/repo"}); err != nil {
+		t.Fatal(err)
+	}
+}
+func TestBeforeLaunchDoesNotRunForARunStepThatReusesATerminalOrAnIncompleteLaunch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{}`)) }))
+	defer srv.Close()
+	c := NewClient(srv.URL)
+	c.BeforeLaunch = func(string, string) { t.Error("unexpected launch hook") }
+	ctx := context.Background()
+	c.RunStep(ctx, StepRequest{Provider: "codex", WorkingDirectory: "/repo", ReuseTerminalID: "t"})
+	c.CreateSession(ctx, "s", Launch{Provider: "codex"})
+	c.AddTerminal(ctx, "s", Launch{WorkingDirectory: "/repo"})
+}

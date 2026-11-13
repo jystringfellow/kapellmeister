@@ -151,7 +151,11 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 		ctx, stop = loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 		defer stop()
 	}
-	client := cao.NewClient(s.CAOURL)
+	trustOut := stdout
+	if *asJSON {
+		trustOut = stderr
+	}
+	client := newClient(s.CAOURL, s, trustOut)
 	if err := tunePreflight(ctx, client, s.Policy, chairs); err != nil {
 		return err
 	}
@@ -450,6 +454,9 @@ func tuneSeat(ctx context.Context, client *cao.Client, root string, timeout time
 			return err
 		}
 		r := results[0]
+		if note := timeoutRetryNote(r, timeout); note != "" {
+			fmt.Fprintf(out, "  %s%s\n", chair, note)
+		}
 		if !r.OK {
 			if r.TimedOut {
 				return errors.New(preflightTimeoutMessage(r, timeout))

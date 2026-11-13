@@ -10,7 +10,6 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/jystringfellow/kapellmeister/internal/cao"
 	"github.com/jystringfellow/kapellmeister/internal/ensemble"
 	"github.com/jystringfellow/kapellmeister/internal/loop"
 )
@@ -80,7 +79,7 @@ func playCommand(args []string) error {
 	}
 	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
-	client := cao.NewClient(s.CAOURL)
+	client := newClient(s.CAOURL, s, os.Stdout)
 	missing, err := ensemble.MissingOccupants(ctx, client, standing)
 	if err != nil {
 		return err

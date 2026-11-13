@@ -205,7 +205,7 @@ func TestPreflightKeepsOneImmediateRetryForAnHTTP500FromACheck(t *testing.T) {
 	})
 }
 
-func TestPreflightDoesNotRetryAChairWhoseDeadlineErrorIsWrapped(t *testing.T) {
+func TestPreflightRetriesOnlyACheckWhoseDeadlineErrorIsWrapped(t *testing.T) {
 	for _, step := range []string{"seat", "check"} {
 		t.Run(step, func(t *testing.T) {
 			dir := t.TempDir()
@@ -225,13 +225,17 @@ func TestPreflightDoesNotRetryAChairWhoseDeadlineErrorIsWrapped(t *testing.T) {
 				t.Fatal(err)
 			}
 			r := results[0]
-			if attempts != 1 || r.OK || r.Retried || r.SeatRetries != 0 || r.Error != timeout.Error() {
+			want := 1
+			if step == "check" {
+				want = 2
+			}
+			if attempts != want || r.OK || r.Retried != (step == "check") || r.SeatRetries != 0 || r.Error != timeout.Error() {
 				t.Errorf("attempts = %d, result = %+v", attempts, r)
 			}
 			if step == "seat" && r.Unseated != 1 {
 				t.Errorf("timed-out seat was not cleaned up: %+v", r)
 			}
-			if step == "check" && (r.Session == "" || len(host.unseated) != 0) {
+			if step == "check" && (r.Session == "" || len(host.unseated) != 1) {
 				t.Errorf("timed-out check lost its attach target: %+v", r)
 			}
 		})

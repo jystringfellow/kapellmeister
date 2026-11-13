@@ -10,7 +10,6 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/jystringfellow/kapellmeister/internal/cao"
 	"github.com/jystringfellow/kapellmeister/internal/ensemble"
 	"github.com/jystringfellow/kapellmeister/internal/loop"
 )
@@ -85,7 +84,7 @@ func rehearseCommand(args []string) error {
 	}
 	policy := s.Policy
 	sizeMembers(policy, members)
-	client := cao.NewClient(firstNonEmpty(*caoURL, s.CAOURL))
+	client := newClient(firstNonEmpty(*caoURL, s.CAOURL), s, os.Stdout)
 	if err := ensureProfiles(ctx, client, &policy, stepChairs(chairs)); err != nil {
 		return err
 	}

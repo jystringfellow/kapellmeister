@@ -238,7 +238,7 @@ func TestPreflightReportsTeardownFailuresAndStillTakesDownTheOtherChairs(t *test
 	}
 }
 
-func TestABlockedPreflightKeepsTheSeatedSessionWhenScreenFails(t *testing.T) {
+func TestATimedOutPreflightKeepsTheSecondSessionWhenScreenFails(t *testing.T) {
 	dir := t.TempDir()
 	host := &preflightHost{fakeStepper: &fakeStepper{t: t, dir: dir}}
 	host.contextActions = map[string]func(context.Context, Step) error{"preflight": func(context.Context, Step) error {
@@ -250,8 +250,15 @@ func TestABlockedPreflightKeepsTheSeatedSessionWhenScreenFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := results[0]
-	if r.OK || r.Retried || r.Session == "" || host.seated[r.Session] != r.TerminalID || len(host.unseated) != 0 {
-		t.Fatalf("blocked chair lost its attach target: %+v; unseated %v", r, host.unseated)
+	if r.OK || !r.TimedOut || !r.Retried || !r.TimeoutRetried || r.Blocker != "" || len(host.seated) != 2 || len(host.steps) != 2 {
+		t.Fatalf("timed-out chair was not retried exactly once: %+v; seated %v; steps %d", r, host.seated, len(host.steps))
+	}
+	if r.Session == "" || !strings.HasSuffix(r.Session, "r") || r.TerminalID == "" || host.seated[r.Session] != r.TerminalID {
+		t.Fatalf("second attempt lost its attach target: %+v; seated %v", r, host.seated)
+	}
+	firstSession := strings.TrimSuffix(r.Session, "r")
+	if len(host.unseated) != 1 || host.unseated[0] != firstSession || host.seated[firstSession] == "" || host.seated[firstSession] == r.TerminalID || r.Unseated != 1 {
+		t.Fatalf("only the first attempt should be unseated: %+v; unseated %v; seated %v", r, host.unseated, host.seated)
 	}
 }
 
