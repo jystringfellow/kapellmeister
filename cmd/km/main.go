@@ -601,7 +601,7 @@ func configCommand(args []string) error {
 	fmt.Printf("cao    %s\nstate  %s\nrun    rounds %d, verify retries %d, step timeout %s, reply grace %s, preflight %s, blocker poll %s, lessons %s, learned budget %d bytes\n",
 		s.CAOURL, loop.StateDir(), s.Rounds, s.VerifyRetries, s.Timeout, s.ReplyGrace, s.PreflightTimeout, s.BlockerPoll, lessonsSetting(s), s.LearnedBudget)
 	if len(s.ReportDirs) > 0 {
-		fmt.Printf("report dirs %s\n", plain(strings.Join(s.ReportDirs, ", ")))
+		fmt.Printf("report dirs %s (in addition to %s)\n", plain(strings.Join(s.ReportDirs, ", ")), plain(defaultRunsDir()))
 	}
 	printChairs(os.Stdout, s)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

@@ -54,11 +54,8 @@ func statusAt(args []string, stdout, stderr io.Writer, now time.Time) error {
 	if err != nil {
 		return fmt.Errorf("status: %s", plain(err.Error()))
 	}
-	found, scan, err := findRuns(dirs, origin, *maxDepth, *maxEntries, true, false)
+	found, scan, err := findRuns(dirs, origin, source, *maxDepth, *maxEntries, true, false)
 	if err != nil {
-		if origin == configuredRecordDirs {
-			err = fmt.Errorf("%w (from [report] dirs in %s)", err, source)
-		}
 		return fmt.Errorf("status: %s", plain(err.Error()))
 	}
 	for _, diagnostic := range scan.diagnostics {
@@ -95,7 +92,7 @@ func statusAt(args []string, stdout, stderr io.Writer, now time.Time) error {
 	})
 	var searched []string
 	if origin == configuredRecordDirs {
-		searched = scan.searchedDirs(dirs)
+		searched = scan.searched
 	}
 	if *asJSON {
 		return printReportJSON(stdout, struct {

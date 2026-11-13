@@ -534,3 +534,43 @@ func TestMcpToolsSearchExistingConfiguredDirectoriesAndReportMissingOnes(t *test
 		}
 	}
 }
+
+func TestMcpToolsFindTheStateRunsWhenReportDirsNamesAMissingDirectory(t *testing.T) {
+	root := mcpRecords(t)
+	statusFixture(t, root, "alive")
+	reportFixture(t, root, "finished", "", "app", "quick", "approved")
+	writeFile(t, filepath.Join(root, "finished", "output.log"), "finished output")
+	missing := filepath.Join(t.TempDir(), "absent")
+	setReportDirs(t, missing)
+	c := startMCPClient(t, true)
+	for _, name := range []string{"status", "report", "wait", "output"} {
+		t.Run(name, func(t *testing.T) {
+			args := map[string]any{}
+			if name == "wait" || name == "output" {
+				args["run"] = "finished"
+			}
+			d := mcpData(t, c.call(name, args))
+			prefix := name
+			if name == "output" {
+				prefix = "wait"
+			}
+			if !reflect.DeepEqual(d["skipped_dirs"], []any{missing}) || !reflect.DeepEqual(d["diagnostics"], []any{"km: " + prefix + ": " + missing + ": not searched: directory does not exist"}) {
+				t.Fatal(d)
+			}
+			switch name {
+			case "status", "report":
+				if !reflect.DeepEqual(d["searched"], []any{root}) || len(d["runs"].([]any)) == 0 {
+					t.Fatal(d)
+				}
+			case "wait":
+				if d["state"] != "finished" || d["run_id"] != "finished" {
+					t.Fatal(d)
+				}
+			case "output":
+				if d["text"] != "finished output" {
+					t.Fatal(d)
+				}
+			}
+		})
+	}
+}

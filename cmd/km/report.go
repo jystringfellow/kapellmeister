@@ -96,11 +96,8 @@ func reportCommand(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("report: %s", plain(err.Error()))
 	}
-	runs, scan, err := findRuns(dirs, origin, *maxDepth, *maxEntries, false, *withParts)
+	runs, scan, err := findRuns(dirs, origin, source, *maxDepth, *maxEntries, false, *withParts)
 	if err != nil {
-		if origin == configuredRecordDirs {
-			err = fmt.Errorf("%w (from [report] dirs in %s)", err, source)
-		}
 		return fmt.Errorf("report: %s", plain(err.Error()))
 	}
 	for _, diagnostic := range scan.diagnostics {
@@ -113,7 +110,7 @@ func reportCommand(args []string, stdout, stderr io.Writer) error {
 		Totals: reportTotals{EnsembleUsage: map[string]reportUsageTotal{}, RepositoryUsage: map[string]reportUsageTotal{}, Outcomes: map[string]int{}, Repositories: map[string]int{}, Ensembles: map[string]int{}},
 	}
 	if origin == configuredRecordDirs {
-		report.Searched = scan.searchedDirs(dirs)
+		report.Searched = scan.searched
 	}
 	for _, run := range runs {
 		if set["since"] && (run.Started == nil || run.Started.Before(since)) {

@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 
@@ -34,6 +33,7 @@ type reportScan struct {
 	maxEntries        int
 	entries           int
 	copies            []reportRun
+	searched          []string
 	missingDirs       []string
 	diagnostics       []string
 	visited           map[string]bool
@@ -54,9 +54,19 @@ func recordDirs(named []string) (dirs []string, origin recordDirSource, source s
 		return nil, namedRecordDirs, source, err
 	}
 	if len(dirs) > 0 {
-		return dirs, configuredRecordDirs, source, nil
+		combined := []string{defaultRunsDir()}
+		for _, dir := range dirs {
+			if filepath.Clean(dir) != defaultRunsDir() {
+				combined = append(combined, dir)
+			}
+		}
+		return combined, configuredRecordDirs, source, nil
 	}
-	return []string{filepath.Join(loop.StateDir(), "runs")}, defaultRecordDirs, "", nil
+	return []string{defaultRunsDir()}, defaultRecordDirs, "", nil
+}
+
+func defaultRunsDir() string {
+	return filepath.Join(loop.StateDir(), "runs")
 }
 
 func printSearchedDirs(w io.Writer, dirs []string) error {
@@ -68,9 +78,15 @@ func printSearchedDirs(w io.Writer, dirs []string) error {
 	return nil
 }
 
-func findRuns(dirs []string, origin recordDirSource, maxDepth, maxEntries int, refuseLinkedRoots, withParts bool) ([]reportRun, *reportScan, error) {
+func findRuns(dirs []string, origin recordDirSource, source string, maxDepth, maxEntries int, refuseLinkedRoots, withParts bool) ([]reportRun, *reportScan, error) {
 	scan := &reportScan{withParts: withParts, maxDepth: maxDepth, maxEntries: maxEntries, visited: map[string]bool{}, skipped: map[string]bool{}, notSearched: []reportNotSearched{}}
-	roots := map[string]bool{}
+	roots := map[string]string{}
+	attribute := func(dir string, err error) error {
+		if origin == configuredRecordDirs && filepath.Clean(dir) != defaultRunsDir() {
+			return fmt.Errorf("%w (from [report] dirs in %s)", err, source)
+		}
+		return err
+	}
 	for _, dir := range dirs {
 		var root string
 		var err error
@@ -80,27 +96,30 @@ func findRuns(dirs []string, origin recordDirSource, maxDepth, maxEntries int, r
 			root, err = filepath.EvalSymlinks(dir)
 		}
 		if origin != namedRecordDirs && errors.Is(err, fs.ErrNotExist) {
-			if origin == configuredRecordDirs {
+			if origin == configuredRecordDirs && filepath.Clean(dir) != defaultRunsDir() {
 				scan.missingDirs = append(scan.missingDirs, dir)
 				scan.diagnostics = append(scan.diagnostics, "km: report: "+plain(dir)+": not searched: directory does not exist")
 			}
 			continue
 		}
 		if err != nil {
-			return nil, scan, err
+			return nil, scan, attribute(dir, err)
 		}
 		root, err = filepath.Abs(root)
 		if err != nil {
-			return nil, scan, err
+			return nil, scan, attribute(dir, err)
 		}
 		info, err := os.Stat(root)
 		if err != nil {
-			return nil, scan, err
+			return nil, scan, attribute(dir, err)
 		}
 		if !info.IsDir() {
-			return nil, scan, fmt.Errorf("%s: not a directory", dir)
+			return nil, scan, attribute(dir, fmt.Errorf("%s: not a directory", dir))
 		}
-		roots[root] = true
+		scan.searched = append(scan.searched, dir)
+		if _, exists := roots[root]; !exists {
+			roots[root] = dir
+		}
 	}
 	paths := make([]string, 0, len(roots))
 	for root := range roots {
@@ -117,12 +136,12 @@ func findRuns(dirs []string, origin recordDirSource, maxDepth, maxEntries int, r
 		}
 		dir, err := os.OpenFile(root, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_DIRECTORY, 0)
 		if err != nil {
-			return nil, scan, err
+			return nil, scan, attribute(roots[root], err)
 		}
 		err = scan.directory(dir, 0)
 		dir.Close()
 		if err != nil {
-			return nil, scan, err
+			return nil, scan, attribute(roots[root], err)
 		}
 	}
 	if scan.depthSkipped > 20 {
@@ -134,16 +153,6 @@ func findRuns(dirs []string, origin recordDirSource, maxDepth, maxEntries int, r
 	runs, messages := resolveReportCopies(scan.copies)
 	scan.diagnostics = append(scan.diagnostics, messages...)
 	return runs, scan, nil
-}
-
-func (scan *reportScan) searchedDirs(dirs []string) []string {
-	var searched []string
-	for _, dir := range dirs {
-		if !slices.Contains(scan.missingDirs, dir) {
-			searched = append(searched, dir)
-		}
-	}
-	return searched
 }
 
 func unlinkedRoot(path string) (string, error) {

@@ -213,11 +213,8 @@ func findWaitRun(id string, named []string, maxDepth, maxEntries int, stderr io.
 	if err != nil {
 		return reportRun{}, nil, fmt.Errorf("wait: %s", plain(err.Error()))
 	}
-	found, scan, err := findRuns(dirs, origin, maxDepth, maxEntries, true, false)
+	found, scan, err := findRuns(dirs, origin, source, maxDepth, maxEntries, true, false)
 	if err != nil {
-		if origin == configuredRecordDirs {
-			err = fmt.Errorf("%w (from [report] dirs in %s)", err, source)
-		}
 		return reportRun{}, nil, fmt.Errorf("wait: %s", plain(err.Error()))
 	}
 	run, err := resolveWaitRun(id, found)
