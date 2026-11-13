@@ -50,16 +50,12 @@ func statusAt(args []string, stdout, stderr io.Writer, now time.Time) error {
 	if *maxDepth < 1 || *maxEntries < 1 || *maxEntries > 1<<24 {
 		return errors.New("status: -max-depth must be at least 1; -max-entries must be between 1 and 16777216")
 	}
-	defaultDir := len(dirs) == 0
-	dirs, configured, source, err := recordDirs(dirs)
+	dirs, origin, source, err := recordDirs(dirs)
 	if err != nil {
 		return fmt.Errorf("status: %s", plain(err.Error()))
 	}
-	found, scan, err := findRuns(dirs, defaultDir && !configured, *maxDepth, *maxEntries, true, false)
+	found, scan, err := findRuns(dirs, origin, source, *maxDepth, *maxEntries, true, false)
 	if err != nil {
-		if configured {
-			err = fmt.Errorf("%w (from [report] dirs in %s)", err, source)
-		}
 		return fmt.Errorf("status: %s", plain(err.Error()))
 	}
 	for _, diagnostic := range scan.diagnostics {
@@ -95,14 +91,15 @@ func statusAt(args []string, stdout, stderr io.Writer, now time.Time) error {
 		return a.RunID < b.RunID
 	})
 	var searched []string
-	if configured {
-		searched = dirs
+	if origin == configuredRecordDirs {
+		searched = scan.searched
 	}
 	if *asJSON {
 		return printReportJSON(stdout, struct {
-			Runs     []statusRun `json:"runs"`
-			Searched []string    `json:"searched,omitempty"`
-		}{runs, searched})
+			Runs        []statusRun `json:"runs"`
+			Searched    []string    `json:"searched,omitempty"`
+			SkippedDirs []string    `json:"skipped_dirs,omitempty"`
+		}{runs, searched, scan.missingDirs})
 	}
 	if len(runs) == 0 && scan.notSearchedTotal > 0 {
 		if _, err := fmt.Fprintf(stdout, "no runs in progress found; %d directories were not searched\n", scan.notSearchedTotal); err != nil {

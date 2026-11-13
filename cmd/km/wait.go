@@ -32,11 +32,12 @@ func (e *exitStatusError) Error() string {
 func (e *exitStatusError) Unwrap() error { return e.err }
 
 type waitResult struct {
-	RunID      string           `json:"run_id"`
-	State      string           `json:"state"`
-	ExitStatus int              `json:"exit_status"`
-	Reason     string           `json:"reason"`
-	Result     *ensembleSummary `json:"result,omitempty"`
+	SkippedDirs []string         `json:"skipped_dirs,omitempty"`
+	RunID       string           `json:"run_id"`
+	State       string           `json:"state"`
+	ExitStatus  int              `json:"exit_status"`
+	Reason      string           `json:"reason"`
+	Result      *ensembleSummary `json:"result,omitempty"`
 }
 
 var waitPollInterval = time.Second
@@ -69,7 +70,7 @@ func waitAt(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	if strings.TrimSpace(id) == "" {
 		return errors.New("wait: RUN must not be empty")
 	}
-	run, err := findWaitRun(id, positional[1:], *maxDepth, *maxEntries, stderr)
+	run, skippedDirs, err := findWaitRun(id, positional[1:], *maxDepth, *maxEntries, stderr)
 	if err != nil {
 		return err
 	}
@@ -91,7 +92,7 @@ func waitAt(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	}
 	emit := func(state string, code int, reason string, sum *ensembleSummary) error {
 		if *asJSON {
-			if err := printReportJSON(stdout, waitResult{RunID: run.RunID, State: state, ExitStatus: code, Reason: reason, Result: sum}); err != nil {
+			if err := printReportJSON(stdout, waitResult{SkippedDirs: skippedDirs, RunID: run.RunID, State: state, ExitStatus: code, Reason: reason, Result: sum}); err != nil {
 				return err
 			}
 			if code != 0 {
@@ -204,30 +205,28 @@ func readWaitResult(dir *os.File) (ensembleSummary, error) {
 	return sum, nil
 }
 
-func findWaitRun(id string, named []string, maxDepth, maxEntries int, stderr io.Writer) (reportRun, error) {
+func findWaitRun(id string, named []string, maxDepth, maxEntries int, stderr io.Writer) (reportRun, []string, error) {
 	if strings.TrimSpace(id) == "" {
-		return reportRun{}, errors.New("wait: RUN must not be empty")
+		return reportRun{}, nil, errors.New("wait: RUN must not be empty")
 	}
-	dirs, configured, source, err := recordDirs(named)
+	dirs, origin, source, err := recordDirs(named)
 	if err != nil {
-		return reportRun{}, fmt.Errorf("wait: %s", plain(err.Error()))
+		return reportRun{}, nil, fmt.Errorf("wait: %s", plain(err.Error()))
 	}
-	found, scan, err := findRuns(dirs, len(named) == 0 && !configured, maxDepth, maxEntries, true, false)
+	found, scan, err := findRuns(dirs, origin, source, maxDepth, maxEntries, true, false)
 	if err != nil {
-		if configured {
-			err = fmt.Errorf("%w (from [report] dirs in %s)", err, source)
-		}
-		return reportRun{}, fmt.Errorf("wait: %s", plain(err.Error()))
+		return reportRun{}, nil, fmt.Errorf("wait: %s", plain(err.Error()))
 	}
 	run, err := resolveWaitRun(id, found)
+	diagnostics := scan.diagnostics
 	if err != nil {
-		return reportRun{}, err
+		diagnostics = diagnostics[:len(scan.missingDirs)]
 	}
-	for _, diagnostic := range scan.diagnostics {
-		if strings.Contains(diagnostic, plain(filepath.Join(run.Path, "result.json"))+":") {
+	for _, diagnostic := range diagnostics {
+		if err == nil && strings.Contains(diagnostic, plain(filepath.Join(run.Path, "result.json"))+":") {
 			continue
 		}
 		fmt.Fprintln(stderr, strings.Replace(diagnostic, "km: report:", "km: wait:", 1))
 	}
-	return run, nil
+	return run, scan.missingDirs, err
 }

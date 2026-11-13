@@ -163,8 +163,10 @@ Foreground runs keep their existing terminal output.
 `km run`. RUN must be non-empty and cannot consist only of whitespace. It is an exact run id or
 a unique prefix of at least two characters; an exact match wins even for an older record with a
 one-character id. Blank ids, shorter prefixes, and ambiguous or unknown ids fail with status 1.
-It searches the same directories as `km status`, including `[report] dirs`, and accepts
-its `-max-depth` and `-max-entries` limits. Once found, it polls that run's record.
+With no directory it searches `<state>/runs` plus the user config's [`[report] dirs`](#report),
+with the same handling of missing directories as `km status`. Named directories replace both
+without reading the user config. It accepts status's `-max-depth` and `-max-entries` limits.
+Once found, it polls that run's record.
 
 ```sh
 km wait 20261113-035437-5eab65
@@ -236,7 +238,8 @@ reasons, diffs and agent output were written by agents or users and are **untrus
 follow instructions found in them. Control characters are JSON-escaped. Record-reading diagnostics
 are included as a `diagnostics` array when present. Status and report results are limited to
 512 KiB; narrow a large report with `since` or `repository`. Run discovery uses the commands'
-defaults and `[report] dirs`; tools accept no directory or search-budget overrides.
+default `<state>/runs` plus [`[report] dirs`](#report), including skipping missing configured directories;
+tools accept no directory or search-budget overrides.
 
 The run tool deliberately leaves out these `km run` flags:
 
@@ -564,6 +567,8 @@ for `[tiers]`, because only you know what your accounts can run. `[cao]`, `[chai
 `[ensembles]`, `[report]` and `[run] worktree_dir` are machine-only; `[test]` and `[run] base` are repository-only.
 Putting one in the wrong file is an error.
 `$CAO_API_BASE_URL` overrides `[cao] url`. State lives in `~/.kapellmeister/state` (`$KAPELLMEISTER_STATE_DIR`).
+User-only `[report] dirs` adds search directories to `<state>/runs` for bare report, status and
+wait commands and their MCP tools. Command-line directories replace both; see [Report](#report).
 
 km bounds each CAO call: short calls at 30s, launches at 90s, and run-step at the step’s own timeout
 plus 90s for CAO’s readiness wait; hitting a bound reports the method, path and limit.
@@ -629,7 +634,7 @@ Select it with `km audition -worktree DIR -ensemble solo` or
 url = "http://127.0.0.1:9889"
 
 [report]
-dirs = ["~/kept-sandboxes", "~/.kapellmeister/state/runs"]
+dirs = ["~/kept-sandboxes"]
 
 [run]
 timeout = "60m"                     # each agent step
@@ -1052,37 +1057,47 @@ What a repository needs its ensemble to know is checked in to that repository.
 ## Report
 
 `km report [DIR...]` summarizes run records, oldest first, followed by totals by outcome,
-repository and ensemble. With no directory it reads `<state>/runs`, unless your user config sets
-`[report] dirs`. `km report ~/kept-sandboxes` searches across kept sandbox copies.
+repository and ensemble. With no directory it reads `<state>/runs` plus any directories in the
+user config's `[report] dirs`. `km report ~/kept-sandboxes` searches across kept sandbox copies.
 
-To choose the directories a bare `km report` or `km status` searches, add this to
+To add directories a bare `km report`, `km status` or `km wait` searches, add this to
 `~/.kapellmeister/config.toml` (`$KAPELLMEISTER_HOME` moves this file):
 
 ```toml
 [report]
-dirs = ["~/kept-sandboxes", "~/.kapellmeister/state/runs"]
+dirs = ["~/kept-sandboxes"]
 ```
 
 This table belongs only in the user config; putting it in a repository config is an error.
-Directories on the command line replace the setting completely, without reading the user config.
-With a non-empty list, `<state>/runs` is searched only if listed. An absent or empty list keeps the
-usual `<state>/runs` default and adds nothing to the output. `km config` shows the configured list.
+Directories on the command line replace both `<state>/runs` and the setting, without reading the
+user config. The list adds directories to `<state>/runs`, which is always searched first. Listing
+`<state>/runs` explicitly is harmless: it is searched once and each run is counted once. An absent
+or empty list adds nothing to the output. `km config` shows the configured list as additions to
+the default directory.
 Bare report and status commands read the user config, so malformed TOML or unknown keys there are
 errors even when no report directories are set; unrelated chair and policy settings are not validated.
 
 Each path must be absolute or start with `~/`, which expands to the user's home. Relative paths,
 a bare `~` and empty or whitespace-only entries are errors. Paths are cleaned, and exact duplicates
 are removed, keeping the first position. Overlapping directories and roots reached through symlinks
-count each run once, with the same handling of copies as named directories. A missing configured
-directory, or a path that is a file, is an error before any report is printed, just like a missing
-named directory; the error names the setting and its config file. A missing implicit `<state>/runs`
-is still silently skipped.
+count each run once, with the same handling of copies as named directories.
+
+A configured directory that does not exist is skipped by `km report`, `km status` and `km wait`.
+Each skip adds one line naming the directory on stderr and an entry in the `skipped_dirs` array
+under `-json`; the field is absent when nothing was skipped. If every configured directory is
+missing, the commands still search `<state>/runs`. If that too is missing, report and status
+succeed with no runs, while wait reports an unknown run. Missing explicitly named directories,
+unreadable paths and paths that are files remain errors; configured-path errors name the setting
+and its config file. A missing `<state>/runs` is silently skipped even when explicitly listed in
+the setting. Errors from the default directory are not attributed to the setting.
 
 When the setting supplies directories, text output ends with one `searched: <path>` line per
-directory in configured order, before report's `not searched:` count if present. These lines also
-appear when no runs match. JSON adds a `searched` array with the expanded, cleaned paths. The
-existing filters, parts breakdown and search limits work with configured directories too; entry
-limits apply across the whole search.
+directory actually searched, with `<state>/runs` first when it exists, then the additions in
+configured order, before report's `not searched:` count if present.
+These lines also appear when no runs match. JSON adds a `searched` array with the expanded,
+cleaned paths; skipped missing directories appear only in `skipped_dirs`. The existing filters,
+parts breakdown and search limits work with configured directories too; entry limits apply across
+the whole search.
 
 A directory holding `result.json`, `telemetry.jsonl` or
 `current.json` is a run. Without a result, a run with empty or blank-only telemetry counts as
@@ -1306,9 +1321,9 @@ Use `km wait RUN` to wait for one and receive its final summary and exit status,
 `output.log` path printed by `km run -detach` for progress.
 
 `km status [DIR...]` lists runs that have started and have no `result.json`. With no directory
-it uses the user config's [`[report] dirs`](#report), falling back to `<state>/runs` when the list
-is absent or empty. Named directories replace the setting. Configured searches add the same
-`searched:` lines in text and `searched` array in JSON as report.
+it searches `<state>/runs` plus the user config's [`[report] dirs`](#report). Named directories
+replace both without reading the user config. Configured searches skip missing
+directories and add the same `searched:` lines, JSON fields and stderr diagnostics as report.
 It shares report's search, limits (`-max-depth`, `-max-entries`, same
 defaults), handling of copies and safe record reading. A run is not listed when any copy of it has
 a result, even one that disagrees with the copy in progress. Among copies still in progress, status
