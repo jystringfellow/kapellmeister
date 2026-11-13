@@ -310,6 +310,20 @@ func TestProveLeavesTheCheckoutUnchangedAndRemovesItsScratchCopies(t *testing.T)
 	}
 }
 
+func TestProveRemovesScratchCopiesThatVerifyLeftReadOnly(t *testing.T) {
+	root := proofFixture(t, `mkdir -p "$TMPDIR/kept/inner" ro/inner && touch "$TMPDIR/kept/inner/file" ro/inner/file && chmod 500 "$TMPDIR/kept/inner" "$TMPDIR/kept" ro/inner ro`)
+	scratch := t.TempDir()
+	t.Setenv("TMPDIR", scratch)
+	r := proofJSON(t, root)
+	if r.ExitStatus != 11 {
+		t.Fatal(r)
+	}
+	entries, err := os.ReadDir(scratch)
+	if err != nil || len(entries) != 0 {
+		t.Fatal(entries, err)
+	}
+}
+
 func TestProveTimesOutAHungVerifyWithItsOwnStatus(t *testing.T) {
 	root := proofFixture(t, "sleep 30 & wait")
 	scratch := t.TempDir()

@@ -117,7 +117,7 @@ func Prove(ctx context.Context, options Options) (result Result) {
 		return fail(err)
 	}
 	defer func() {
-		if err := os.RemoveAll(scratch); err != nil {
+		if err := removeScratch(scratch); err != nil {
 			result.Status, result.ExitStatus, result.Reason = "error", 1, "remove scratch copies: "+err.Error()
 		}
 	}()
@@ -232,4 +232,14 @@ func Prove(ctx context.Context, options Options) (result Result) {
 		return finish("not_proved", 11, "passes, not proved; a break patch is needed: -break PATCH")
 	}
 	return finish("proved", 0, "passed twice and every break patch made verify fail")
+}
+
+func removeScratch(root string) error {
+	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err == nil && entry.IsDir() {
+			_ = os.Chmod(path, 0700)
+		}
+		return nil
+	})
+	return os.RemoveAll(root)
 }
