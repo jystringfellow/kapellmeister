@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jystringfellow/kapellmeister/internal/cao"
 	"github.com/jystringfellow/kapellmeister/internal/initrepo"
@@ -340,6 +342,9 @@ func TestTuneVerifyIsApprovedOnlyWhenKmProveReportsProvedAndLeavesOnlySetupUncom
 	if sum["outcome"] != "approved" || sum["command"] != "tune verify" {
 		t.Fatal(sum)
 	}
+	if !strings.Contains(out, `"left_out":[{"what":"integration","why":"requires a service"}]`) {
+		t.Fatal(out)
+	}
 	proof := sum["tune"].(map[string]any)
 	if proof["status"] != "proved" || proof["command"] != "sh answer_test.sh" || len(proof["runs"].([]any)) != 2 || len(proof["breaks"].([]any)) != 2 || len(proof["left_out"].([]any)) != 1 {
 		t.Fatal(sum)
@@ -644,7 +649,7 @@ func TestTheForegroundTuneSummaryHasOneLinePerBreakPatchWithItsResult(t *testing
 	if !found {
 		t.Fatal(out)
 	}
-	for _, want := range []string{"tune verify: sh answer_test.sh", "left out: integration — requires a service", "clean run 1: passed (exit 0) in ", "clean run 2: passed (exit 0) in ", "source.patch: breaks (exit 1) in ", "test.patch: breaks (exit 1) in ", "proved:", "left uncommitted"} {
+	for _, want := range []string{"tune verify: sh answer_test.sh", "left out: 1 check", "\n    integration\n      requires a service\n", "clean run 1: passed (exit 0) in ", "clean run 2: passed (exit 0) in ", "source.patch: breaks (exit 1) in ", "test.patch: breaks (exit 1) in ", "proved:", "left uncommitted"} {
 		if strings.Count(summary, want) != 1 {
 			t.Fatalf("%q: %s", want, summary)
 		}
@@ -658,7 +663,7 @@ func TestTheForegroundTuneSummaryHasOneLinePerBreakPatchWithItsResult(t *testing
 
 func assertCompleteTuneSummary(t *testing.T, out string) {
 	t.Helper()
-	for _, want := range []string{"tune verify: sh answer_test.sh", "left out: integration — requires a service", "clean run 1: passed", "clean run 2: passed", "source.patch: breaks", "test.patch: breaks", "verify failed, as required", "\nBREAK_FAILURE_0\n", "\nBREAK_FAILURE_42\n", "left uncommitted"} {
+	for _, want := range []string{"tune verify: sh answer_test.sh", "left out: 1 check", "\n    integration\n      requires a service\n", "clean run 1: passed", "clean run 2: passed", "source.patch: breaks", "test.patch: breaks", "verify failed, as required", "\nBREAK_FAILURE_0\n", "\nBREAK_FAILURE_42\n", "left uncommitted"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q: %s", want, out)
 		}
@@ -995,6 +1000,228 @@ func TestTuneVerifyCountsPreparationTimeInItsWholeRunBudget(t *testing.T) {
 	var sum ensembleSummary
 	if code != 1 || json.Unmarshal([]byte(out), &sum) != nil || sum.Outcome != loop.BudgetExhausted || len(f.steps) != 0 {
 		t.Fatal(code, out, f.steps)
+	}
+}
+
+func nineOmissionTuneSummary() ensembleSummary {
+	var omissions []loop.TuneOmission
+	for i, name := range []string{"integration", "browser", "database", "network", "performance", "deployment", "platform", "release", "external services"} {
+		omissions = append(omissions, loop.TuneOmission{
+			What: fmt.Sprintf("check-%d %s", i+1, name),
+			Why:  fmt.Sprintf("Requires a separate environment — run by hand with go test -run 'TestCheck%d/subtest' ./internal/... from /tmp/café before publishing; this check needs services and credentials unavailable in the local verify environment.", i+1),
+		})
+	}
+	omissions[8].What += " including all optional providers and their independently configured compatibility checks across supported environments"
+	omissions[8].Why += " Artifact: /tmp/" + strings.Repeat("é", 120) + " inspect it by hand."
+	return ensembleSummary{
+		Tune: &tuneSummary{
+			Published: true,
+			Command:   "sh scripts/verify",
+			LeftOut:   omissions,
+			Breaks:    []tuneBreak{},
+			Result: prove.Result{
+				Worktree: "/tmp/tune-example",
+				Command:  "sh scripts/verify",
+				Status:   "proved",
+				Reason:   "clean runs pass and break patches fail",
+				Runs: []prove.RunResult{
+					{Name: "clean run 1", Status: "passed", DurationMS: 62000},
+					{Name: "clean run 2", Status: "passed", DurationMS: 61000},
+				},
+			},
+		},
+		Result: loop.Result{Outcome: loop.Approved, Worktree: "/tmp/tune-example"},
+	}
+}
+
+func TestTheTuneSummaryListsEachOmissionOnItsOwnLinesWithTheReasonBeneathIt(t *testing.T) {
+	s := nineOmissionTuneSummary()
+	s.Tune.LeftOut = []loop.TuneOmission{{What: "integration", Why: "requires a service"}}
+	var out bytes.Buffer
+	_ = finishRunDetail(&out, s, false)
+	if !strings.HasSuffix(out.String(), "  left out: 1 check\n    integration\n      requires a service\n") {
+		t.Fatal(out.String())
+	}
+}
+
+func TestNineLongOmissionsPrintWithNoLineOverEightyRunesExceptAnUnbreakableToken(t *testing.T) {
+	s := nineOmissionTuneSummary()
+	var out bytes.Buffer
+	_ = finishRunDetail(&out, s, false)
+	if !strings.Contains(out.String(), "  left out: 9 checks\n") {
+		t.Error(out.String())
+	}
+	longToken := "/tmp/" + strings.Repeat("é", 120)
+	if !strings.Contains(out.String(), "\n      "+longToken+"\n") {
+		t.Error("long token must occupy its own line unbroken")
+	}
+	for _, line := range strings.Split(out.String(), "\n") {
+		if utf8.RuneCountInString(line) > 80 && line != "      "+longToken {
+			t.Errorf("line exceeds 80 runes: %q", line)
+		}
+	}
+}
+
+func TestEveryWordOfEachOmissionSurvivesWrappingInOrder(t *testing.T) {
+	s := nineOmissionTuneSummary()
+	var out bytes.Buffer
+	_ = finishRunDetail(&out, s, false)
+	for i, omit := range s.Tune.LeftOut {
+		start := "\n    " + strings.Fields(omit.What)[0] + " "
+		_, block, found := strings.Cut(out.String(), start)
+		if !found {
+			t.Errorf("missing entry %q", omit.What)
+			continue
+		}
+		block = strings.TrimPrefix(start, "\n") + block
+		if i+1 < len(s.Tune.LeftOut) {
+			block, _, _ = strings.Cut(block, "\n    "+strings.Fields(s.Tune.LeftOut[i+1].What)[0]+" ")
+		}
+		want := append(strings.Fields(omit.What), strings.Fields(omit.Why)...)
+		if got := strings.Fields(block); !reflect.DeepEqual(got, want) {
+			t.Errorf("omission %d words = %q; want %q", i+1, got, want)
+		}
+	}
+}
+
+func TestTheTuneSummaryPrintsLeftOutNothingWhenNothingWasLeftOut(t *testing.T) {
+	for _, omissions := range [][]loop.TuneOmission{nil, {}} {
+		s := nineOmissionTuneSummary()
+		s.Tune.LeftOut = omissions
+		var out bytes.Buffer
+		_ = finishRunDetail(&out, s, false)
+		if strings.Count(out.String(), "  left out: nothing\n") != 1 || strings.Contains(out.String(), "\n    ") {
+			t.Fatal(out.String())
+		}
+	}
+}
+
+func TestTheTuneSummaryShowsTheResultBeforeWhatWasLeftOut(t *testing.T) {
+	for _, detail := range []bool{false, true} {
+		s := nineOmissionTuneSummary()
+		var out bytes.Buffer
+		_ = finishRunDetail(&out, s, detail)
+		leftOut := strings.Index(out.String(), "  left out:")
+		previous := -1
+		for _, line := range []string{"tune verify: sh scripts/verify", "clean run 1: passed (exit 0) in 1m2s", "clean run 2: passed (exit 0) in 1m1s", "proved: clean runs pass and break patches fail", "left uncommitted in /tmp/tune-example"} {
+			index := strings.Index(out.String(), line)
+			if index <= previous || index >= leftOut {
+				t.Errorf("%q must keep its order before omissions: %s", line, out.String())
+			}
+			previous = index
+		}
+	}
+}
+
+func TestTheTuneSummaryWrapsAtEightyRunesRatherThanBytes(t *testing.T) {
+	for _, tc := range []struct {
+		what, why, want string
+	}{
+		{strings.Repeat("é", 74) + " —", "", "    " + strings.Repeat("é", 74) + " —\n"},
+		{strings.Repeat("é", 74) + " — x", "", "    " + strings.Repeat("é", 74) + " —\n    x\n"},
+		{"unicode", strings.Repeat("é", 72) + " —", "      " + strings.Repeat("é", 72) + " —\n"},
+		{"unicode", strings.Repeat("é", 72) + " — x", "      " + strings.Repeat("é", 72) + " —\n      x\n"},
+		{strings.Repeat("é", 120) + " after", "", "    " + strings.Repeat("é", 120) + "\n    after\n"},
+		{"whitespace", "first\n\tsecond    third", "      first second third\n"},
+		{"empty reason", "", "    empty reason\n"},
+	} {
+		s := nineOmissionTuneSummary()
+		s.Tune.LeftOut = []loop.TuneOmission{{What: tc.what, Why: tc.why}}
+		var out bytes.Buffer
+		_ = finishRunDetail(&out, s, false)
+		if !strings.HasSuffix(out.String(), tc.want) {
+			t.Errorf("want suffix %q; got %q", tc.want, out.String())
+		}
+	}
+}
+
+func TestTheTuneJSONSummaryIsUnchangedByThePlainTextLayout(t *testing.T) {
+	s := nineOmissionTuneSummary()
+	const want = `{"published":true,"breaks":[],"command":"sh scripts/verify","left_out":[{"what":"check-1 integration","why":"Requires a separate environment — run by hand with go test -run 'TestCheck1/subtest' ./internal/... from /tmp/café before publishing; this check needs services and credentials unavailable in the local verify environment."},{"what":"check-2 browser","why":"Requires a separate environment — run by hand with go test -run 'TestCheck2/subtest' ./internal/... from /tmp/café before publishing; this check needs services and credentials unavailable in the local verify environment."},{"what":"check-3 database","why":"Requires a separate environment — run by hand with go test -run 'TestCheck3/subtest' ./internal/... from /tmp/café before publishing; this check needs services and credentials unavailable in the local verify environment."},{"what":"check-4 network","why":"Requires a separate environment — run by hand with go test -run 'TestCheck4/subtest' ./internal/... from /tmp/café before publishing; this check needs services and credentials unavailable in the local verify environment."},{"what":"check-5 performance","why":"Requires a separate environment — run by hand with go test -run 'TestCheck5/subtest' ./internal/... from /tmp/café before publishing; this check needs services and credentials unavailable in the local verify environment."},{"what":"check-6 deployment","why":"Requires a separate environment — run by hand with go test -run 'TestCheck6/subtest' ./internal/... from /tmp/café before publishing; this check needs services and credentials unavailable in the local verify environment."},{"what":"check-7 platform","why":"Requires a separate environment — run by hand with go test -run 'TestCheck7/subtest' ./internal/... from /tmp/café before publishing; this check needs services and credentials unavailable in the local verify environment."},{"what":"check-8 release","why":"Requires a separate environment — run by hand with go test -run 'TestCheck8/subtest' ./internal/... from /tmp/café before publishing; this check needs services and credentials unavailable in the local verify environment."},{"what":"check-9 external services including all optional providers and their independently configured compatibility checks across supported environments","why":"Requires a separate environment — run by hand with go test -run 'TestCheck9/subtest' ./internal/... from /tmp/café before publishing; this check needs services and credentials unavailable in the local verify environment. Artifact: /tmp/éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé inspect it by hand."}],"worktree":"/tmp/tune-example","status":"proved","exit_status":0,"reason":"clean runs pass and break patches fail","runs":[{"name":"clean run 1","status":"passed","exit_code":0,"duration_ms":62000,"output":""},{"name":"clean run 2","status":"passed","exit_code":0,"duration_ms":61000,"output":""}]}`
+	for _, printed := range []bool{false, true} {
+		if printed {
+			var out bytes.Buffer
+			_ = finishRunDetail(&out, s, false)
+		}
+		got, err := json.Marshal(s.Tune)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != want {
+			t.Fatalf("JSON changed after printing %t: %s", printed, got)
+		}
+	}
+}
+
+func TestTheCompleteTuneSummaryPrintsWorktreeDetailsBeforeNineOmissions(t *testing.T) {
+	worktree := proofFixture(t, "")
+	head := strings.TrimSpace(proofGit(t, worktree, "rev-parse", "HEAD"))
+	for _, tc := range []struct {
+		name, outcome string
+		published     bool
+	}{
+		{"approved", loop.Approved, true},
+		{"failed unpublished", loop.Failed, false},
+		{"failed published", loop.Failed, true},
+	} {
+		for _, reader := range []string{"foreground", "wait"} {
+			t.Run(tc.name+"/"+reader, func(t *testing.T) {
+				s := nineOmissionTuneSummary()
+				s.RunID = "omission-order"
+				s.Worktree = worktree
+				s.Outcome = tc.outcome
+				s.Tune.Published = tc.published
+				s.Base, s.Head, s.HeadMoved = head, head, true
+				s.DiffStat = " scripts/verify | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)\n"
+				if tc.outcome != loop.Approved {
+					s.Tune.Status = "unproved"
+					s.Tune.Reason = "a break patch passed"
+				}
+				var out bytes.Buffer
+				var err error
+				if reader == "foreground" {
+					err = finishRunDetail(&out, s, false)
+				} else {
+					records := t.TempDir()
+					data, marshalErr := json.Marshal(s)
+					if marshalErr != nil {
+						t.Fatal(marshalErr)
+					}
+					writeFile(t, filepath.Join(records, s.RunID, "result.json"), string(data))
+					var diag bytes.Buffer
+					err = waitCommand([]string{s.RunID, records}, &out, &diag)
+					if diag.Len() != 0 {
+						t.Fatal(diag.String())
+					}
+				}
+				if tc.outcome == loop.Approved && err != nil || tc.outcome != loop.Approved && !errors.Is(err, errNotApproved) {
+					t.Fatalf("unexpected outcome: %v", err)
+				}
+				lines := []string{tc.outcome + " after", "tune verify: sh scripts/verify", "clean run 1: passed", "clean run 2: passed", s.Tune.Status + ": " + s.Tune.Reason}
+				if tc.published || tc.outcome == loop.Approved {
+					lines = append(lines, "left uncommitted in "+worktree)
+				}
+				if tc.outcome != loop.Approved {
+					kept := worktree
+					if tc.published {
+						kept = s.Tune.Worktree
+					}
+					lines = append(lines, "the worktree was kept at "+kept)
+				}
+				lines = append(lines, "changes   "+worktree, s.DiffStat, "HEAD moved:", "left out: 9 checks")
+				previous := -1
+				for _, line := range lines {
+					index := strings.Index(out.String(), line)
+					if index <= previous {
+						t.Errorf("missing or out of order %q: %s", line, out.String())
+					}
+					previous = index
+				}
+				if !strings.HasSuffix(out.String(), "      inspect it by hand.\n") {
+					t.Errorf("omissions must finish the summary: %s", out.String())
+				}
+			})
+		}
 	}
 }
 

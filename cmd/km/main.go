@@ -611,6 +611,20 @@ func configCommand(args []string) error {
 	if len(s.ReportDirs) > 0 {
 		fmt.Printf("report dirs %s (in addition to %s)\n", plain(strings.Join(s.ReportDirs, ", ")), plain(defaultRunsDir()))
 	}
+	if len(s.ReportPrices) > 0 {
+		fmt.Printf("report prices (USD per million tokens; %s)\n", plain(loop.UserConfigPath(loop.Home())))
+		for _, model := range sortedKeys(s.ReportPrices) {
+			price := s.ReportPrices[model]
+			fmt.Printf("  %s: input %g, output %g", plain(model), price.Input, price.Output)
+			if price.CacheRead != nil {
+				fmt.Printf(", cache_read %g", *price.CacheRead)
+			}
+			if price.CacheWrite != nil {
+				fmt.Printf(", cache_write %g", *price.CacheWrite)
+			}
+			fmt.Println()
+		}
+	}
 	printChairs(os.Stdout, s)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1162,6 +1176,9 @@ func finishRunDetail(w io.Writer, sum ensembleSummary, detail bool) error {
 	}
 	fmt.Fprint(w, sum.DiffStat)
 	printHeadMoved(w, sum)
+	if sum.Tune != nil {
+		printLeftOut(w, sum.Tune.LeftOut)
+	}
 	if sum.Outcome != loop.Approved {
 		return errNotApproved
 	}
