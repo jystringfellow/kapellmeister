@@ -25,6 +25,7 @@ import (
 )
 
 type reportRun struct {
+	*ReportCost
 	Retries    int         `json:"retries,omitempty"`
 	Restores   int         `json:"restores,omitempty"`
 	Command    string      `json:"command,omitempty"`
@@ -48,6 +49,7 @@ type reportRun struct {
 }
 
 type reportTotals struct {
+	UnpricedModels  []string                    `json:"unpriced_models,omitempty"`
 	Retries         int                         `json:"retries,omitempty"`
 	Restores        int                         `json:"restores,omitempty"`
 	Usage           reportUsageTotal            `json:"usage"`
@@ -60,6 +62,7 @@ type reportTotals struct {
 }
 
 type runReport struct {
+	priceSource      string
 	SkippedDirs      []string            `json:"skipped_dirs,omitempty"`
 	Searched         []string            `json:"searched,omitempty"`
 	Parts            *reportParts        `json:"parts,omitempty"`
@@ -96,6 +99,10 @@ func reportCommand(args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return fmt.Errorf("report: -since must be a date (YYYY-MM-DD) or RFC3339 timestamp: %s", plain(*sinceText))
 		}
+	}
+	prices, priceSource, err := loop.LoadReportPrices(loop.Home())
+	if err != nil && (len(dirs) == 0 || priceSource != "") {
+		return fmt.Errorf("report: %s", plain(err.Error()))
 	}
 	dirs, origin, source, err := recordDirs(dirs)
 	if err != nil {
@@ -157,6 +164,9 @@ func reportCommand(args []string, stdout, stderr io.Writer) error {
 	})
 	if *withParts {
 		report.Parts = mergeReportParts(report.Runs)
+	}
+	if len(prices) > 0 {
+		report.addCosts(prices, priceSource)
 	}
 	if *asJSON {
 		return printReportJSON(stdout, report)
@@ -429,7 +439,11 @@ func printReport(stdout io.Writer, report runReport) error {
 		return printReportNotSearched(stdout, report)
 	}
 	w := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "STARTED\tREPOSITORY\tENSEMBLE\tOUTCOME\tROUNDS\tTOOK\tTOKENS")
+	header := "STARTED\tREPOSITORY\tENSEMBLE\tOUTCOME\tROUNDS\tTOOK\tTOKENS"
+	if report.priceSource != "" {
+		header += "\tCOST"
+	}
+	fmt.Fprintln(w, header)
 	for _, run := range report.Runs {
 		started, rounds, took := "unknown", "unknown", "unknown"
 		if run.Started != nil {
@@ -452,7 +466,12 @@ func printReport(stdout io.Writer, report runReport) error {
 		if run.Command == "tune verify" {
 			repoWidth, ensembleWidth = 17, 11
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", reportCell(started, 19), reportCell(reportKnown(run.Repository), repoWidth), reportCell(reportRunLabel(run.Ensemble, run.Command), ensembleWidth), reportCell(reportKnown(run.Outcome), 16), reportCell(rounds, 7), reportCell(took, 7), plain(tokens))
+		costText := ""
+		if run.ReportCost != nil {
+			repoWidth -= 10
+			costText = "\t" + run.ReportCost.text()
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n", reportCell(started, 19), reportCell(reportKnown(run.Repository), repoWidth), reportCell(reportRunLabel(run.Ensemble, run.Command), ensembleWidth), reportCell(reportKnown(run.Outcome), 16), reportCell(rounds, 7), reportCell(took, 7), plain(tokens), costText)
 	}
 	if err := w.Flush(); err != nil {
 		return err
@@ -474,6 +493,9 @@ func printReport(stdout io.Writer, report runReport) error {
 		fmt.Fprintf(w, "conflicts: %d\n", conflicts)
 	}
 	fmt.Fprintf(w, "usage: %s\n", plain(reportUsageText(report.Totals.Usage)))
+	if report.Totals.Usage.ReportCost != nil {
+		fmt.Fprintf(w, "cost: %s\n", report.Totals.Usage.ReportCost.text())
+	}
 	for _, group := range []struct {
 		name   string
 		counts map[string]int
@@ -492,16 +514,31 @@ func printReport(stdout io.Writer, report runReport) error {
 		for _, name := range names {
 			suffix := ""
 			if group.name == "ensemble" {
-				suffix = "  " + reportUsageText(report.Totals.EnsembleUsage[name])
+				usage := report.Totals.EnsembleUsage[name]
+				suffix = "  " + reportUsageText(usage)
+				if usage.ReportCost != nil {
+					suffix += "  " + usage.ReportCost.text()
+				}
 			}
 			if group.name == "repository" {
-				suffix = "  " + reportUsageText(report.Totals.RepositoryUsage[name])
+				usage := report.Totals.RepositoryUsage[name]
+				suffix = "  " + reportUsageText(usage)
+				if usage.ReportCost != nil {
+					suffix += "  " + usage.ReportCost.text()
+				}
 			}
 			fmt.Fprintf(w, "  %s\t%d%s\n", plain(name), group.counts[name], plain(suffix))
 		}
 		if err := w.Flush(); err != nil {
 			return err
 		}
+	}
+	if len(report.Totals.UnpricedModels) > 0 {
+		names := make([]string, len(report.Totals.UnpricedModels))
+		for i, model := range report.Totals.UnpricedModels {
+			names[i] = plain(model)
+		}
+		fmt.Fprintf(stdout, "unpriced models: %s (add them under [report.prices] in %s)\n", strings.Join(names, ", "), plain(report.priceSource))
 	}
 	if report.Parts != nil {
 		if err := printReportParts(stdout, report.Parts); err != nil {

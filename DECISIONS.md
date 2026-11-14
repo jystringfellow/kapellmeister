@@ -683,3 +683,15 @@ Evidence: real Git regression tests
 `TestRestoreBringsBackNewUntrackedFilesDeletionsStagedOnlyChangesModeChangesSymlinksAndTypeChangesExactly`,
 `TestNothingIsLeftBehindInTheRepositoryAfterARun` and
 `TestALessonsStepThatWipesTheWorktreeIsRestoredRetriedAndNeverFailsTheRun`.
+
+## 2026-11-14: km carries no prices
+
+Prices change and differ by contract; a wrong built-in number is worse than none. Users supply
+input/output prices per million tokens in their own `[report.prices]` table, matching recorded
+model names exactly. Partial pricing is a labelled lower bound, and wholly unpriced usage stays
+unknown. No price lookup or network dependency is added. Evidence:
+`TestReportPricesAreReadFromTheUserConfigPerModelInDollarsPerMillionTokens`,
+`TestReportShowsALowerBoundWhenOneModelIsUnpriced`,
+`TestReportShowsALowerBoundWhenAStepsUsageIsUnknown`,
+`TestReportShowsUnknownCostWhenNothingCanBePriced` and
+`TestReportOutputIsUnchangedWithoutPricesInPlainAndJSON`.

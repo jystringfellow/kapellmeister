@@ -113,7 +113,8 @@ type FileConfig struct {
 		URL string `toml:"url"`
 	} `toml:"cao"`
 	Report struct {
-		Dirs []string `toml:"dirs"`
+		Dirs   []string                  `toml:"dirs"`
+		Prices map[string]map[string]any `toml:"prices"`
 	} `toml:"report"`
 	Run    RunConfig            `toml:"run"`
 	Chairs map[string]ChairSpec `toml:"chairs"`
@@ -127,28 +128,34 @@ type FileConfig struct {
 	Sizing    SizingConfig                   `toml:"sizing"`
 }
 
+type ReportPrice struct {
+	Input  float64 `json:"input"`
+	Output float64 `json:"output"`
+}
+
 type Settings struct {
-	ReportDirs       []string            `json:"report_dirs,omitempty"`
-	Defined          Agents              `json:"-"`
-	BaseBranch       string              `json:"base_branch"`
-	WorktreeDir      string              `json:"worktree_dir"`
-	TrustFolder      bool                `json:"trust_folder"`
-	LearnedBudget    int                 `json:"learned_budget"`
-	Lessons          bool                `json:"lessons"`
-	LessonsTimeout   time.Duration       `json:"lessons_timeout"`
-	BlockerPoll      time.Duration       `json:"blocker_poll"`
-	GateWhen         string              `json:"gate_when"`
-	Files            []string            `json:"files"`
-	CAOURL           string              `json:"cao_url"`
-	Rounds           int                 `json:"rounds"`
-	VerifyRetries    int                 `json:"verify_retries"`
-	Timeout          time.Duration       `json:"timeout"`
-	ReplyGrace       time.Duration       `json:"reply_grace"`
-	PreflightTimeout time.Duration       `json:"preflight_timeout"`
-	Chairs           map[string]string   `json:"chairs"`
-	Agents           []string            `json:"agents"`
-	Ensembles        map[string]Ensemble `json:"ensembles,omitempty"`
-	Policy           Policy              `json:"policy"`
+	ReportPrices     map[string]ReportPrice `json:"report_prices,omitempty"`
+	ReportDirs       []string               `json:"report_dirs,omitempty"`
+	Defined          Agents                 `json:"-"`
+	BaseBranch       string                 `json:"base_branch"`
+	WorktreeDir      string                 `json:"worktree_dir"`
+	TrustFolder      bool                   `json:"trust_folder"`
+	LearnedBudget    int                    `json:"learned_budget"`
+	Lessons          bool                   `json:"lessons"`
+	LessonsTimeout   time.Duration          `json:"lessons_timeout"`
+	BlockerPoll      time.Duration          `json:"blocker_poll"`
+	GateWhen         string                 `json:"gate_when"`
+	Files            []string               `json:"files"`
+	CAOURL           string                 `json:"cao_url"`
+	Rounds           int                    `json:"rounds"`
+	VerifyRetries    int                    `json:"verify_retries"`
+	Timeout          time.Duration          `json:"timeout"`
+	ReplyGrace       time.Duration          `json:"reply_grace"`
+	PreflightTimeout time.Duration          `json:"preflight_timeout"`
+	Chairs           map[string]string      `json:"chairs"`
+	Agents           []string               `json:"agents"`
+	Ensembles        map[string]Ensemble    `json:"ensembles,omitempty"`
+	Policy           Policy                 `json:"policy"`
 }
 
 func (s Settings) WithEnsemble(name string) (Settings, error) {
@@ -249,6 +256,10 @@ func LoadSettings(home, worktree string) (Settings, error) {
 		s.Files = append(s.Files, filepath.Join(worktree, ConfigFile))
 	}
 
+	s.ReportPrices, err = user.reportPrices()
+	if err != nil {
+		return s, err
+	}
 	s.ReportDirs, err = user.reportDirs()
 	if err != nil {
 		return s, err
@@ -333,8 +344,12 @@ func loadConfigFile(path, name string) (loadedConfig, bool, error) {
 func decodeConfig(data []byte, name string) (loadedConfig, error) {
 	cfg := loadedConfig{name: name}
 	md, err := toml.Decode(string(data), &cfg.FileConfig)
+	cfg.md = md
 	if err != nil {
 		return cfg, fmt.Errorf("%s: %w", name, err)
+	}
+	if kind := md.Type("report", "prices"); kind != "" && kind != "Hash" {
+		return cfg, fmt.Errorf("%s: report.prices: must be a table", name)
 	}
 	if md.IsDefined("run", "lessons_budget") {
 		return cfg, fmt.Errorf("%s: run.lessons_budget: renamed to run.learned_budget", name)
@@ -342,7 +357,6 @@ func decodeConfig(data []byte, name string) (loadedConfig, error) {
 	if extra := md.Undecoded(); len(extra) > 0 {
 		return cfg, fmt.Errorf("%s: unknown keys %v", name, extra)
 	}
-	cfg.md = md
 	return cfg, nil
 }
 

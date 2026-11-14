@@ -611,6 +611,13 @@ func configCommand(args []string) error {
 	if len(s.ReportDirs) > 0 {
 		fmt.Printf("report dirs %s (in addition to %s)\n", plain(strings.Join(s.ReportDirs, ", ")), plain(defaultRunsDir()))
 	}
+	if len(s.ReportPrices) > 0 {
+		fmt.Printf("report prices (USD per million tokens; %s)\n", plain(loop.UserConfigPath(loop.Home())))
+		for _, model := range sortedKeys(s.ReportPrices) {
+			price := s.ReportPrices[model]
+			fmt.Printf("  %s: input %g, output %g\n", plain(model), price.Input, price.Output)
+		}
+	}
 	printChairs(os.Stdout, s)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
