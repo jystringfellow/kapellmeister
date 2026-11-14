@@ -1038,6 +1038,7 @@ func runEnsemble(ctx context.Context, p ensembleRun) (sum ensembleSummary, runEr
 		publish()
 	}
 	if p.Tune != nil {
+		eng.Now = tuneClock
 		res, err = eng.Tune(ctx, *p.Tune)
 	} else {
 		res, err = eng.Run(ctx)
@@ -1072,7 +1073,7 @@ func runEnsemble(ctx context.Context, p ensembleRun) (sum ensembleSummary, runEr
 	}
 	if p.Tune != nil {
 		sum.Command, sum.Tune = "tune verify", p.TuneSummary
-		if sum.Outcome == loop.Approved {
+		if sum.Outcome == loop.Approved || sum.Tune.Published {
 			sum.Worktree = p.TuneCheckout
 			sum.RunDir = filepath.Join(p.StateDir, "replies")
 			sum.DiffStat, err = gitDiffStat(p.TuneCheckout, base)
@@ -1146,7 +1147,11 @@ func finishRunDetail(w io.Writer, sum ensembleSummary, detail bool) error {
 	if sum.Tune != nil {
 		printTune(w, sum, detail)
 		if sum.Outcome != loop.Approved {
-			fmt.Fprintf(w, "  the worktree was kept at %s\n", sum.Worktree)
+			kept := sum.Worktree
+			if sum.Tune.Published {
+				kept = sum.Tune.Result.Worktree
+			}
+			fmt.Fprintf(w, "  the worktree was kept at %s\n", kept)
 		}
 	}
 	if sum.Worktree != "" && (sum.Outcome == loop.Approved || sum.DiffStat != "" || sum.HeadMoved) {

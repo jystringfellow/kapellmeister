@@ -16,3 +16,11 @@ func TestTheTasksProcedureIsTheCarriedGuideText(t *testing.T) {
 		}
 	}
 }
+
+func TestTheProcedureTargetsAFastStableSubsetIncludingCleanInstallationCost(t *testing.T) {
+	for _, want := range []string{"about two minutes", "never more than five", "measured time", "fast checks CI runs", "unit tests for the code most often changed", "fast marked subset", "not the whole suite", "by hand", "timing", "network", "services", "wall clock", "fail once", "flaky", "narrower", "lockfile", "cache", "dependency installation"} {
+		if !strings.Contains(VerifyProcedure, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+}

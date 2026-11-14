@@ -27,16 +27,32 @@ type TuneReply struct {
 	Patches []TunePatch    `json:"patches"`
 }
 
+type TuneProof struct {
+	Proved bool
+	Path   string
+	Status string
+	Reason string
+}
+
 type TuneHooks struct {
 	PatchDir string
 	Changed  func() ([]string, error)
 	Snapshot func() (string, error)
-	Prove    func(context.Context, TuneReply, int) (bool, string, error)
-	Publish  func() error
+	Prove    func(context.Context, TuneReply, int) (TuneProof, error)
+	Keep     func(TuneReply, int) (bool, string, string, error)
+	Publish  func(int) error
 }
 
 func (e *Engine) Tune(ctx context.Context, hooks TuneHooks) (res Result, err error) {
 	cfg := e.Config
+	now := e.Now
+	if now == nil {
+		now = time.Now
+	}
+	started := cfg.BudgetStarted
+	if started.IsZero() {
+		started = now()
+	}
 	res = Result{RunID: cfg.RunID, Worktree: cfg.Worktree, RunDir: filepath.Join(cfg.Worktree, RunDirRel(cfg.RunID))}
 	e.mu.Lock()
 	e.usage = Usage{}
@@ -68,7 +84,38 @@ func (e *Engine) Tune(ctx context.Context, hooks TuneHooks) (res Result, err err
 	}()
 	feedback := ""
 	lastReason := ""
+	provedRound := 0
+	finishWith := func(outcome, reason string) (Result, error) {
+		if ctx.Err() != nil {
+			return e.fail(res, ctx.Err()), nil
+		}
+		if provedRound > 0 {
+			if err := hooks.Publish(provedRound); err != nil {
+				return e.fail(res, err), nil
+			}
+			reason += fmt.Sprintf("; best proved verify is round %d's, copied back", provedRound)
+		} else {
+			reason += "; no verify was proved, checkout left untouched"
+		}
+		res.Outcome, res.Reason = outcome, reason
+		return res, nil
+	}
+	budgetSpent := func() bool { return cfg.Budget > 0 && now().Sub(started) >= cfg.Budget }
+	budgetStop := func() (Result, error) {
+		reason := fmt.Sprintf("time budget %s spent (elapsed %s) after round %d", cfg.Budget, now().Sub(started), res.Rounds)
+		if provedRound > 0 && res.Rounds > provedRound {
+			reason += fmt.Sprintf("; later revision was not adopted: budget ran out in round %d", res.Rounds)
+		}
+		return finishWith(BudgetExhausted, reason)
+	}
+
 	for round := 1; round <= cfg.MaxRounds; round++ {
+		if ctx.Err() != nil {
+			return e.fail(res, ctx.Err()), nil
+		}
+		if budgetSpent() {
+			return budgetStop()
+		}
 		res.Rounds = round
 		replyPath := e.relf("tune-%d.json", round)
 		out, err := e.step(ctx, Step{Name: "implement", Round: round, Chair: cfg.Chairs.Implementer, Prompt: tuneWritePrompt(cfg.Task, replyPath, feedback), ReplyPath: replyPath, KeepTerminal: true, ReuseTerminal: terminal})
@@ -88,12 +135,18 @@ func (e *Engine) Tune(ctx context.Context, hooks TuneHooks) (res Result, err err
 		if err != nil {
 			return e.fail(res, err), nil
 		}
+		if ctx.Err() != nil {
+			return e.fail(res, ctx.Err()), nil
+		}
+		if budgetSpent() {
+			return budgetStop()
+		}
 		if len(changed) > 0 {
 			reason := "refused: tune changed files outside setup: " + strings.Join(changed, ", ")
 			if err := reject(reason); err != nil {
 				return e.fail(res, err), nil
 			}
-			if round == cfg.MaxRounds {
+			if round == cfg.MaxRounds && provedRound == 0 {
 				return e.fail(res, errors.New(reason)), nil
 			}
 			continue
@@ -113,32 +166,66 @@ func (e *Engine) Tune(ctx context.Context, hooks TuneHooks) (res Result, err err
 		if err != nil {
 			return e.fail(res, err), nil
 		}
-		start := time.Now()
-		finish := e.beginStep(round, ActiveStep{Step: "prove"})
-		e.progress("→ prove[%d]", round)
-		proved, proofPath, err := hooks.Prove(ctx, reply, round)
-		finish()
-		code := 1
-		if proved {
-			code = 0
+		if ctx.Err() != nil {
+			return e.fail(res, ctx.Err()), nil
 		}
-		rec := Record{RunID: cfg.RunID, Round: round, Step: "prove", DurationMS: time.Since(start).Milliseconds(), ExitCode: &code, Reply: proofPath}
-		if err != nil {
-			rec.Error = cancellationReason(ctx, err)
+		if budgetSpent() {
+			return budgetStop()
 		}
-		e.record(rec)
-		if err != nil {
-			return e.fail(res, err), nil
+		proof := TuneProof{}
+		if provedRound > 0 && hooks.Keep != nil {
+			kept, path, detail, err := hooks.Keep(reply, round)
+			if err != nil {
+				return e.fail(res, err), nil
+			}
+			if kept {
+				proof = TuneProof{Proved: true, Path: path, Status: "proved"}
+				e.record(Record{RunID: cfg.RunID, Round: round, Step: "proof-kept", Reply: path, Detail: detail})
+				e.progress("  proof kept: %s", detail)
+			}
+		}
+		if !proof.Proved {
+			start := time.Now()
+			finish := e.beginStep(round, ActiveStep{Step: "prove"})
+			e.progress("→ prove[%d]", round)
+			proof, err = hooks.Prove(ctx, reply, round)
+			finish()
+			code := 1
+			if proof.Proved {
+				code = 0
+			}
+			rec := Record{RunID: cfg.RunID, Round: round, Step: "prove", DurationMS: time.Since(start).Milliseconds(), ExitCode: &code, Reply: proof.Path}
+			if err != nil {
+				rec.Error = cancellationReason(ctx, err)
+			}
+			e.record(rec)
+			if err != nil {
+				return e.fail(res, err), nil
+			}
 		}
 		if ctx.Err() != nil {
 			return e.fail(res, ctx.Err()), nil
 		}
-		if !proved {
-			lastReason = "km prove did not report proved; see " + proofPath
-			feedback = proofPath
+		if proof.Proved {
+			provedRound = round
+		} else {
+			lastReason = "km prove did not report proved"
+			if proof.Status != "" {
+				lastReason += " (" + proof.Status + ": " + proof.Reason + ")"
+			}
+			lastReason += "; see " + proof.Path
+			feedback = proof.Path
 			e.progress("  %s", lastReason)
+			if budgetSpent() {
+				return budgetStop()
+			}
 			continue
 		}
+		if budgetSpent() {
+			return budgetStop()
+		}
+		proofPath := proof.Path
+
 		reviewPath := e.relf("tune-review-%d.md", round)
 		errs, err := e.readOnlySteps(ctx, []Step{{Name: "review", Round: round, Chair: cfg.Chairs.Reviewers[0], ReplyPath: reviewPath, Prompt: tuneReviewPrompt(cfg.Task, replyPath, proofPath, reviewPath)}})
 		if err != nil {
@@ -160,8 +247,14 @@ func (e *Engine) Tune(ctx context.Context, hooks TuneHooks) (res Result, err err
 			verdict = "CHANGES"
 		}
 		e.record(Record{RunID: cfg.RunID, Round: round, Step: "verdict-review", Verdict: verdict, Reply: reviewPath, VerdictSource: "reply"})
-		if verdict == "APPROVE" && proved {
-			if err := hooks.Publish(); err != nil {
+		if ctx.Err() != nil {
+			return e.fail(res, ctx.Err()), nil
+		}
+		if budgetSpent() {
+			return budgetStop()
+		}
+		if verdict == "APPROVE" {
+			if err := hooks.Publish(round); err != nil {
 				return e.fail(res, err), nil
 			}
 			res.Outcome = Approved
@@ -170,8 +263,17 @@ func (e *Engine) Tune(ctx context.Context, hooks TuneHooks) (res Result, err err
 		lastReason = "review requested changes; see " + reviewPath
 		feedback = reviewPath
 	}
-	res.Outcome, res.Reason = RoundsExhausted, lastReason
-	return res, nil
+	if budgetSpent() {
+		return budgetStop()
+	}
+	if provedRound > 0 {
+		note := fmt.Sprintf("later revision was not adopted: round %d %s", res.Rounds, lastReason)
+		if provedRound == res.Rounds {
+			note = fmt.Sprintf("reviewer asked for changes in round %d and no round remained; %s", provedRound, lastReason)
+		}
+		return finishWith(Approved, note)
+	}
+	return finishWith(RoundsExhausted, lastReason)
 }
 
 func readTuneReply(text, patchDir string) (TuneReply, error) {
@@ -242,7 +344,8 @@ Write the JSON to %s. When done, reply with one short sentence.
 func tuneReviewPrompt(task, reply, proof, out string) string {
 	return preamble("reviewer") + taskBlock(task) + fmt.Sprintf(`
 Read %s and the conductor's proof in %s. Read scripts/verify against CI workflows, the Makefile or task runner and README test instructions.
-Check whether any CI checks are missing, whether each omission explains why it cannot run in a clean checkout with no services, and whether the source and test patches exercise what they claim.
+Check that the verify reflects what the repository treats as passing and that what was left out is stated with a reason and a by-hand command. Check that the source and test patches exercise what they claim.
+Do not ask for wording, comment, label or style changes. A request for CHANGES must name a command to add, remove or alter; otherwise APPROVE.
 Do not rerun verification. The conductor's proof is authoritative.
 Write your findings to %s. Put APPROVE or CHANGES alone on its last line.
 Do not modify any other file. When done, reply with one short sentence.
