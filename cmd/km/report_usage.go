@@ -14,15 +14,20 @@ type reportTokens struct {
 }
 
 type reportUsage struct {
-	Known        bool `json:"known"`
-	UnknownSteps int  `json:"unknown_steps,omitempty"`
+	models           map[string]reportTokens
+	modelsIncomplete bool
+	Known            bool `json:"known"`
+	UnknownSteps     int  `json:"unknown_steps,omitempty"`
 	*reportTokens
 }
 
 type reportUsageTotal struct {
-	KnownRuns   int `json:"known_runs"`
-	PartialRuns int `json:"partial_runs,omitempty"`
-	UnknownRuns int `json:"unknown_runs"`
+	*ReportCost
+	models           map[string]reportTokens
+	modelsIncomplete bool
+	KnownRuns        int `json:"known_runs"`
+	PartialRuns      int `json:"partial_runs,omitempty"`
+	UnknownRuns      int `json:"unknown_runs"`
 	reportTokens
 }
 
@@ -51,7 +56,9 @@ func readReportUsage(data json.RawMessage) reportUsage {
 		}
 		*target = *value
 	}
-	return reportUsage{Known: true, UnknownSteps: unknownSteps, reportTokens: &tokens}
+	usage := reportUsage{Known: true, UnknownSteps: unknownSteps, reportTokens: &tokens}
+	usage.readModels(fields["models"])
+	return usage
 }
 
 func (total *reportUsageTotal) add(usage reportUsage) {
@@ -59,6 +66,8 @@ func (total *reportUsageTotal) add(usage reportUsage) {
 		total.UnknownRuns++
 		return
 	}
+	total.models = mergeReportModels(total.models, usage.models)
+	total.modelsIncomplete = total.modelsIncomplete || usage.modelsIncomplete
 	total.KnownRuns++
 	if usage.UnknownSteps > 0 {
 		total.PartialRuns++
