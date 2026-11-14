@@ -25,6 +25,11 @@ import (
 	"github.com/jystringfellow/kapellmeister/internal/tune"
 )
 
+const defaultTuneVerifyTimeout = 5 * time.Minute
+
+var tuneClock = time.Now
+var runTuneProof = prove.Prove
+
 const tuneSubjects = "subjects:\n  verify  write and prove this repository's verify"
 
 type tuneBreak struct {
@@ -32,10 +37,26 @@ type tuneBreak struct {
 	Kind string `json:"kind"`
 }
 
+type tuneKept struct {
+	FromRound  int             `json:"from_round"`
+	Round      int             `json:"round"`
+	Comparison tune.Comparison `json:"comparison"`
+	Compared   []string        `json:"compared"`
+}
+
+type tuneProved struct {
+	round   int
+	setup   map[string]tuneFile
+	summary tuneSummary
+	patches []string
+}
+
 type tuneSummary struct {
-	Breaks  []tuneBreak         `json:"breaks"`
-	Command string              `json:"command"`
-	LeftOut []loop.TuneOmission `json:"left_out"`
+	ProofKept *tuneKept           `json:"proof_kept,omitempty"`
+	Published bool                `json:"published"`
+	Breaks    []tuneBreak         `json:"breaks"`
+	Command   string              `json:"command"`
+	LeftOut   []loop.TuneOmission `json:"left_out"`
 	prove.Result
 }
 
@@ -51,6 +72,7 @@ func tuneCommand(args []string, stdout, stderr io.Writer) error {
 }
 
 func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (runErr error) {
+	started := tuneClock()
 	fs := flag.NewFlagSet("tune verify", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	worktree := fs.String("worktree", ".", "checkout whose verify to tune")
@@ -59,6 +81,8 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 	detach := fs.Bool("detach", false, "continue in a separate process and return its run id")
 	asJSON := fs.Bool("json", false, "print the final summary as JSON; with -detach use km wait -json")
 	timeout := fs.Duration("timeout", 0, "timeout for each agent step (default [run] timeout)")
+	budget := fs.Duration("budget", 30*time.Minute, "time budget for the whole tune run; checked between steps")
+	verifyTimeout := fs.Duration("verify-timeout", defaultTuneVerifyTimeout, "timeout for each verify run inside tune proof")
 	caoURL := fs.String("cao", "", "CAO URL (default environment, then configuration)")
 	launchPath := fs.String("detached-launch", "", "internal detached tune hand-off")
 	roles := chairFlags(fs, "implementer", "reviewer")
@@ -84,6 +108,12 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 	}
 	if flagsSet(fs)["timeout"] && *timeout <= 0 {
 		return errors.New("-timeout must be positive")
+	}
+	if *budget <= 0 {
+		return errors.New("-budget must be positive")
+	}
+	if *verifyTimeout <= 0 {
+		return errors.New("-verify-timeout must be positive")
 	}
 	var launch detachedLaunchRecord
 	if *launchPath != "" {
@@ -226,7 +256,7 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 		fmt.Fprintf(&hintText, "%v\n", h)
 	}
 	task := tune.Task(wt, hintText.String(), command, patches)
-	hooks, summary, err := tuneHooks(root, wt, head, runID, runDir, patches, setup, progress)
+	hooks, summary, err := tuneHooks(root, wt, head, runID, runDir, patches, setup, progress, *verifyTimeout)
 	if err != nil {
 		return err
 	}
@@ -244,7 +274,7 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 	}()
 	sum, err := runEnsemble(ctx, ensembleRun{
 		Command: "tune verify", RunID: runID, StateDir: runDir, Meter: loop.NewLogMeter(), Tune: hooks, TuneSummary: summary, TuneCheckout: root,
-		Config:  loop.Config{RunID: runID, Task: task, Worktree: wt, Chairs: chairs, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, Policy: &s.Policy, CAOURL: s.CAOURL, StateDir: loop.StateDir(), ScratchDir: scratch, BlockerPoll: s.BlockerPoll},
+		Config:  loop.Config{RunID: runID, Task: task, Worktree: wt, Chairs: chairs, MaxRounds: s.Rounds, Budget: *budget, BudgetStarted: started, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, Policy: &s.Policy, CAOURL: s.CAOURL, StateDir: loop.StateDir(), ScratchDir: scratch, BlockerPoll: s.BlockerPoll},
 		Watcher: loop.CAOWatcher{Client: client, Session: podium.SessionName}, Stepper: loop.CAOStepper{Client: client, Session: podium.SessionName}, Progress: progress,
 	})
 	if err != nil {
@@ -263,16 +293,18 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 	return finishRunDetail(stdout, sum, false)
 }
 
-func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]tuneFile, progress io.Writer) (*loop.TuneHooks, *tuneSummary, error) {
+func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]tuneFile, progress io.Writer, verifyTimeout time.Duration) (*loop.TuneHooks, *tuneSummary, error) {
 	baseline, err := tuneTree(wt)
 	if err != nil {
 		return nil, nil, err
 	}
 	summary := &tuneSummary{LeftOut: []loop.TuneOmission{}, Breaks: []tuneBreak{}, Result: prove.Result{Worktree: wt, Status: "not_run", Reason: "no proof was run", Runs: []prove.RunResult{}, Breaks: []prove.BreakResult{}}}
-	provedSetup := map[string]tuneFile{}
+	var proved *tuneProved
+	currentRound := 0
 	hooks := &loop.TuneHooks{
 		PatchDir: patches,
 		Changed: func() ([]string, error) {
+			currentRound++
 			now, err := tuneTree(wt)
 			if err != nil {
 				return nil, err
@@ -304,26 +336,28 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 			b, err := json.Marshal(state)
 			return string(b), err
 		},
-		Prove: func(ctx context.Context, reply loop.TuneReply, round int) (bool, string, error) {
+		Prove: func(ctx context.Context, reply loop.TuneReply, round int) (loop.TuneProof, error) {
 			current, err := readTuneSetup(wt)
 			if err != nil {
-				return false, "", err
+				return loop.TuneProof{}, err
 			}
 			summary.Command, summary.LeftOut = reply.Command, reply.LeftOut
 			recordPatches := []string{}
+			patchDigests := []string{}
 			for i, patch := range reply.Patches {
 				path := filepath.Join(runDir, "breaks", fmt.Sprintf("%d-%d-%s.patch", round, i+1, patch.Kind))
 				data, err := os.ReadFile(patch.File)
 				if err != nil {
-					return false, "", err
+					return loop.TuneProof{}, err
 				}
 				if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-					return false, "", err
+					return loop.TuneProof{}, err
 				}
 				if err := os.WriteFile(path, data, 0644); err != nil {
-					return false, "", err
+					return loop.TuneProof{}, err
 				}
 				recordPatches = append(recordPatches, path)
+				patchDigests = append(patchDigests, fmt.Sprintf("%s:%x", patch.Kind, sha256.Sum256(data)))
 			}
 			resolved, _, resolveErr := loop.ResolveHooks(wt, "")
 			var result prove.Result
@@ -333,8 +367,9 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 			case strings.TrimPrefix(resolved, "./") != initrepo.ScriptFile:
 				result = prove.Result{Worktree: wt, Command: resolved, Status: "refused", ExitStatus: 10, Reason: "tune must configure [test] verify to use scripts/verify"}
 			default:
-				result = prove.Prove(ctx, prove.Options{Worktree: wt, Breaks: recordPatches, Timeout: 10 * time.Minute})
+				result = runTuneProof(ctx, prove.Options{Worktree: wt, Breaks: recordPatches, Timeout: verifyTimeout})
 			}
+			summary.ProofKept = nil
 			summary.Result = result
 			summary.Breaks = nil
 			for i, patch := range result.Breaks {
@@ -345,12 +380,52 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 			printProof(&report, result)
 			fmt.Fprint(progress, report.String())
 			if err := os.WriteFile(filepath.Join(wt, proofPath), report.Bytes(), 0644); err != nil {
-				return false, proofPath, err
+				return loop.TuneProof{Path: proofPath}, err
 			}
-			provedSetup = current
-			return result.Status == "proved", proofPath, nil
+			if result.Status == "proved" {
+				proved = &tuneProved{round: round, setup: current, summary: *summary, patches: patchDigests}
+			}
+			return loop.TuneProof{Proved: result.Status == "proved", Path: proofPath, Status: result.Status, Reason: result.Reason}, nil
 		},
-		Publish: func() error {
+		Keep: func(reply loop.TuneReply, round int) (bool, string, string, error) {
+			if proved == nil {
+				return false, "", "", nil
+			}
+			current, err := readTuneSetup(wt)
+			if err != nil {
+				return false, "", "", err
+			}
+			if !reflect.DeepEqual(current[loop.ConfigFile], proved.setup[loop.ConfigFile]) || current[initrepo.ScriptFile].Mode != proved.setup[initrepo.ScriptFile].Mode || !current[initrepo.ScriptFile].Exists {
+				return false, "", "", nil
+			}
+			comparison, same := tune.SameCommands(string(proved.setup[initrepo.ScriptFile].Body), string(current[initrepo.ScriptFile].Body))
+			digests, err := tunePatchDigests(reply)
+			if err != nil {
+				return false, "", "", err
+			}
+			if !same || !reflect.DeepEqual(digests, proved.patches) {
+				return false, "", "", nil
+			}
+			kept := &tuneKept{FromRound: proved.round, Round: round, Comparison: comparison, Compared: []string{"scripts/verify normalized commands (sha256)", "scripts/verify mode", ".kapellmeister/config.toml bytes and mode", "ordered break patch bytes and kinds (sha256)"}}
+			data, err := json.MarshalIndent(kept, "", "  ")
+			if err != nil {
+				return false, "", "", err
+			}
+			path := filepath.Join(loop.RunDirRel(runID), fmt.Sprintf("prove-%d.txt", round))
+			detail := fmt.Sprintf("proof kept from round %d: only comments, blank lines or step labels differ; commands, config, modes and break patches matched", proved.round)
+			if err := os.WriteFile(filepath.Join(wt, path), append([]byte(detail+"\n"), data...), 0644); err != nil {
+				return false, "", "", err
+			}
+			*summary = proved.summary
+			summary.Command, summary.LeftOut, summary.ProofKept = reply.Command, reply.LeftOut, kept
+			proved = &tuneProved{round: round, setup: current, summary: *summary, patches: digests}
+			return true, path, detail, nil
+		},
+		Publish: func(round int) error {
+			if proved == nil || proved.round != round {
+				return errors.New("no proved setup for publication")
+			}
+
 			current, err := readTuneSetup(root)
 			if err != nil {
 				return err
@@ -365,14 +440,21 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 			if now != head {
 				return errors.New("checkout HEAD moved while tuning; checkout left untouched")
 			}
-			candidate, err := readTuneSetup(wt)
-			if err != nil {
+			if round == currentRound {
+				candidate, err := readTuneSetup(wt)
+				if err != nil {
+					return err
+				}
+				if !reflect.DeepEqual(candidate, proved.setup) {
+					return errors.New("setup files changed after proof; checkout left untouched")
+				}
+			}
+			if err := publishTuneSetup(root, proved.setup); err != nil {
 				return err
 			}
-			if !reflect.DeepEqual(candidate, provedSetup) {
-				return errors.New("setup files changed after proof; checkout left untouched")
-			}
-			return publishTuneSetup(root, candidate)
+			*summary = proved.summary
+			summary.Published = true
+			return nil
 		},
 	}
 	return hooks, summary, nil
@@ -583,7 +665,22 @@ func printTune(w io.Writer, s ensembleSummary, detail bool) {
 		proof.Breaks = append(proof.Breaks, patch.BreakResult)
 	}
 	printProofDetail(w, proof, detail)
-	if s.Outcome == loop.Approved {
+	if t.ProofKept != nil {
+		fmt.Fprintf(w, "  proof kept from round %d: only comments, blank lines or step labels differ; commands, config, modes and break patches matched\n", t.ProofKept.FromRound)
+	}
+	if t.Published || s.Outcome == loop.Approved {
 		fmt.Fprintf(w, "  left uncommitted in %s\n", s.Worktree)
 	}
+}
+
+func tunePatchDigests(reply loop.TuneReply) ([]string, error) {
+	digests := make([]string, 0, len(reply.Patches))
+	for _, p := range reply.Patches {
+		data, err := os.ReadFile(p.File)
+		if err != nil {
+			return nil, err
+		}
+		digests = append(digests, fmt.Sprintf("%s:%x", p.Kind, sha256.Sum256(data)))
+	}
+	return digests, nil
 }

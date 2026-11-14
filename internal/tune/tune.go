@@ -3,7 +3,7 @@ package tune
 import "fmt"
 
 const VerifyProcedure = `1. Read what the repository already says about passing: CI workflow files, a Makefile or task runner, the README's test instructions, km init's hints.
-2. Write the command into scripts/verify, keeping the bounded-output wrapper. Prefer what CI runs. Leave out what cannot run in a clean checkout with no services, and say what was left out.
+2. Write the command into scripts/verify, keeping the bounded-output wrapper. Aim for about two minutes on a clean copy and never more than five; report the measured time. When CI takes longer, choose the fast checks CI runs (format, lint, type check, build) plus unit tests for the code most often changed or a fast marked subset, not the whole suite. Name what was left out and how to run it by hand. Leave out tests depending on timing, the network, services or the wall clock, and anything seen to fail once in the two clean runs: a flaky verify is worse than a narrower one. Every verify runs on a clean copy: dependency installation counts, so use the lockfile and the package manager's cache.
 3. Write at least two break patches outside the checkout: one that breaks source code a test covers, one that breaks a test's expectation.
 4. Run ` + "`km prove`" + ` with those patches until it reports proved. If it cannot be proved, say why.`
 

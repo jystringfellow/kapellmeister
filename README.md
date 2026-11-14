@@ -47,7 +47,7 @@ installing the base chair profiles below.
 
 ```sh
 km init [-worktree DIR] [-dry-run] [-json] [-verify CMD] [-check CMD] [-no-run] [-timeout D]  # write config and an unfinished verify script
-km tune verify [-worktree DIR] [-detach] [-timeout D] [-json] [-again] [-guide]  # write and prove verify
+km tune verify [-worktree DIR] [-detach] [-timeout D] [-budget D] [-verify-timeout D] [-json] [-again] [-guide]  # write and prove verify
 km prove [-worktree DIR] [-break PATCH]... [-timeout D] [-json]  # prove verify on clean copies and broken code
 km run -repo ~/Code/app [-base BRANCH] -task-file task.md [-ensemble thorough] [-detach]  # one ensemble
 km audition -worktree DIR [-ensemble thorough]   # can this ensemble play? no real work
@@ -926,7 +926,7 @@ same file decisions, hints, verify result and next steps as one object, includin
 
 ```sh
 km init
-km tune verify [-worktree DIR] [-detach] [-timeout D] [-json] [-again]
+km tune verify [-worktree DIR] [-detach] [-timeout D] [-budget D] [-verify-timeout D] [-json] [-again]
 km tune verify -guide
 ```
 
@@ -947,17 +947,39 @@ refused unless `-again` is given. An executable `.kapellmeister/verify` hook mus
 to `scripts/verify` with `[test] verify` updated. Tune starts with the failing unfinished stub;
 `km run` still refuses a failing baseline.
 
-The writer follows the guide, keeps the bounded-output wrapper, explains checks omitted because
-they need services, and writes at least two break patches outside the checkout: one breaks
-covered source code and one breaks a test expectation. Work takes place in a temporary detached
-worktree. Changes to any checkout file besides `scripts/verify` and `.kapellmeister/config.toml`
-are refused. km itself runs `km prove` with those patches. Only a proved result followed by the
-reviewer's approval can be approved; a chair's opinion alone cannot approve it.
+The writer follows the shared guide: aim for about two minutes on a clean copy, never more than
+five, and report the measured time. When CI is slower, use its fast format, lint, type check and
+build checks plus unit tests for commonly changed code or a fast marked subset. State what was
+left out and the commands to run it by hand. Exclude timing, network, service and wall-clock
+dependencies, and anything that fails either clean run: narrower is better than flaky. Installation
+counts toward the cost; use the lockfile and the package manager's cache.
+
+The writer keeps the bounded-output wrapper and writes at least two break patches outside the
+checkout: one breaks covered source code and one breaks a test expectation. Work takes place in
+a temporary detached worktree. Changes besides `scripts/verify` and `.kapellmeister/config.toml`
+are refused. km itself runs `km prove`; a chair's opinion cannot prove a verify. The reading chair
+checks passing commands and stated omissions, and may request only a named command change.
+
+After review, a revision keeps its proof when a conservative comparison finds the same commands.
+The comparison recognizes the bounded-output wrapper and literal `run LABEL 'COMMAND'` steps,
+ignores comments and blank lines outside quotes, and ignores those diagnostic step labels.
+Quoted command text is preserved, including hashes and newlines. Unrecognized wrappers, heredocs,
+continuations and ambiguous shell syntax require another proof. Config bytes and mode, script mode,
+and ordered break-patch contents and kinds must also match. The run records both normalized command
+texts, their SHA-256 digests and the compared inputs; the summary says why the proof was kept.
 
 Tune uses `[run] rounds` and `[run] timeout`; `-timeout D` changes each agent step's limit.
-Each verification in prove keeps its `10m` limit. On approval, only the two setup files are copied
-back, and the temporary worktree is removed. If setup changed while tune ran, copy-back is
-refused. Failed worktrees are kept for inspection. Nothing is staged or committed. The summary
+`-budget D` defaults to `30m` and stops the run between steps, never during a proof. A running
+agent step finishes under its own timeout. `-verify-timeout D` defaults to `5m` for each clean or
+break verification inside tune; direct `km prove` keeps its `10m` default.
+
+Approval copies only the two setup files back and removes the temporary worktree. If later rounds
+fail, are flaky or exhaust rounds, the last proved setup is copied back with approved-with-notes
+and the reason the later revision was not adopted. Budget exhaustion has the distinct
+`budget_exhausted` outcome and exit status 1; it copies back the last proved setup if one exists,
+and otherwise leaves the checkout untouched. Its temporary worktree is kept for inspection.
+Interrupts and chair failures remain failed and publish nothing. Copy-back refuses changed checkout
+setup or a moved HEAD. Nothing is staged or committed. The summary
 shows the chosen command, omissions and reasons, both clean durations and one line per break
 patch with its result. Proof detail, including bounded failure output, appears once as progress;
 the final foreground summary does not repeat it. `km wait RUN` shows the complete summary,

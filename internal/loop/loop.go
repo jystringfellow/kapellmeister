@@ -142,6 +142,8 @@ type Config struct {
 	Worktree       string
 	Chairs         Chairs
 	MaxRounds      int
+	Budget         time.Duration
+	BudgetStarted  time.Time
 	StepTimeout    time.Duration
 	VerifyCommand  string
 	CheckCommand   string
@@ -194,6 +196,7 @@ const (
 	Approved        = "approved"
 	Untested        = "untested"
 	RoundsExhausted = "rounds_exhausted"
+	BudgetExhausted = "budget_exhausted"
 	Failed          = "failed"
 	VerdictFailed   = "FAILED"
 )
@@ -229,6 +232,7 @@ type ActiveStep struct {
 }
 
 type Engine struct {
+	Now             func() time.Time
 	snapshotDir     string
 	snapshotObjects string
 	keepSnapshot    bool
