@@ -2,7 +2,7 @@ package loop
 
 import "encoding/json"
 
-func copilotUsage(data []byte) Usage {
+func copilotUsage(data []byte, fallback string) Usage {
 	var usage Usage
 	counted := make(map[string]struct{})
 	valid := usageLines(data, func(line []byte) bool {
@@ -55,7 +55,7 @@ func copilotUsage(data []byte) Usage {
 		if model == "" {
 			model = u.Model
 		}
-		usage.addModel(model, tokens)
+		usage.addModel(modelOr(model, fallback), tokens)
 		return true
 	})
 	if !valid || !usage.Known {

@@ -683,3 +683,21 @@ Evidence: real Git regression tests
 `TestRestoreBringsBackNewUntrackedFilesDeletionsStagedOnlyChangesModeChangesSymlinksAndTypeChangesExactly`,
 `TestNothingIsLeftBehindInTheRepositoryAfterARun` and
 `TestALessonsStepThatWipesTheWorktreeIsRestoredRetriedAndNeverFailsTheRun`.
+
+## 2026-11-14: Attribute unnamed usage to the chair's configured model
+
+Usage keeps the source's model name, including spelling and a literal `"unknown"`. When the
+source gives no name, use the step chair's configured model; use `"unknown"` only if both are
+empty. Antigravity transcripts omit models even though km knows the configured chair model.
+`LogMeter.Open` supplies that model to Claude's per-message parser and transcript window,
+Codex's cumulative-count parser, Copilot's per-request parser and Antigravity's request parser.
+`Usage.addModel` retains the last-resort `"unknown"`; `Usage.add` preserves attributed keys when
+summing Claude windows and steps through `Engine.record` into ordinary run and tune totals.
+Existing records and report readers stay unchanged, with no JSON field changes. Evidence:
+`TestTokensWithoutAModelNameAreFiledUnderTheChairsConfiguredModel`,
+`TestTokensWithoutAnyModelNameAreFiledUnderUnknownWhenTheChairHasNoModelEither`,
+`TestAModelNameFromTheUsageSourceIsKeptEvenWhenTheChairsConfiguredModelIsSpelledDifferently`,
+`TestClaudeWindowsAttributeNamedAndUnnamedMessagesIndependently`,
+`TestARunsTotalUsageFilesModelLessTokensUnderTheChairsConfiguredModel`,
+`TestAnOldStepRecordWithUnknownModelStillReadsAndSumsWithoutReattribution` and
+`TestAnOldRunRecordWithUnknownModelStillReportsTheSameTotalsAndParts`.

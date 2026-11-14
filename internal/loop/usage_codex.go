@@ -2,7 +2,7 @@ package loop
 
 import "encoding/json"
 
-func codexUsage(data, head []byte) Usage {
+func codexUsage(data, head []byte, fallback string) Usage {
 	type counts struct {
 		Input      *int64 `json:"input_tokens"`
 		Output     *int64 `json:"output_tokens"`
@@ -82,6 +82,6 @@ func codexUsage(data, head []byte) Usage {
 		return unknownUsage("no-usage")
 	}
 	var usage Usage
-	usage.addModel(model, tokens)
+	usage.addModel(modelOr(model, fallback), tokens)
 	return usage
 }

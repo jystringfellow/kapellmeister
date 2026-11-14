@@ -2,7 +2,7 @@ package loop
 
 import "encoding/json"
 
-func claudeUsage(data []byte, alreadyCounted map[string]struct{}) (Usage, []string, bool) {
+func claudeUsage(data []byte, alreadyCounted map[string]struct{}, fallback string) (Usage, []string, bool) {
 	type message struct {
 		ID    string `json:"id"`
 		Model string `json:"model"`
@@ -58,13 +58,13 @@ func claudeUsage(data []byte, alreadyCounted map[string]struct{}) (Usage, []stri
 		if !tokens.valid() {
 			return unknownUsage("no-usage"), nil, false
 		}
-		usage.addModel(m.Model, tokens)
+		usage.addModel(modelOr(m.Model, fallback), tokens)
 		ids = append(ids, id)
 	}
 	return usage, ids, true
 }
 
-func (m *LogMeter) claudeWindow(grown []usageGrowth, parent string) Usage {
+func (m *LogMeter) claudeWindow(grown []usageGrowth, parent, fallback string) Usage {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var total Usage
@@ -73,7 +73,7 @@ func (m *LogMeter) claudeWindow(grown []usageGrowth, parent string) Usage {
 		if g.parent != parent {
 			continue
 		}
-		usage, ids, valid := claudeUsage(g.data, m.counted[g.path])
+		usage, ids, valid := claudeUsage(g.data, m.counted[g.path], fallback)
 		if !valid {
 			return unknownUsage("no-usage")
 		}

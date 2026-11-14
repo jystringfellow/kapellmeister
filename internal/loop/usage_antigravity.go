@@ -2,7 +2,7 @@ package loop
 
 import "encoding/json"
 
-func antigravityUsage(data []byte) Usage {
+func antigravityUsage(data []byte, fallback string) Usage {
 	var usage Usage
 	counted := make(map[int64]struct{})
 	valid := usageLines(data, func(line []byte) bool {
@@ -31,7 +31,7 @@ func antigravityUsage(data []byte) Usage {
 			return true
 		}
 		counted[*entry.StepIndex] = struct{}{}
-		usage.addModel("", tokens)
+		usage.addModel(fallback, tokens)
 		return true
 	})
 	if !valid || !usage.Known {
