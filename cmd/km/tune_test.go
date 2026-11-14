@@ -997,3 +997,29 @@ func TestTuneVerifyCountsPreparationTimeInItsWholeRunBudget(t *testing.T) {
 		t.Fatal(code, out, f.steps)
 	}
 }
+
+func TestTheREADMEStatesTheSameOmissionRulesAsTheGuide(t *testing.T) {
+	readme, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.Join(strings.Fields(string(readme)), " ")
+	for _, want := range []string{
+		"When the whole suite fits that target, run the whole suite; narrow it only when it does not fit",
+		"Leave a test out only", "failed or hung in a run made during this tune", "which run", "what it printed",
+		"needs something the clean copy cannot have", "network", "a service", "a credential", "another machine",
+		"the suite does not fit the time target and this is the part cut", "measured time",
+		"Each omission states its reason and evidence", "commands to run it by hand",
+		"A test that looks timing-dependent is not a reason.",
+		"checks passing commands and each omission's reason and evidence",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("README missing %q", want)
+		}
+	}
+	for _, unwanted := range []string{"Exclude timing, network, service and wall-clock", "anything that fails either clean run"} {
+		if strings.Contains(text, unwanted) {
+			t.Errorf("README contains %q", unwanted)
+		}
+	}
+}

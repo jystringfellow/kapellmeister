@@ -948,17 +948,22 @@ to `scripts/verify` with `[test] verify` updated. Tune starts with the failing u
 `km run` still refuses a failing baseline.
 
 The writer follows the shared guide: aim for about two minutes on a clean copy, never more than
-five, and report the measured time. When CI is slower, use its fast format, lint, type check and
-build checks plus unit tests for commonly changed code or a fast marked subset. State what was
-left out and the commands to run it by hand. Exclude timing, network, service and wall-clock
-dependencies, and anything that fails either clean run: narrower is better than flaky. Installation
-counts toward the cost; use the lockfile and the package manager's cache.
+five, and report the measured time. When the whole suite fits that target, run the whole suite;
+narrow it only when it does not fit. When CI is slower, use its fast format, lint, type check and
+build checks plus unit tests for commonly changed code or a fast marked subset. Leave a test out
+only for an observed reason: it failed or hung in a run made during this tune (say which run and
+what it printed); it needs something the clean copy cannot have (network, a service, a credential,
+another machine); or the suite does not fit the time target and this is the part cut (say the
+measured time). A test that looks timing-dependent is not a reason. Each omission states its reason
+and evidence and the commands to run it by hand: a flaky verify is worse than a narrower one.
+Installation counts toward the cost; use the lockfile and the package manager's cache.
 
 The writer keeps the bounded-output wrapper and writes at least two break patches outside the
 checkout: one breaks covered source code and one breaks a test expectation. Work takes place in
 a temporary detached worktree. Changes besides `scripts/verify` and `.kapellmeister/config.toml`
 are refused. km itself runs `km prove`; a chair's opinion cannot prove a verify. The reading chair
-checks passing commands and stated omissions, and may request only a named command change.
+checks passing commands and each omission's reason and evidence, and may request only a named
+command change.
 
 After review, a revision keeps its proof when a conservative comparison finds the same commands.
 The comparison recognizes the bounded-output wrapper and literal `run LABEL 'COMMAND'` steps,

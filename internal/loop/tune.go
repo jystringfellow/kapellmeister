@@ -347,7 +347,7 @@ Write the JSON to %s. When done, reply with one short sentence.
 func tuneReviewPrompt(task, reply, proof, out string) string {
 	return preamble("reviewer") + taskBlock(task) + fmt.Sprintf(`
 Read %s and the conductor's proof in %s. Read scripts/verify against CI workflows, the Makefile or task runner and README test instructions.
-Check that the verify reflects what the repository treats as passing and that what was left out is stated with a reason and a by-hand command. Check that the source and test patches exercise what they claim.
+Check that the verify reflects what the repository treats as passing. Check that each test left out has one of the permitted reasons with its evidence (it failed or hung in a run made during this tune: which run and what it printed; it needs something the clean copy cannot have: network, a service, a credential, another machine; or the suite does not fit the time target and this is the part cut: measured time) and a by-hand command; ask for changes when a test is left out without one, or when the whole suite would fit the target. A test that looks timing-dependent is not a reason. Check that the source and test patches exercise what they claim.
 Do not ask for wording, comment, label or style changes. A request for CHANGES must name a command to add, remove or alter; otherwise APPROVE.
 Do not rerun verification. The conductor's proof is authoritative.
 Write your findings to %s. Put APPROVE or CHANGES alone on its last line.
