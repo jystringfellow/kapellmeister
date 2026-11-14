@@ -23,10 +23,11 @@ Behavior is defined by tests, and only by tests. There are no spec documents.
 
 - **Behavior:** tests.
 - **Why a change was made:** commit messages and PR descriptions.
-- **Decisions that constrain future work:** `decisions/`, one short file each, with the date in
-  its name and the evidence. Add one only when a later change could undo the choice without
-  knowing why; most changes need none. Never edit a shared log. List the directory and read the
-  relevant files before proposing to reverse one; `decisions/README.md` has the rules.
+- **Decisions no test can hold:** `decisions/`, one short file each, with the date in its name.
+  Add one only for something we chose not to build, an approach tried and rejected, or a rule
+  about the work itself; behaviour belongs in tests and most changes need no file. List the
+  directory and read the relevant files before proposing to reverse one; `decisions/README.md`
+  has the rules.
 - **How to use `km`:** `README.md`. It describes, it does not specify; when it disagrees with the
   tests, fix the README.
 - **CAO behaviour findings:** `spike/SPIKE.md`.
