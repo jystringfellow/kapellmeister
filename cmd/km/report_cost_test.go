@@ -154,6 +154,7 @@ func TestReportJSONAddsCostFieldsBesideUsageAndKeepsEveryExistingField(t *testin
 			delete(x, "cost_usd")
 			delete(x, "cost_complete")
 			delete(x, "unpriced_models")
+			delete(x, "unpriced_cache_models")
 			for _, child := range x {
 				removeCosts(child)
 			}
@@ -399,5 +400,202 @@ func TestReportAndConfigRejectANonTablePriceSetting(t *testing.T) {
 				t.Errorf("report output=%s config output=%s", &out, configOut)
 			}
 		})
+	}
+}
+
+const alphaCacheReportUsage = `{"known":true,"input_tokens":1000000,"output_tokens":500000,"cache_read_tokens":2000000,"cache_write_tokens":1000000,"models":{"alpha":{"input_tokens":1000000,"output_tokens":500000,"cache_read_tokens":2000000,"cache_write_tokens":1000000}}}`
+
+func reportCacheFixture(t *testing.T, root, id, repository, ensemble, usage string) {
+	t.Helper()
+	reportUsageFixture(t, root, id, repository, ensemble, usage)
+	step := partStep("implement", "chair-model", "", 1)
+	var fields map[string]any
+	if err := json.Unmarshal([]byte(usage), &fields); err != nil {
+		t.Fatal(err)
+	}
+	step["usage"] = fields
+	partsFixture(t, root, id, "", 1, step)
+}
+
+func requireCacheReportCosts(t *testing.T, root, text string, amount float64, complete bool) {
+	t.Helper()
+	out, diag := captureReport(t, "-parts", root)
+	if diag != "" {
+		t.Fatal(diag)
+	}
+	if strings.Count(out, text) != 5 {
+		t.Fatalf("want %s for run, overall, ensemble, repository and part: %s", text, out)
+	}
+	if complete && strings.Contains(out, "≥$") {
+		t.Fatal(out)
+	}
+	doc := reportJSON(t, "-parts", root)
+	requireReportCost(t, doc["runs"].([]any)[0].(map[string]any), amount, complete)
+	totals := doc["totals"].(map[string]any)
+	requireReportCost(t, totals["usage"].(map[string]any), amount, complete)
+	for key, name := range map[string]string{"ensemble_usage": "quick", "repository_usage": "app"} {
+		requireReportCost(t, totals[key].(map[string]any)[name].(map[string]any), amount, complete)
+	}
+	requireReportCost(t, doc["parts"].(map[string]any)["rows"].([]any)[0].(map[string]any), amount, complete)
+}
+
+func TestReportPricesCacheTokensWhenCachePricesAreGiven(t *testing.T) {
+	configureReportPrices(t, reportPriceConfig+"cache_read=0.3\ncache_write=1.25\n")
+	root := recordRoot(t)
+	reportCacheFixture(t, root, "a", "app", "quick", alphaCacheReportUsage)
+	requireCacheReportCosts(t, root, "$3.85", 3.85, true)
+	out, _ := captureReport(t, "-parts", root)
+	totals := reportJSON(t, "-parts", root)["totals"].(map[string]any)
+	if strings.Contains(out, "unpriced cache tokens:") || totals["unpriced_cache_models"] != nil {
+		t.Fatalf("%s: %v", out, totals)
+	}
+}
+
+func TestReportCostWithCacheTokensAndNoCachePriceIsALowerBoundNotExact(t *testing.T) {
+	for _, tc := range []struct {
+		name, prices, text string
+		amount             float64
+		missing            []any
+	}{
+		{"both missing", "", "≥$2.00", 2, []any{"cache_read", "cache_write"}},
+		{"write missing", "cache_read=0.3\n", "≥$2.60", 2.6, []any{"cache_write"}},
+		{"read missing", "cache_write=1.25\n", "≥$3.25", 3.25, []any{"cache_read"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			configureReportPrices(t, reportPriceConfig+tc.prices)
+			root := recordRoot(t)
+			reportCacheFixture(t, root, "a", "app", "quick", alphaCacheReportUsage)
+			requireCacheReportCosts(t, root, tc.text, tc.amount, false)
+			got := reportJSON(t, "-parts", root)["totals"].(map[string]any)["unpriced_cache_models"]
+			if !reflect.DeepEqual(got, map[string]any{"alpha": tc.missing}) {
+				t.Fatalf("missing cache prices=%v", got)
+			}
+		})
+	}
+}
+
+func TestReportCachePriceOfZeroIsPricedAtNothingAndKeepsTheCostExact(t *testing.T) {
+	configureReportPrices(t, reportPriceConfig+"cache_read=0\ncache_write=0.0\n")
+	root := recordRoot(t)
+	reportCacheFixture(t, root, "a", "app", "quick", alphaCacheReportUsage)
+	requireCacheReportCosts(t, root, "$2.00", 2, true)
+	totals := reportJSON(t, root)["totals"].(map[string]any)
+	if totals["unpriced_cache_models"] != nil {
+		t.Fatal(totals)
+	}
+}
+
+func TestReportCostStaysExactWhenAModelHasNoCacheTokensAndNoCachePrice(t *testing.T) {
+	configureReportPrices(t, reportPriceConfig)
+	root := recordRoot(t)
+	reportCacheFixture(t, root, "a", "app", "quick", alphaReportUsage)
+	requireCacheReportCosts(t, root, "$2.00", 2, true)
+	out, _ := captureReport(t, "-parts", root)
+	if strings.Contains(out, "unpriced cache tokens:") || reportJSON(t, root)["totals"].(map[string]any)["unpriced_cache_models"] != nil {
+		t.Fatal(out)
+	}
+	reportUsageFixture(t, root, "b", "cached-app", "cached", alphaCacheReportUsage)
+	totals := reportJSON(t, root)["totals"].(map[string]any)
+	requireReportCost(t, totals["usage"].(map[string]any), float64(4), false)
+	for key, name := range map[string]string{"ensemble_usage": "quick", "repository_usage": "app"} {
+		requireReportCost(t, totals[key].(map[string]any)[name].(map[string]any), float64(2), true)
+	}
+	for key, name := range map[string]string{"ensemble_usage": "cached", "repository_usage": "cached-app"} {
+		requireReportCost(t, totals[key].(map[string]any)[name].(map[string]any), float64(2), false)
+	}
+	requireReportCost(t, partRows(t, root)[0].(map[string]any), float64(2), true)
+}
+
+func TestReportNamesModelsWithCacheTokensButNoCachePriceAndWhichKeyIsMissing(t *testing.T) {
+	configureReportPrices(t, reportPriceConfig+"[report.prices.beta]\ninput=1\noutput=2\ncache_read=0\n")
+	root := recordRoot(t)
+	reportCacheFixture(t, root, "a", "app", "quick", alphaCacheReportUsage)
+	reportUsageFixture(t, root, "b", "app", "quick", strings.ReplaceAll(alphaCacheReportUsage, "alpha", "beta"))
+	reportUsageFixture(t, root, "c", "app", "quick", strings.ReplaceAll(alphaCacheReportUsage, "alpha", "gamma"))
+	out, _ := captureReport(t, "-parts", root)
+	want := "unpriced models: gamma (add them under [report.prices] in " + loop.UserConfigPath(loop.Home()) + ")\n" +
+		"unpriced cache tokens: alpha (cache_read, cache_write), beta (cache_write) (add them under [report.prices.\"<model>\"] in " + loop.UserConfigPath(loop.Home()) + ")\n"
+	if !strings.Contains(out, want) || strings.Count(out, "unpriced cache tokens:") != 1 {
+		t.Fatal(out)
+	}
+	totals := reportJSON(t, "-parts", root)["totals"].(map[string]any)
+	if !reflect.DeepEqual(totals["unpriced_cache_models"], map[string]any{"alpha": []any{"cache_read", "cache_write"}, "beta": []any{"cache_write"}}) {
+		t.Fatal(totals)
+	}
+	if !reflect.DeepEqual(totals["unpriced_models"], []any{"gamma"}) {
+		t.Fatal(totals)
+	}
+}
+
+func TestReportNamesUnpricedCacheTokensFoundOnlyInPartRows(t *testing.T) {
+	configureReportPrices(t, reportPriceConfig)
+	root := recordRoot(t)
+	reportUsageFixture(t, root, "a", "app", "quick", alphaReportUsage)
+	step := partStep("implement", "chair-model", "", 1)
+	var usage map[string]any
+	if err := json.Unmarshal([]byte(alphaCacheReportUsage), &usage); err != nil {
+		t.Fatal(err)
+	}
+	step["usage"] = usage
+	partsFixture(t, root, "a", "", 1, step)
+	doc := reportJSON(t, "-parts", root)
+	requireReportCost(t, doc["runs"].([]any)[0].(map[string]any), float64(2), true)
+	requireReportCost(t, doc["parts"].(map[string]any)["rows"].([]any)[0].(map[string]any), float64(2), false)
+	if !reflect.DeepEqual(doc["totals"].(map[string]any)["unpriced_cache_models"], map[string]any{"alpha": []any{"cache_read", "cache_write"}}) {
+		t.Fatal(doc)
+	}
+	out, _ := captureReport(t, "-parts", root)
+	if !strings.Contains(out, "unpriced cache tokens: alpha (cache_read, cache_write)") {
+		t.Fatal(out)
+	}
+}
+
+func TestReportEscapesModelNamesInTheUnpricedCacheLine(t *testing.T) {
+	configureReportPrices(t, "[report.prices.\"bad\\n\\u001b[31m\"]\ninput=1\noutput=2\n")
+	root := recordRoot(t)
+	reportUsageFixture(t, root, "a", "app", "quick", strings.ReplaceAll(alphaCacheReportUsage, "alpha", `bad\n\u001b[31m`))
+	out, _ := captureReport(t, root)
+	if strings.Contains(out, "\x1b") || !strings.Contains(out, `unpriced cache tokens: bad\n\x1b[31m (cache_read, cache_write)`) {
+		t.Fatal(out)
+	}
+}
+
+func TestReportCostWithOnlyCacheTokensIsALowerBoundOfZeroWithoutCachePrices(t *testing.T) {
+	configureReportPrices(t, reportPriceConfig)
+	root := recordRoot(t)
+	usage := strings.ReplaceAll(strings.ReplaceAll(alphaCacheReportUsage, `"input_tokens":1000000`, `"input_tokens":0`), `"output_tokens":500000`, `"output_tokens":0`)
+	reportCacheFixture(t, root, "a", "app", "quick", usage)
+	requireCacheReportCosts(t, root, "≥$0.00", 0, false)
+}
+
+func TestReportUnpricedCacheModelsAndMissingModelAttributionKeepCostUnknown(t *testing.T) {
+	for _, usage := range []string{strings.ReplaceAll(alphaCacheReportUsage, "alpha", "beta"), knownReportUsage} {
+		configureReportPrices(t, reportPriceConfig)
+		root := recordRoot(t)
+		reportCacheFixture(t, root, "a", "app", "quick", usage)
+		doc := reportJSON(t, "-parts", root)
+		requireReportCost(t, doc["runs"].([]any)[0].(map[string]any), nil, false)
+		requireReportCost(t, doc["totals"].(map[string]any)["usage"].(map[string]any), nil, false)
+		requireReportCost(t, doc["parts"].(map[string]any)["rows"].([]any)[0].(map[string]any), nil, false)
+		if doc["totals"].(map[string]any)["unpriced_cache_models"] != nil {
+			t.Fatal(doc)
+		}
+		out, _ := captureReport(t, "-parts", root)
+		if strings.Contains(out, "unpriced cache tokens:") {
+			t.Fatal(out)
+		}
+	}
+}
+
+func TestConfigShowsCachePricesWhenSet(t *testing.T) {
+	configureReportPrices(t, builtInAgentConfig+reportPriceConfig+"cache_read=0\ncache_write=1.25\n[report.prices.beta]\ninput=1\noutput=2\ncache_write=0.3\n[report.prices.gamma]\ninput=1\noutput=2\ncache_read=0.1\n")
+	out, err := captureStdout(t, func() error { return configCommand([]string{"-worktree", t.TempDir(), "-cao", unreachableCAO}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"  alpha: input 1, output 2, cache_read 0, cache_write 1.25\n", "  beta: input 1, output 2, cache_write 0.3\n", "  gamma: input 1, output 2, cache_read 0.1\n"} {
+		if !strings.Contains(out, want) {
+			t.Fatal(out)
+		}
 	}
 }

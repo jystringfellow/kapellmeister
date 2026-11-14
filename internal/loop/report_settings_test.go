@@ -148,7 +148,7 @@ func TestReportPricesInARepositoryConfigAreRefusedLikeAnyOtherUserOnlySetting(t 
 }
 
 func TestANegativeOrNonNumericReportPriceIsRejectedNamingTheModelAndTheFile(t *testing.T) {
-	for _, body := range []string{"input=-1\noutput=2", "input=1\noutput='bad'", "input=true\noutput=2", "input=nan\noutput=2", "input=1\noutput=inf", "input=1", "output=2", "input=1\noutput=2\nextra=3"} {
+	for _, body := range []string{"input=-1\noutput=2", "input=1\noutput='bad'", "input=true\noutput=2", "input=nan\noutput=2", "input=1\noutput=inf", "input=1", "output=2", "input=1\ncache_read=1", "output=2\ncache_write=1", "input=1\noutput=2\nextra=3"} {
 		t.Run(body, func(t *testing.T) {
 			home := writeUserConfig(t, "[report.prices.\"model.a\"]\n"+body+"\n")
 			_, err := LoadSettings(home, "")
@@ -216,5 +216,52 @@ func TestReportPriceParsingFailuresRetainTheUserConfigAsTheirSource(t *testing.T
 				t.Fatalf("source=%q error=%v", source, err)
 			}
 		})
+	}
+}
+
+func TestReportPricesAcceptOptionalCacheReadAndCacheWritePricesWhereZeroIsAPrice(t *testing.T) {
+	home := writeUserConfig(t, "[report.prices.\"model.a\"]\ninput=1\noutput=2\ncache_read=0.3\ncache_write=0\n[report.prices.plain]\ninput=1\noutput=2\n")
+	s, err := LoadSettings(home, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prices, source, err := LoadReportPrices(home)
+	if err != nil || source != UserConfigPath(home) || !reflect.DeepEqual(prices, s.ReportPrices) {
+		t.Fatalf("prices=%v source=%q error=%v", prices, source, err)
+	}
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{
+		"model.a": map[string]any{"input": float64(1), "output": float64(2), "cache_read": 0.3, "cache_write": float64(0)},
+		"plain":   map[string]any{"input": float64(1), "output": float64(2)},
+	}
+	if !reflect.DeepEqual(fields["report_prices"], want) {
+		t.Fatalf("settings=%s", data)
+	}
+}
+
+func TestABadCachePriceIsRejectedNamingTheModelTheKeyAndTheFile(t *testing.T) {
+	for _, key := range []string{"cache_read", "cache_write"} {
+		for _, value := range []string{"-1", "'x'", "true", "nan", "inf", "-inf"} {
+			t.Run(key+"="+value, func(t *testing.T) {
+				home := writeUserConfig(t, "[report.prices.\"model.a\"]\ninput=1\noutput=2\n"+key+"="+value+"\n")
+				_, settingsErr := LoadSettings(home, "")
+				_, source, pricesErr := LoadReportPrices(home)
+				if source != UserConfigPath(home) {
+					t.Fatal(source)
+				}
+				for _, err := range []error{settingsErr, pricesErr} {
+					if err == nil || !strings.Contains(err.Error(), UserConfigPath(home)+`: report.prices."model.a".`+key+": must be a ") || !strings.Contains(err.Error(), "number of 0 or more") {
+						t.Fatalf("error=%v", err)
+					}
+				}
+			})
+		}
 	}
 }

@@ -49,16 +49,17 @@ type reportRun struct {
 }
 
 type reportTotals struct {
-	UnpricedModels  []string                    `json:"unpriced_models,omitempty"`
-	Retries         int                         `json:"retries,omitempty"`
-	Restores        int                         `json:"restores,omitempty"`
-	Usage           reportUsageTotal            `json:"usage"`
-	EnsembleUsage   map[string]reportUsageTotal `json:"ensemble_usage"`
-	RepositoryUsage map[string]reportUsageTotal `json:"repository_usage"`
-	Runs            int                         `json:"runs"`
-	Outcomes        map[string]int              `json:"outcomes"`
-	Repositories    map[string]int              `json:"repositories"`
-	Ensembles       map[string]int              `json:"ensembles"`
+	UnpricedCacheModels map[string][]string         `json:"unpriced_cache_models,omitempty"`
+	UnpricedModels      []string                    `json:"unpriced_models,omitempty"`
+	Retries             int                         `json:"retries,omitempty"`
+	Restores            int                         `json:"restores,omitempty"`
+	Usage               reportUsageTotal            `json:"usage"`
+	EnsembleUsage       map[string]reportUsageTotal `json:"ensemble_usage"`
+	RepositoryUsage     map[string]reportUsageTotal `json:"repository_usage"`
+	Runs                int                         `json:"runs"`
+	Outcomes            map[string]int              `json:"outcomes"`
+	Repositories        map[string]int              `json:"repositories"`
+	Ensembles           map[string]int              `json:"ensembles"`
 }
 
 type runReport struct {
@@ -539,6 +540,13 @@ func printReport(stdout io.Writer, report runReport) error {
 			names[i] = plain(model)
 		}
 		fmt.Fprintf(stdout, "unpriced models: %s (add them under [report.prices] in %s)\n", strings.Join(names, ", "), plain(report.priceSource))
+	}
+	if len(report.Totals.UnpricedCacheModels) > 0 {
+		names := make([]string, 0, len(report.Totals.UnpricedCacheModels))
+		for _, model := range sortedKeys(report.Totals.UnpricedCacheModels) {
+			names = append(names, plain(model)+" ("+strings.Join(report.Totals.UnpricedCacheModels[model], ", ")+")")
+		}
+		fmt.Fprintf(stdout, "unpriced cache tokens: %s (add them under [report.prices.\"<model>\"] in %s)\n", strings.Join(names, ", "), plain(report.priceSource))
 	}
 	if report.Parts != nil {
 		if err := printReportParts(stdout, report.Parts); err != nil {

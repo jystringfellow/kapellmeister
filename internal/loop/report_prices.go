@@ -39,14 +39,17 @@ func (cfg loadedConfig) reportPrices() (map[string]ReportPrice, error) {
 		key := fmt.Sprintf("%s: report.prices.%q", cfg.name, model)
 		fields := cfg.Report.Prices[model]
 		for _, field := range sortedKeys(fields) {
-			if field != "input" && field != "output" {
+			if field != "input" && field != "output" && field != "cache_read" && field != "cache_write" {
 				return nil, fmt.Errorf("%s.%s: unknown key", key, field)
 			}
 		}
-		price := ReportPrice{}
-		for _, field := range []string{"input", "output"} {
+		readPrice := func(field string, required bool) (*float64, error) {
+			raw, found := fields[field]
+			if !found && !required {
+				return nil, nil
+			}
 			var value float64
-			switch n := fields[field].(type) {
+			switch n := raw.(type) {
 			case int64:
 				value = float64(n)
 			case float64:
@@ -57,12 +60,25 @@ func (cfg loadedConfig) reportPrices() (map[string]ReportPrice, error) {
 			if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
 				return nil, fmt.Errorf("%s.%s: must be a finite number of 0 or more", key, field)
 			}
-			if field == "input" {
-				price.Input = value
-			} else {
-				price.Output = value
-			}
+			return &value, nil
 		}
+		input, err := readPrice("input", true)
+		if err != nil {
+			return nil, err
+		}
+		output, err := readPrice("output", true)
+		if err != nil {
+			return nil, err
+		}
+		cacheRead, err := readPrice("cache_read", false)
+		if err != nil {
+			return nil, err
+		}
+		cacheWrite, err := readPrice("cache_write", false)
+		if err != nil {
+			return nil, err
+		}
+		price := ReportPrice{Input: *input, Output: *output, CacheRead: cacheRead, CacheWrite: cacheWrite}
 		prices[model] = price
 	}
 	return prices, nil

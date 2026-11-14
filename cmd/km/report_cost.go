@@ -84,6 +84,20 @@ func priceReportModels(models map[string]reportTokens, complete bool, prices map
 		input := new(big.Rat).Mul(new(big.Rat).SetInt64(tokens.InputTokens), decimalReportPrice(price.Input))
 		output := new(big.Rat).Mul(new(big.Rat).SetInt64(tokens.OutputTokens), decimalReportPrice(price.Output))
 		cost.amount.Add(cost.amount, input).Add(cost.amount, output)
+		for _, cache := range []struct {
+			tokens int64
+			price  *float64
+		}{{tokens.CacheReadTokens, price.CacheRead}, {tokens.CacheWriteTokens, price.CacheWrite}} {
+			if cache.tokens == 0 {
+				continue
+			}
+			if cache.price == nil {
+				cost.CostComplete = false
+				continue
+			}
+			amount := new(big.Rat).Mul(new(big.Rat).SetInt64(cache.tokens), decimalReportPrice(*cache.price))
+			cost.amount.Add(cost.amount, amount)
+		}
 	}
 	cost.amount.Quo(cost.amount, big.NewRat(1000000, 1))
 	if anyPriced || cost.CostComplete {
@@ -103,10 +117,27 @@ func (usage reportUsageTotal) cost(prices map[string]loop.ReportPrice) *ReportCo
 func (report *runReport) addCosts(prices map[string]loop.ReportPrice, source string) {
 	report.priceSource = source
 	unpriced := map[string]bool{}
+	unpricedCache := map[string]map[string]bool{}
 	note := func(models map[string]reportTokens) {
 		for model, tokens := range models {
-			if _, ok := prices[model]; !ok && tokens != (reportTokens{}) {
+			if tokens == (reportTokens{}) {
+				continue
+			}
+			price, ok := prices[model]
+			if !ok {
 				unpriced[model] = true
+				continue
+			}
+			for key, missing := range map[string]bool{
+				"cache_read":  tokens.CacheReadTokens > 0 && price.CacheRead == nil,
+				"cache_write": tokens.CacheWriteTokens > 0 && price.CacheWrite == nil,
+			} {
+				if missing {
+					if unpricedCache[model] == nil {
+						unpricedCache[model] = map[string]bool{}
+					}
+					unpricedCache[model][key] = true
+				}
 			}
 		}
 	}
@@ -132,6 +163,12 @@ func (report *runReport) addCosts(prices map[string]loop.ReportPrice, source str
 		report.Totals.UnpricedModels = append(report.Totals.UnpricedModels, model)
 	}
 	sort.Strings(report.Totals.UnpricedModels)
+	if len(unpricedCache) > 0 {
+		report.Totals.UnpricedCacheModels = map[string][]string{}
+		for model, keys := range unpricedCache {
+			report.Totals.UnpricedCacheModels[model] = sortedKeys(keys)
+		}
+	}
 }
 func (cost *ReportCost) text() string {
 	if cost == nil || cost.CostUSD == nil {

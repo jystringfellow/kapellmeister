@@ -129,8 +129,10 @@ type FileConfig struct {
 }
 
 type ReportPrice struct {
-	Input  float64 `json:"input"`
-	Output float64 `json:"output"`
+	Input      float64  `json:"input"`
+	Output     float64  `json:"output"`
+	CacheRead  *float64 `json:"cache_read,omitempty"`
+	CacheWrite *float64 `json:"cache_write,omitempty"`
 }
 
 type Settings struct {

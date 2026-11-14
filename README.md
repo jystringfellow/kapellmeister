@@ -590,9 +590,9 @@ for `[tiers]`, because only you know what your accounts can run. `[cao]`, `[chai
 Putting one in the wrong file is an error.
 `$CAO_API_BASE_URL` overrides `[cao] url`. State lives in `~/.kapellmeister/state` (`$KAPELLMEISTER_STATE_DIR`).
 User-only `[report] dirs` adds search directories to `<state>/runs` for bare report, status and
-wait commands and their MCP tools. `[report.prices."<model>"]` supplies optional input/output
-prices in US dollars per million tokens for reports. Command-line directories replace both
-search locations; see [Report](#report).
+wait commands and their MCP tools. `[report.prices."<model>"]` supplies input/output
+prices and optional cache prices in US dollars per million tokens for reports. Command-line
+directories replace both search locations; see [Report](#report).
 
 km bounds each CAO call: short calls at 30s, launches at 90s, and run-step at the step’s own timeout
 plus 90s for CAO’s readiness wait; hitting a bound reports the method, path and limit.
@@ -1258,10 +1258,13 @@ requests to obtain prices.
 [report.prices."your-exact-recorded-model"]
 input = 1.25
 output = 5.00
+cache_read = 0.125
+cache_write = 1.50
 ```
 
-Both prices are required, in US dollars per million input and output tokens. Zero is valid;
-negative, nonnumeric and nonfinite prices are errors naming the model and file. The prices setting
+`input` and `output` are required; `cache_read` and `cache_write` are optional. All four are
+in US dollars per million tokens. Zero is valid and prices those tokens at nothing; negative,
+nonnumeric and nonfinite prices are errors naming the model, key and file. The prices setting
 must be a table. Invalid price tables, including TOML parsing errors, stop `km report` even when
 record directories are given explicitly. Model names
 match the recorded usage exactly, including case: km guesses no aliases or prefixes. Prices
@@ -1271,23 +1274,31 @@ prices and their source file.
 
 With prices configured, the run table adds `COST`, and overall, ensemble and repository totals
 include cost. `-parts` also adds cost per part/provider/model row, priced from each step's recorded
-usage models. Cache read/write tokens are not priced by this table; cost covers input and output.
-There are three states:
+usage models. Cache read and write tokens are priced separately using `cache_read` and
+`cache_write`. Cache tokens without a matching price make every cost that includes them a lower
+bound. A cache price is not needed when that model has no tokens of that kind. There are three states:
 
-- Exact: `$2.00` when every step's usage is known and all usage models have prices.
-- Lower bound: `≥$2.00` when some usage is unknown, missing model attribution or unpriced.
+- Exact: `$2.00` when every step's usage is known and all used token kinds have prices for each model.
+- Lower bound: `≥$2.00` when some usage is unknown, missing model attribution or unpriced,
+  including cache tokens without a matching cache price.
 - Unknown: `unknown` when nothing can be priced.
 
 After the totals, `unpriced models: ...` names models with usage but no price, in sorted order,
-and points to the user config. The line is absent when none are missing. Money shows two decimals
-from one dollar up, and two significant digits below it, such as `$0.0042`. Arithmetic retains
+and points to the user config. Next to it, `unpriced cache tokens: alpha (cache_read, cache_write)`
+names models with input/output prices but missing prices for recorded cache tokens, lists the
+missing keys and points to their model tables in the user config. Models and keys are sorted;
+models without any price table appear only in `unpriced models`. Each line is absent when none
+are missing. Money shows two decimals from one dollar up, and two significant digits below it,
+such as `$0.0042`. Arithmetic retains
 exact decimal values until display, so totals are priced before rounding each run for display.
 
 With prices, JSON adds `cost_usd` (a number, omitted when unknown) and `cost_complete` (a boolean)
 on runs, `totals.usage`, entries in `totals.ensemble_usage` and `totals.repository_usage`, and
 `parts.rows` when requested. An incomplete numeric cost is a lower bound. `totals.unpriced_models`
-is a sorted array, omitted when empty. With no prices configured, plain and JSON output are
-unchanged and none of these cost fields appear.
+is a sorted array, omitted when empty. `totals.unpriced_cache_models` maps each affected model
+to its sorted missing cache keys, such as `{"alpha":["cache_read","cache_write"]}`, and is omitted
+when empty. With no prices configured, plain and JSON output are unchanged and none of these
+cost fields appear.
 
 `-since 2026-11-09` keeps runs started at or after midnight UTC on that date; RFC3339 timestamps
 are also accepted. Runs without a known start are excluded by this filter.

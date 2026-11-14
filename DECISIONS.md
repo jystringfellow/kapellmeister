@@ -695,3 +695,17 @@ unknown. No price lookup or network dependency is added. Evidence:
 `TestReportShowsALowerBoundWhenAStepsUsageIsUnknown`,
 `TestReportShowsUnknownCostWhenNothingCanBePriced` and
 `TestReportOutputIsUnchangedWithoutPricesInPlainAndJSON`.
+
+## 2026-11-14: Unpriced cache tokens make cost a lower bound
+
+Cache reads and writes are priced only from the user's optional `cache_read` and `cache_write`
+prices per model, in dollars per million tokens. Zero is a price; an absent cache price matters
+only when that model used those tokens. Any cost including unpriced cache tokens is a lower
+bound, never exact: an exact-looking figure far below the bill is worse than an incomplete one.
+Reports name the affected models and missing keys. No default or inferred cache prices are
+added, consistent with km carrying no prices. Evidence:
+`TestReportPricesCacheTokensWhenCachePricesAreGiven`,
+`TestReportCostWithCacheTokensAndNoCachePriceIsALowerBoundNotExact`,
+`TestReportCachePriceOfZeroIsPricedAtNothingAndKeepsTheCostExact`,
+`TestReportCostStaysExactWhenAModelHasNoCacheTokensAndNoCachePrice` and
+`TestReportNamesModelsWithCacheTokensButNoCachePriceAndWhichKeyIsMissing`.
