@@ -1,1 +1,3 @@
 - When the task depends on what an external tool does or writes, plan a step that produces one real instance in an isolated scratch directory. A search that finds nothing is not evidence of absence.
+- When the plan reverses behaviour that existing tests assert, name every existing test on the old path and tell the implementer to change them on purpose in round 1.
+- When what a field in another tool's output means is not established, plan to produce a real sample where it is nonzero before designing around it.
