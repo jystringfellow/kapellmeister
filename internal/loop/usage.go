@@ -45,9 +45,18 @@ type Usage struct {
 
 func unknownUsage(reason string) Usage { return Usage{Reason: reason} }
 
+const unknownModel = "unknown"
+
+func modelOr(model, fallback string) string {
+	if model != "" {
+		return model
+	}
+	return fallback
+}
+
 func (u *Usage) addModel(model string, tokens Tokens) {
 	if model == "" {
-		model = "unknown"
+		model = unknownModel
 	}
 	if u.Tokens == nil {
 		u.Tokens = &Tokens{}
@@ -181,17 +190,17 @@ func (m *LogMeter) Open(ctx context.Context, step Step) (close func() Usage, err
 		}
 		switch step.Chair.Provider {
 		case "claude_code":
-			return m.claudeWindow(grown, chosen.path)
+			return m.claudeWindow(grown, chosen.path, step.Chair.Model)
 		case "copilot_cli":
-			return copilotUsage(chosen.data)
+			return copilotUsage(chosen.data, step.Chair.Model)
 		case "antigravity_cli":
-			return antigravityUsage(chosen.data)
+			return antigravityUsage(chosen.data, step.Chair.Model)
 		}
 		head, err := readUsageHead(chosen.path, chosen.start)
 		if err != nil {
 			return usage
 		}
-		return codexUsage(chosen.data, head)
+		return codexUsage(chosen.data, head, step.Chair.Model)
 	}, nil
 }
 

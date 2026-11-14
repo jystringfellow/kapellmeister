@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -132,11 +133,11 @@ func TestResultJSONOmitsUsageWhenNoMeterIsConfigured(t *testing.T) {
 	}
 }
 
-func TestRunRecordsCopilotAndAntigravityUsageInTelemetryAndResultJSON(t *testing.T) {
+func TestARunsTotalUsageFilesModelLessTokensUnderTheChairsConfiguredModel(t *testing.T) {
 	standing := playStanding(t)
 	meter := &loop.LogMeter{CopilotHome: t.TempDir(), AntigravityHome: t.TempDir()}
-	copilot := loop.Chair{Provider: "copilot_cli"}
-	antigravity := loop.Chair{Provider: "antigravity_cli"}
+	copilot := loop.Chair{Provider: "copilot_cli", Model: "claude-sonnet-5.5"}
+	antigravity := loop.Chair{Provider: "antigravity_cli", Model: "gemini-x"}
 	dir := filepath.Join(loop.StateDir(), "runs", "other-usage")
 	sum, err := runEnsemble(context.Background(), ensembleRun{RunID: "other-usage", StateDir: dir, Meter: meter, Stepper: usageStepper{meter: meter}, Progress: io.Discard, Config: loop.Config{RunID: "other-usage", Worktree: standing.Worktree, Task: "usage", MaxRounds: 1, ReplyGrace: time.Millisecond, Chairs: loop.Chairs{Planner: copilot, Implementer: copilot, Reviewers: []loop.Chair{antigravity}, Gate: antigravity, Classifier: copilot}}})
 	if err != nil || sum.Outcome != loop.Approved {
@@ -147,14 +148,26 @@ func TestRunRecordsCopilotAndAntigravityUsageInTelemetryAndResultJSON(t *testing
 		t.Fatalf("steps = %d", len(steps))
 	}
 	var want loop.Tokens
+	wantModels := make(map[string]loop.Tokens)
 	for _, rec := range steps {
 		tokens := loop.Tokens{InputTokens: 10, OutputTokens: 114, CacheWriteTokens: 27276, CacheReadTokens: 51947}
+		model := "claude-sonnet-5-5"
 		if rec.Chair.Provider == "antigravity_cli" {
 			tokens = loop.Tokens{InputTokens: 13089, OutputTokens: 100, CacheReadTokens: 13276}
+			model = rec.Chair.Model
 		}
 		if rec.Usage == nil || !rec.Usage.Known || rec.Usage.Tokens == nil || *rec.Usage.Tokens != tokens {
 			t.Fatalf("%s usage = %+v", rec.Step, rec.Usage)
 		}
+		if len(rec.Usage.Models) != 1 || rec.Usage.Models[model] != tokens {
+			t.Fatalf("%s models = %v, want %s: %+v", rec.Step, rec.Usage.Models, model, tokens)
+		}
+		total := wantModels[model]
+		total.InputTokens += tokens.InputTokens
+		total.OutputTokens += tokens.OutputTokens
+		total.CacheWriteTokens += tokens.CacheWriteTokens
+		total.CacheReadTokens += tokens.CacheReadTokens
+		wantModels[model] = total
 		want.InputTokens += tokens.InputTokens
 		want.OutputTokens += tokens.OutputTokens
 		want.CacheWriteTokens += tokens.CacheWriteTokens
@@ -172,5 +185,10 @@ func TestRunRecordsCopilotAndAntigravityUsageInTelemetryAndResultJSON(t *testing
 	}
 	if result.Usage == nil || !result.Usage.Known || result.Usage.Tokens == nil || *result.Usage.Tokens != want || result.Usage.UnknownSteps != 0 || len(result.Usage.Models) != 2 {
 		t.Fatalf("total = %+v, want %+v", result.Usage, want)
+	}
+	for _, usage := range []*loop.Usage{sum.Usage, result.Usage} {
+		if usage == nil || !reflect.DeepEqual(usage.Models, wantModels) {
+			t.Fatalf("total = %+v, want models %v", usage, wantModels)
+		}
 	}
 }
