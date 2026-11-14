@@ -86,6 +86,7 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 	caoURL := fs.String("cao", "", "CAO URL (default environment, then configuration)")
 	launchPath := fs.String("detached-launch", "", "internal detached tune hand-off")
 	roles := chairFlags(fs, "implementer", "reviewer")
+	hideFlags(fs, "detached-launch")
 	for _, arg := range args {
 		if arg == "-guide" || arg == "--guide" || arg == "-guide=true" || arg == "--guide=true" {
 			_, err := fmt.Fprintln(stdout, tune.VerifyProcedure)

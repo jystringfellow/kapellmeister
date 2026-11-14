@@ -218,3 +218,7 @@ func lessonsSection(l chairLessons) string {
 func testerProcessBriefing(pid int, scratch, orchestratorURL, stateDir string) string {
 	return fmt.Sprintf("\nThe process %d is conducting this run; the orchestrator at %s and the state directory %s belong to that conductor; none of them is part of what you are testing, and none may be signalled, stopped or changed.\nYou may signal only processes you started yourself and listed in %s/pids.\n", pid, orchestratorURL, stateDir, scratch)
 }
+
+func readOnlyRetryPrompt(runDir string) string {
+	return "Note: your previous attempt at this step changed the worktree, and km undid it. You must not create, modify, delete or stage any file in the worktree outside " + runDir + "; this is a read-only step."
+}

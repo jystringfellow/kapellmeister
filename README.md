@@ -746,7 +746,9 @@ the change was approved but testing did not finish. A signal names the signal an
 did not finish and the gate's approval stands unverified, in both the output and the run record. The outcome names the partial report if it exists and preserves the worktree and its
 uncommitted change as an approved run would. Other test-step failures, and a timeout or failure in
 any other score step, still fail the run. The test step gets the same worktree check as the gate and
-reviewers; a tester that modifies the worktree still fails the run even if it also times out.
+reviewers: km restores a tester's worktree changes and retries the test step once. A second
+change fails the run with the work restored. A tester that changes the worktree and times out
+fails without a retry, also with the work restored.
 Both tester prompts require everything the tester creates to stay under
 the absolute `<state dir>/scratch/<run id>` directory, outside the worktree.
 `km run` and `km play` create it before starting the score and refuse to start if it is inside a git
@@ -812,10 +814,25 @@ there is no lessons step, file or result key.
 A reviewer whose step errors or leaves no reply after its one nudge is recorded as `FAILED`.
 It counts as not approving for `gate_when`; surviving reviews continue through the round, and
 the gate is told which reviewers failed so it can weigh the missing review. If every reviewer
-fails, the run fails. Reviewers share the worktree: a snapshot before they start and another
-after all reviews and their classifications finish enforce read-only access as a group across
-that whole window. A worktree change fails the run and names the whole group, including when a
-reviewer's step also errors or another review has already been classified.
+fails, the run fails. Reviewers share the worktree: km snapshots it before they start and checks
+it after all reviews and their classifications finish. If the group changes it, km restores
+the snapshot, confirms the restored state, then reruns the whole group once with a warning
+that the previous attempt changed the worktree. A second change is restored again and fails
+the run, naming the whole group. This also applies when a review errors or another review
+has already been classified.
+
+The gate, tester, tune reviewer and lessons step use the same recovery. Snapshots preserve tracked
+and non-ignored untracked files, deletions, file modes, symlinks and the separate staged state.
+Ignored files, empty directories and nested repositories' contents are not restored.
+A read-only chair's commit is not undone: the run fails and reports that HEAD moved.
+A timeout or cancellation restores changes but does not retry. Lessons that violate the rule
+twice have their proposals discarded without changing the run's outcome.
+
+Snapshot objects and an index copy live in a private temporary directory, referenced by
+a temporary snapshot manifest in the run record. km removes both when the run ends,
+including failure and handled interruption. If restoration cannot be confirmed, km fails
+and keeps the snapshot, naming its directory and saved tree so the work can be recovered.
+Snapshotting writes no branches, stash entries or objects into the repository.
 
 With one reviewer, replies remain `review-<round>.md` and the terminal label remains
 `km <run> · reviewer`. Multiple reviewers are numbered in config order as `reviewer-1`,
@@ -1136,6 +1153,9 @@ What a repository needs its ensemble to know is checked in to that repository.
 `km report [DIR...]` summarizes run records, oldest first, followed by totals by outcome,
 repository and ensemble. With no directory it reads `<state>/runs` plus any directories in the
 user config's `[report] dirs`. `km report ~/kept-sandboxes` searches across kept sandbox copies.
+Runs with restored work add a `restored: N` footer count, and runs that retried a read-only step
+add `retried: N`. JSON includes `restores` and `retries` counts per run and the numbers of
+runs with restores or retries in totals.
 
 To add directories a bare `km report`, `km status` or `km wait` searches, add this to
 `~/.kapellmeister/config.toml` (`$KAPELLMEISTER_HOME` moves this file):
@@ -1446,6 +1466,11 @@ and `escalate` records for each decision. Lessons add a `lessons` step record an
 `lessons-proposed` summary (also recorded when collection is skipped); the step uses the `gate` tier. A seated tester adds `test-plan`, `test`,
 `classify-test`, `verdict-test` and any `left-running` records; both tester steps use the `test` tier. With several reviewers,
 their review, nudge, classification and verdict records include `chair_name` (`reviewer-1`, `reviewer-2`, etc.).
+A worktree recovery adds a `restore` record naming the chair or group, up to ten changed
+paths with a remaining count, and whether the work was restored. Retried step records have
+`retry: 1`. Progress names the changes and announces the restoration and retry.
+`result.json` keeps a `restores` list with the step, round, chairs, paths and outcome
+(`retried` or `failed`); foreground summaries and `km wait` show the restoration and retry.
 A signal adds an `interrupted` record naming the signal. A signalled test step after gate approval
 also adds `unverified`, recording that the tester did not finish and the gate's approval stands
 unverified.

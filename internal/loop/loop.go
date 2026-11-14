@@ -75,6 +75,7 @@ type Chairs struct {
 }
 
 type Step struct {
+	Retry         int
 	ChairName     string
 	Name          string
 	Round         int
@@ -152,6 +153,10 @@ type Config struct {
 }
 
 type Record struct {
+	Retry         int            `json:"retry,omitempty"`
+	Paths         []string       `json:"paths,omitempty"`
+	PathsMore     int            `json:"paths_more,omitempty"`
+	Restored      bool           `json:"restored,omitempty"`
 	Usage         *Usage         `json:"usage,omitempty"`
 	Lessons       *LessonsRecord `json:"lessons,omitempty"`
 	PID           int            `json:"pid,omitempty"`
@@ -196,7 +201,17 @@ const (
 	VerdictFailed   = "FAILED"
 )
 
+type Restore struct {
+	Step      string   `json:"step"`
+	Round     int      `json:"round"`
+	Chairs    []string `json:"chairs"`
+	Paths     []string `json:"paths"`
+	PathsMore int      `json:"paths_more,omitempty"`
+	Outcome   string   `json:"outcome"`
+}
+
 type Result struct {
+	Restores []Restore `json:"restores,omitempty"`
 	failure  error
 	Usage    *Usage         `json:"usage,omitempty"`
 	Lessons  *LessonsReport `json:"lessons,omitempty"`
@@ -217,18 +232,22 @@ type ActiveStep struct {
 }
 
 type Engine struct {
-	Now       func() time.Time
-	Meter     UsageMeter
-	usage     Usage
-	gateRound int
-	Watcher   Watcher
-	watch     watchState
-	Config    Config
-	Stepper   Stepper
-	Verify    Verifier
-	Records   io.Writer
-	Progress  io.Writer
-	Playing   func(round int, active []ActiveStep)
+	Now             func() time.Time
+	snapshotDir     string
+	snapshotObjects string
+	keepSnapshot    bool
+	restores        []Restore
+	Meter           UsageMeter
+	usage           Usage
+	gateRound       int
+	Watcher         Watcher
+	watch           watchState
+	Config          Config
+	Stepper         Stepper
+	Verify          Verifier
+	Records         io.Writer
+	Progress        io.Writer
+	Playing         func(round int, active []ActiveStep)
 
 	lessons map[lessonKey]chairLessons
 	active  []*ActiveStep
@@ -245,6 +264,9 @@ func RunDirRel(runID string) string {
 }
 
 func (e *Engine) Run(ctx context.Context) (res Result, err error) {
+	defer e.cleanupSnapshot()
+	e.restores = nil
+	defer func() { res.Restores = e.restores }()
 	e.mu.Lock()
 	e.usage = Usage{}
 	e.mu.Unlock()
@@ -677,9 +699,13 @@ var errNoReply = errors.New("no reply file")
 
 func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 	chair := s.Chair
-	rec := Record{RunID: e.Config.RunID, Round: s.Round, Step: s.Name, ChairName: s.ChairName, Chair: &chair, Reply: s.ReplyPath,
+	rec := Record{Retry: s.Retry, RunID: e.Config.RunID, Round: s.Round, Step: s.Name, ChairName: s.ChairName, Chair: &chair, Reply: s.ReplyPath,
 		Tier: s.Assignment.Tier, Effort: s.Assignment.Effort, TierSource: s.Assignment.Source}
-	e.progress("→ %s %s%s", strings.TrimSpace(label(s.Name, s.Round)+" "+s.ChairName), chair, tierNote(s.Assignment))
+	retryNote := ""
+	if s.Retry > 0 {
+		retryNote = " (retry)"
+	}
+	e.progress("→ %s %s%s%s", strings.TrimSpace(label(s.Name, s.Round)+" "+s.ChairName), chair, tierNote(s.Assignment), retryNote)
 	var closeUsage func() Usage
 	if e.Meter != nil {
 		queued := time.Now()
@@ -744,38 +770,103 @@ func (e *Engine) readOnlySteps(ctx context.Context, steps []Step) ([]error, erro
 }
 
 func (e *Engine) readOnlyStepsThen(ctx context.Context, steps []Step, then func(int)) ([]error, error) {
-	before, err := e.treeState()
+	snapshot, err := e.takeSnapshot()
 	if err != nil {
 		return nil, err
 	}
-	errs := make([]error, len(steps))
-	var wg sync.WaitGroup
-	for i, s := range steps {
-		wg.Go(func() {
-			_, errs[i] = e.step(ctx, s)
-			if errs[i] == nil && then != nil {
-				then(i)
-			}
-		})
+	steps = append([]Step(nil), steps...)
+	s := steps[0]
+	names := make([]string, len(steps))
+	for i, step := range steps {
+		names[i] = strings.TrimSpace(step.ChairName + " " + step.Chair.String())
 	}
-	wg.Wait()
-	after, err := e.treeState()
-	if err != nil {
-		return nil, err
+	who := s.Name + " chair " + s.Chair.String()
+	again := s.Name
+	if len(steps) > 1 {
+		who = s.Name + " chairs " + strings.Join(names, ", ")
+		again = "them"
 	}
-	if before != after {
-		s := steps[0]
+	for attempt := 0; attempt < 2; attempt++ {
+		errs := make([]error, len(steps))
+		var wg sync.WaitGroup
+		for i, step := range steps {
+			wg.Go(func() {
+				_, errs[i] = e.step(ctx, step)
+				if errs[i] == nil && then != nil {
+					then(i)
+				}
+			})
+		}
+		wg.Wait()
+		after, inspectErr := e.treeState()
+		tree, treeErr := e.currentSnapshotTree(snapshot)
+		if inspectErr == nil && treeErr == nil && after == snapshot.State && tree == snapshot.Tree {
+			return errs, nil
+		}
+		head, headErr := e.gitOutput("rev-parse", "HEAD")
+		if headErr != nil {
+			return nil, headErr
+		}
 		e.record(Record{RunID: e.Config.RunID, Round: s.Round, Step: s.Name, TreeChanged: true, Error: "worktree modified"})
-		if len(steps) == 1 {
-			return nil, fmt.Errorf("%s chair %s modified the worktree", s.Name, s.Chair)
+		if head != snapshot.Head {
+			return nil, fmt.Errorf("%s modified the worktree; HEAD moved", who)
 		}
-		names := make([]string, len(steps))
-		for i, s := range steps {
-			names[i] = fmt.Sprintf("%s %s", s.ChairName, s.Chair)
+		paths := []string{"(paths unavailable)"}
+		more := 0
+		if treeErr == nil {
+			var pathErr error
+			paths, more, pathErr = e.snapshotPaths(snapshot, tree)
+			if pathErr != nil {
+				paths = []string{"(paths unavailable)"}
+			}
 		}
-		return nil, fmt.Errorf("%s chairs %s modified the worktree", s.Name, strings.Join(names, ", "))
+		suffix := ""
+		if more > 0 {
+			suffix = fmt.Sprintf(" (+%d more)", more)
+		}
+		e.progress("  %s changed the worktree: %s%s", who, strings.Join(paths, ", "), suffix)
+		if err := e.restoreSnapshot(snapshot); err != nil {
+			return nil, err
+		}
+		canRetry := attempt == 0 && ctx.Err() == nil
+		for _, err := range errs {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				canRetry = false
+			}
+		}
+		outcome, detail := "failed", "work restored; step failed without retry"
+		if canRetry {
+			outcome, detail = "retried", "work restored; step retried"
+		} else if attempt > 0 {
+			detail = "work restored; failed after a second change"
+		}
+		e.restores = append(e.restores, Restore{Step: s.Name, Round: s.Round, Chairs: names, Paths: paths, PathsMore: more, Outcome: outcome})
+		chair := s.Chair
+		e.record(Record{RunID: e.Config.RunID, Round: s.Round, Step: "restore", ChairName: s.ChairName, Chair: &chair, Paths: paths, PathsMore: more, Restored: true, Detail: who + ": " + detail})
+		if !canRetry {
+			action := "failing the run"
+			if s.Name == "lessons" {
+				action = "discarding lesson proposals"
+			}
+			if attempt > 0 {
+				e.progress("  %s changed the worktree again; restored the work; %s", who, action)
+				return nil, fmt.Errorf("%s modified the worktree; the work was restored after a second change", who)
+			}
+			e.progress("  restored the work from the snapshot; %s", action)
+			return nil, fmt.Errorf("%s modified the worktree; the work was restored", who)
+		}
+		e.progress("  restored the work from the snapshot; running %s again, told not to change the worktree", again)
+		for i := range steps {
+			for _, path := range []string{steps[i].ReplyPath, strings.TrimSuffix(steps[i].ReplyPath, filepath.Ext(steps[i].ReplyPath)) + ".verdict"} {
+				if err := os.Remove(filepath.Join(e.Config.Worktree, path)); err != nil && !errors.Is(err, os.ErrNotExist) {
+					return nil, err
+				}
+			}
+			steps[i].Retry = 1
+			steps[i].Prompt += "\n" + readOnlyRetryPrompt(RunDirRel(e.Config.RunID))
+		}
 	}
-	return errs, nil
+	panic("unreachable")
 }
 
 type review struct {
@@ -974,7 +1065,11 @@ func (e *Engine) treeState() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	sum := sha256.Sum256([]byte(head + "\x00" + status + "\x00" + diff))
+	staged, err := e.gitOutput("diff", "--cached", "--binary")
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(head + "\x00" + status + "\x00" + diff + "\x00" + staged))
 	return hex.EncodeToString(sum[:]), nil
 }
 

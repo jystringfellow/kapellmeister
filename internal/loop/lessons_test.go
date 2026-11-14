@@ -368,6 +368,9 @@ func TestALessonsStepThatModifiesTheWorktreeIsDiscardedAndDoesNotChangeTheOutcom
 	e.Progress = &progress
 	f.actions["lessons"] = func(s Step) { f.write(s.ReplyPath, lessonAnswer); f.write("unexpected.txt", "change") }
 	res := run(t, e)
+	if strings.Contains(progress.String(), "failing the run") {
+		t.Errorf("lessons progress claims the run failed: %s", progress.String())
+	}
 	if res.Outcome != Approved || res.Lessons.Proposed != 0 || res.Lessons.Reason != "lessons step modified the worktree" || !bytes.Contains(records.Bytes(), []byte(`"tree_changed":true`)) || !strings.Contains(progress.String(), "km: lessons step modified the worktree") {
 		t.Fatalf("%+v %+v %s", res, res.Lessons, progress.String())
 	}
