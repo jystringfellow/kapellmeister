@@ -17,6 +17,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jystringfellow/kapellmeister/internal/cao"
 	"github.com/jystringfellow/kapellmeister/internal/initrepo"
@@ -26,6 +27,7 @@ import (
 )
 
 const defaultTuneVerifyTimeout = 5 * time.Minute
+const tuneSummaryWidth = 80
 
 var tuneClock = time.Now
 var runTuneProof = prove.Prove
@@ -653,12 +655,6 @@ func tuneTree(root string) (map[string]string, error) {
 func printTune(w io.Writer, s ensembleSummary, detail bool) {
 	t := s.Tune
 	fmt.Fprintf(w, "  tune verify: %s\n", t.Command)
-	if len(t.LeftOut) == 0 {
-		fmt.Fprintln(w, "  left out: nothing")
-	}
-	for _, omit := range t.LeftOut {
-		fmt.Fprintf(w, "  left out: %s — %s\n", omit.What, omit.Why)
-	}
 	proof := t.Result
 	proof.Breaks = nil
 	for _, patch := range t.Breaks {
@@ -671,6 +667,45 @@ func printTune(w io.Writer, s ensembleSummary, detail bool) {
 	if t.Published || s.Outcome == loop.Approved {
 		fmt.Fprintf(w, "  left uncommitted in %s\n", s.Worktree)
 	}
+}
+
+func printLeftOut(w io.Writer, omissions []loop.TuneOmission) {
+	if len(omissions) == 0 {
+		fmt.Fprintln(w, "  left out: nothing")
+		return
+	}
+	checks := "checks"
+	if len(omissions) == 1 {
+		checks = "check"
+	}
+	fmt.Fprintf(w, "  left out: %d %s\n", len(omissions), checks)
+	for _, omit := range omissions {
+		for _, line := range wrapWords(omit.What, "    ", tuneSummaryWidth) {
+			fmt.Fprintln(w, line)
+		}
+		for _, line := range wrapWords(omit.Why, "      ", tuneSummaryWidth) {
+			fmt.Fprintln(w, line)
+		}
+	}
+}
+
+func wrapWords(text, indent string, width int) []string {
+	var lines []string
+	line := indent
+	for _, word := range strings.Fields(text) {
+		if line != indent && utf8.RuneCountInString(line)+1+utf8.RuneCountInString(word) > width {
+			lines = append(lines, line)
+			line = indent
+		}
+		if line != indent {
+			line += " "
+		}
+		line += word
+	}
+	if line != indent {
+		lines = append(lines, line)
+	}
+	return lines
 }
 
 func tunePatchDigests(reply loop.TuneReply) ([]string, error) {
