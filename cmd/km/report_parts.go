@@ -47,6 +47,7 @@ type reportPartUsagePerStep struct {
 	OutputTokens float64 `json:"output_tokens"`
 }
 type reportPartRow struct {
+	*ReportCost
 	Part                    string                  `json:"part"`
 	Provider                string                  `json:"provider"`
 	Model                   string                  `json:"model"`
@@ -251,6 +252,8 @@ func (row *reportPartRow) addUsage(usage reportUsage) {
 	if row.Usage.reportTokens == nil {
 		row.Usage.reportTokens = &reportTokens{}
 	}
+	row.Usage.models = mergeReportModels(row.Usage.models, usage.models)
+	row.Usage.modelsIncomplete = row.Usage.modelsIncomplete || usage.modelsIncomplete
 	row.Usage.Known = true
 	row.Usage.InputTokens += usage.InputTokens
 	row.Usage.OutputTokens += usage.OutputTokens
@@ -501,7 +504,11 @@ func reportPartTokens(input, output float64, partial bool) string {
 func printReportParts(stdout io.Writer, parts *reportParts) error {
 	w := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(w, "\nby part and model")
-	fmt.Fprintln(w, "PART\tPROVIDER\tMODEL\tRUNS\tSTEPS\tERRORS\tTIME\tTIME/STEP\tTOKENS\tTOKENS/STEP")
+	header := "PART\tPROVIDER\tMODEL\tRUNS\tSTEPS\tERRORS\tTIME\tTIME/STEP\tTOKENS\tTOKENS/STEP"
+	if len(parts.Rows) > 0 && parts.Rows[0].ReportCost != nil {
+		header += "\tCOST"
+	}
+	fmt.Fprintln(w, header)
 	for _, row := range parts.Rows {
 		total, average, tokens, tokensAverage := "unknown", "unknown", "unknown", "unknown"
 		if row.DurationMSPerStep != nil {
@@ -516,7 +523,11 @@ func printReportParts(stdout io.Writer, parts *reportParts) error {
 			tokens = reportPartTokens(float64(row.Usage.InputTokens), float64(row.Usage.OutputTokens), row.Usage.UnknownSteps > 0)
 			tokensAverage = reportPartTokens(row.UsagePerStep.InputTokens, row.UsagePerStep.OutputTokens, row.Usage.UnknownSteps > 0)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\t%s\n", row.Part, reportCell(row.Provider, 20), reportCell(row.Model, 32), row.Runs, row.Steps, row.StepErrors, total, average, tokens, tokensAverage)
+		costText := ""
+		if row.ReportCost != nil {
+			costText = "\t" + row.ReportCost.text()
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\t%s%s\n", row.Part, reportCell(row.Provider, 20), reportCell(row.Model, 32), row.Runs, row.Steps, row.StepErrors, total, average, tokens, tokensAverage, costText)
 	}
 	if err := w.Flush(); err != nil {
 		return err
