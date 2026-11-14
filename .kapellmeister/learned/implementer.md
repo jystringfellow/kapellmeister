@@ -1,2 +1,5 @@
 - Do not report "could not be established" or "not found" from a search alone. Run the real tool once, isolated in a scratch directory, and report what it did.
 - `cao install` exits 0 when it refuses a name owned by another source file. Verify an install by reading the profile back, never by the exit status.
+- A new flag or command also goes in the README `## Commands` synopsis, not only its own section. After editing README.md, read `git diff README.md` hunk by hunk and confirm each inserted line landed in the intended block.
+- After changing a shared path, run the whole test package of every package you touched, not a name-filtered selection. Tests named for other scenarios can hit the new path and assert the old behaviour.
+- Reduced fixtures must include the common real case, not only the clean one. Take one from a real session before writing the reader.

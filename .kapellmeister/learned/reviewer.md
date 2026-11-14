@@ -1,0 +1,2 @@
+- Read every documentation diff hunk in context, not only code and tests. A doc edit can corrupt the prose next to it.
+- Before reporting a control-flow bug, re-read the surrounding code and confirm it. A wrong claim sends the implementer after a non-issue and costs gate time.

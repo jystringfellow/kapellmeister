@@ -4,3 +4,5 @@
 - Keep scratch files, build output and server state under scratch; clean up processes and sessions you started.
 - A nested cao-server starts with an empty CAO home. Install the base chair profiles into it from the sourced nested shell before the first audition or run.
 - In a sandbox a nested CAO may fail session creation with `Could not find object`, so no nested chair seats. Treat it as environmental: show seating by the launch requests recorded at a proxy, and isolation by preflight, refusals and before/after records. Do not retry live runs.
+- When exercising profile installs live, set a scratch `HOME` as well as `CAO_HOME_DIR`: the Copilot provider also writes under `~/.copilot`, and a leftover file there makes km refuse the install.
+- For anything that reads another tool's records, run one real session end to end with a default prompt and compare the result with the tool's own totals before trying crafted cases.
