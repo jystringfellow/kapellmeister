@@ -1176,6 +1176,9 @@ func finishRunDetail(w io.Writer, sum ensembleSummary, detail bool) error {
 	}
 	fmt.Fprint(w, sum.DiffStat)
 	printHeadMoved(w, sum)
+	if sum.Tune != nil {
+		printLeftOut(w, sum.Tune.LeftOut)
+	}
 	if sum.Outcome != loop.Approved {
 		return errNotApproved
 	}
