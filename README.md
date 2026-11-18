@@ -1292,6 +1292,13 @@ bound. A cache price is not needed when that model has no tokens of that kind. T
   including cache tokens without a matching cache price.
 - Unknown: `unknown` when nothing can be priced.
 
+A model with recorded tokens and no price table produces one warning on standard error, in plain
+and JSON output alike:
+`warning: no price for model NAME: its cost is unknown; add [report.prices."NAME"] to FILE`.
+Under `-parts`, a row whose models all lack a price keeps its tokens and shows `cost unknown`;
+rows for other chairs keep their own costs, and a row mixing priced and unpriced models stays a
+lower bound. Totals that include an unpriced model stay lower bounds.
+
 After the totals, `unpriced models: ...` names models with usage but no price, in sorted order,
 and points to the user config. Next to it, `unpriced cache tokens: alpha (cache_read, cache_write)`
 names models with input/output prices but missing prices for recorded cache tokens, lists the
@@ -1304,7 +1311,8 @@ exact decimal values until display, so totals are priced before rounding each ru
 With prices, JSON adds `cost_usd` (a number, omitted when unknown) and `cost_complete` (a boolean)
 on runs, `totals.usage`, entries in `totals.ensemble_usage` and `totals.repository_usage`, and
 `parts.rows` when requested. An incomplete numeric cost is a lower bound. `totals.unpriced_models`
-is a sorted array, omitted when empty. `totals.unpriced_cache_models` maps each affected model
+is a sorted array, omitted when empty; each `parts.rows` entry carries its own `unpriced_models`
+the same way. `totals.unpriced_cache_models` maps each affected model
 to its sorted missing cache keys, such as `{"alpha":["cache_read","cache_write"]}`, and is omitted
 when empty. With no prices configured, plain and JSON output are unchanged and none of these
 cost fields appear.
