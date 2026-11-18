@@ -210,18 +210,24 @@ type Restore struct {
 	Outcome   string   `json:"outcome"`
 }
 
+type VerifyRetry struct {
+	Round    int `json:"round"`
+	Attempts int `json:"attempts"`
+}
+
 type Result struct {
-	Restores []Restore `json:"restores,omitempty"`
-	failure  error
-	Usage    *Usage         `json:"usage,omitempty"`
-	Lessons  *LessonsReport `json:"lessons,omitempty"`
-	Proposed []Lesson       `json:"-"`
-	RunID    string         `json:"run_id"`
-	Outcome  string         `json:"outcome"`
-	Rounds   int            `json:"rounds"`
-	Reason   string         `json:"reason,omitempty"`
-	Worktree string         `json:"worktree"`
-	RunDir   string         `json:"run_dir"`
+	Restores      []Restore     `json:"restores,omitempty"`
+	VerifyRetried []VerifyRetry `json:"verify_retried,omitempty"`
+	failure       error
+	Usage         *Usage         `json:"usage,omitempty"`
+	Lessons       *LessonsReport `json:"lessons,omitempty"`
+	Proposed      []Lesson       `json:"-"`
+	RunID         string         `json:"run_id"`
+	Outcome       string         `json:"outcome"`
+	Rounds        int            `json:"rounds"`
+	Reason        string         `json:"reason,omitempty"`
+	Worktree      string         `json:"worktree"`
+	RunDir        string         `json:"run_dir"`
 }
 
 type ActiveStep struct {
@@ -237,6 +243,7 @@ type Engine struct {
 	snapshotObjects string
 	keepSnapshot    bool
 	restores        []Restore
+	verifyRetried   []VerifyRetry
 	Meter           UsageMeter
 	usage           Usage
 	gateRound       int
@@ -265,8 +272,8 @@ func RunDirRel(runID string) string {
 
 func (e *Engine) Run(ctx context.Context) (res Result, err error) {
 	defer e.cleanupSnapshot()
-	e.restores = nil
-	defer func() { res.Restores = e.restores }()
+	e.restores, e.verifyRetried = nil, nil
+	defer func() { res.Restores, res.VerifyRetried = e.restores, e.verifyRetried }()
 	e.mu.Lock()
 	e.usage = Usage{}
 	e.mu.Unlock()
@@ -1013,6 +1020,9 @@ func (e *Engine) runVerify(ctx context.Context, round int, path string) (VerifyR
 		return v, err
 	}
 	e.progress("  exit %d in %s%s", code, secs(rec.DurationMS), attemptsNote(v.Attempts))
+	if code == 0 && v.Attempts > 1 {
+		e.verifyRetried = append(e.verifyRetried, VerifyRetry{Round: round, Attempts: v.Attempts})
+	}
 	return v, os.WriteFile(filepath.Join(e.Config.Worktree, path), []byte(tail(v.Output, 400)), 0o644)
 }
 

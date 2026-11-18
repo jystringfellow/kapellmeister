@@ -1172,6 +1172,13 @@ func finishRun(w io.Writer, sum ensembleSummary) error {
 func finishRunDetail(w io.Writer, sum ensembleSummary, detail bool) error {
 	printOutcome(w, sum)
 	printRestores(w, sum.Restores)
+	for _, r := range sum.VerifyRetried {
+		step := "verify[baseline]"
+		if r.Round > 0 {
+			step = fmt.Sprintf("verify[%d]", r.Round)
+		}
+		fmt.Fprintf(w, "  retried   %s passed only on attempt %d: an earlier attempt failed, so a test may be flaky\n", step, r.Attempts)
+	}
 	if sum.Tune != nil {
 		printTune(w, sum, detail)
 		if sum.Outcome != loop.Approved {
