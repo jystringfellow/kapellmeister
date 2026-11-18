@@ -222,6 +222,8 @@ type Result struct {
 	Reason   string         `json:"reason,omitempty"`
 	Worktree string         `json:"worktree"`
 	RunDir   string         `json:"run_dir"`
+
+	MeasurementsNotRun []string `json:"measurements_not_run,omitempty"`
 }
 
 type ActiveStep struct {
@@ -359,6 +361,7 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 
 	var feedback []string
 	var feedbackGate, feedbackTest string
+	var measurements []string
 	for round := 1; round <= cfg.MaxRounds; round++ {
 		res.Rounds = round
 		summary := e.relf("implement-%d.md", round)
@@ -394,8 +397,9 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 		}
 		var files, failed, verdicts []string
 		for _, review := range reviews {
-			if _, err := os.Stat(filepath.Join(cfg.Worktree, review.Path)); err == nil {
+			if text, err := os.ReadFile(filepath.Join(cfg.Worktree, review.Path)); err == nil {
 				files = append(files, review.Path)
+				measurements = addMeasurementRequests(measurements, string(text))
 			}
 			if review.Err != nil {
 				failed = append(failed, fmt.Sprintf("%s (%s)", review.Name, review.Chair))
@@ -427,6 +431,12 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 		e.gateRound = round
 		if gateVerdict == "APPROVE" {
 			if cfg.Chairs.Tester == nil {
+				if len(measurements) > 0 {
+					res.MeasurementsNotRun = measurements
+					detail := "measurements not run: no tester is seated: " + strings.Join(measurements, "; ")
+					e.progress("  %s", detail)
+					e.record(Record{RunID: cfg.RunID, Round: round, Step: "measurements-not-run", Detail: detail})
+				}
 				res.Outcome = Approved
 				return res, nil
 			}
@@ -434,7 +444,7 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 				return e.fail(res, err), nil
 			}
 			testPath := e.relf("test-%d.md", round)
-			verdict, err := e.testRound(ctx, round, plan, summary, verify, verifyPath, testPath)
+			verdict, err := e.testRound(ctx, round, plan, summary, verify, verifyPath, testPath, measurements)
 			if err != nil {
 				var interrupted *testInterruptedError
 				if errors.As(err, &interrupted) {
@@ -503,11 +513,11 @@ func (e *Engine) testerTimeout() time.Duration {
 	return e.Config.StepTimeout
 }
 
-func (e *Engine) testRound(ctx context.Context, round int, plan, summary string, verify VerifyResult, verifyPath, path string) (string, error) {
+func (e *Engine) testRound(ctx context.Context, round int, plan, summary string, verify VerifyResult, verifyPath, path string, measurements []string) (string, error) {
 	defer e.reportLeftRunning(round)
 	errs, err := e.readOnlySteps(ctx, []Step{{
 		Name: "test", Round: round, Chair: *e.Config.Chairs.Tester,
-		Prompt:    testPrompt(e.Config.Task, plan, e.rel("test-plan.md"), summary, e.Config.VerifyCommand, verify, verifyPath, e.Config.ScratchDir, path, e.testerTimeout(), os.Getpid(), e.lessonsFor("test", *e.Config.Chairs.Tester), e.Config.CAOURL, e.Config.StateDir),
+		Prompt:    testPrompt(e.Config.Task, plan, e.rel("test-plan.md"), summary, e.Config.VerifyCommand, verify, verifyPath, e.Config.ScratchDir, path, e.testerTimeout(), os.Getpid(), e.lessonsFor("test", *e.Config.Chairs.Tester), e.Config.CAOURL, e.Config.StateDir, measurements),
 		ReplyPath: path,
 	}})
 	if err != nil {

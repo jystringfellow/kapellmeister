@@ -95,6 +95,7 @@ The plan is in %s and the implementer's summary is in %s.
 %s
 `+verifiedNote(command)+`Judge whether the change does what the task asks, follows the repository's rules, is correct, and is safe to merge. Look for bugs, missing tests, and scope creep.
 Write your review to %s: state plainly whether you approve the change as it stands, then list every required change with file and line.
+`+measurementRule+` is not a required change and is no reason for CHANGES. Write each such request on its own line under the heading `+"`"+measurementsHeading+"`"+`, followed by a blank line; km keeps them out of the implementer's required changes.
 Put APPROVE or CHANGES alone on the last line of the review file.
 Do not modify any file other than %s. When done, reply with one short sentence.
 `, plan, summary, verifyLine(command, v, verifyPath), out, out)
@@ -117,7 +118,7 @@ func gatePrompt(task, plan, summary string, reviews, failed []string, command st
 You decide whether the uncommitted changes in this worktree are ready to merge.
 Read the plan in %s, the implementer's summary in %s, and %s.
 %s%s
-`+verifiedNote(command)+`Check the diff yourself with `+"`git diff HEAD`"+`. Sort every point the reviews raised into **blocking** (the change must not merge until it is fixed) or **nit** (it can merge as is), each with a reason, and add any blocking point you find yourself. %s List the nits in your decision; they do not stop approval.
+`+verifiedNote(command)+`Check the diff yourself with `+"`git diff HEAD`"+`. Sort every point the reviews raised into **blocking** (the change must not merge until it is fixed) or **nit** (it can merge as is), each with a reason, and add any blocking point you find yourself. `+measurementRule+` is never blocking. %s List the nits in your decision; they do not stop approval.
 Write to %s: your decision first, then the blocking points and the nits, each with its reason.
 Put APPROVE or CHANGES alone on the last line of the decision file.
 Do not modify any file other than %s. When done, reply with one short sentence.
@@ -137,7 +138,7 @@ Write the test plan to %s and change no other file. When done, reply with one sh
 `, plan, limit, scratch, out)
 }
 
-func testPrompt(task, plan, testPlan, summary, command string, v VerifyResult, verifyPath, scratch, out string, timeout time.Duration, conductorPID int, lessons, caoURL, stateDir string) string {
+func testPrompt(task, plan, testPlan, summary, command string, v VerifyResult, verifyPath, scratch, out string, timeout time.Duration, conductorPID int, lessons, caoURL, stateDir string, measurements []string) string {
 	limit := ""
 	if timeout > 0 {
 		limit = fmt.Sprintf("The test step has a time limit of %s. Stop starting new scenarios when about %s remains (the last tenth of the limit), leaving time to clean up and write your verdict.\n", timeout, timeout/10)
@@ -146,7 +147,7 @@ func testPrompt(task, plan, testPlan, summary, command string, v VerifyResult, v
 Read the plan in %s, the test plan in %s and the implementation summary in %s.
 %s
 `+verifiedNote(command)+`Execute the test plan against the real environment, the way a user would. Run the highest-risk scenarios first.
-%sEverything you create stays under %s.
+%s%sEverything you create stays under %s.
 Never run a git command that writes (init, add, commit, checkout, reset, stash and so on) anywhere except a repository you created inside %s. Run each such command as `+"`git -C <that repository> ...`"+`.
 Append the PID of every long-running process you start to %s/pids, one per line, and stop them all before finishing.
 Before finishing, clean up anything you started. Touch nothing you did not create.
@@ -154,7 +155,7 @@ Do not change any tracked or untracked non-ignored file in the worktree.
 Append each scenario's result to %s as soon as that scenario finishes: what you ran, pass or fail, and evidence. Do not wait until the end to write the report.
 Write the verdict last: APPROVE if everything passed, or CHANGES if there were failures, alone on the last line of the report.
 When done, reply with one short sentence.
-`, plan, testPlan, summary, verifyLine(command, v, verifyPath), limit, scratch, scratch, scratch, out)
+`, plan, testPlan, summary, verifyLine(command, v, verifyPath), limit, measurementsBlock(measurements), scratch, scratch, scratch, out)
 }
 
 func classifyPrompt(subject, path, out, lessons string) string {

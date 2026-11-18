@@ -719,6 +719,15 @@ the change and leave them free to run tests. The implementer is told km will run
 only when a verify command is configured. The gate file lists nits without sending them back for
 another round.
 
+A request only for more measurements, benchmarks or repeated runs, naming no code or test change,
+is not a required change: reviewers are told it is no reason for `CHANGES`, and the gate that it
+never blocks. A reviewer writes each such request on its own line under the heading
+`Measurements for the tester:`, ending the list with a blank line. km reads the lines under that
+heading from every review of the run, drops repeats, and passes only those lines to the test step;
+the tester sees nothing else of a review. Without a tester, an approved run prints
+`measurements not run: no tester is seated:` with the requests, records the same line as a
+`measurements-not-run` step, and lists them in the result's `measurements_not_run`.
+
 Each successful review is classified as soon as it lands, while other reviewers may still be
 running. km waits for every review and classification before deciding whether to run the gate.
 Review and gate prompts ask for `APPROVE` or `CHANGES` alone on the reply file's last line.
@@ -743,6 +752,8 @@ or `CHANGES` last line is taken as is; otherwise the classifier reads the report
 APPROVE yields an `approved` outcome. Any other verdict sends the test report back as the leading
 feedback, with instructions to add a regression test reproducing each failure and fix the code, following
 the repository's development rules. Later rounds reuse the same test plan.
+The test prompt lists the measurements reviewers asked for, to run after the plan's scenarios as
+time allows; one that could not be run is reported as not run and is not by itself a failure.
 A test-step timeout or a SIGINT/SIGTERM during the test step after gate approval ends `untested`:
 the change was approved but testing did not finish. A signal names the signal and says the tester
 did not finish and the gate's approval stands unverified, in both the output and the run record. The outcome names the partial report if it exists and preserves the worktree and its
