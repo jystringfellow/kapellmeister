@@ -882,6 +882,7 @@ check  = "scripts/check {args}"     # implementers use this for targeted, failur
 verify_required = ["unit", "integration"]  # suites verify must run, each a run step in scripts/verify; default none
 verify_timeout = "20m"              # limit for each verify run in km prove and km tune verify; saved by tune when it raises it
 verify_time_bounded = true          # allow tune to cut what does not fit two minutes; default false
+verify_known_failures = ["legacy export"]  # labels of known_failure steps: verify passes while they fail, and every summary names them
 
 [tiers.claude_code]                 # override any provider's tier model or effort
 large = { model = "claude-fable-5-1" }
@@ -1004,8 +1005,8 @@ as [test] verify_timeout`, and the JSON summary carries `required`, `time_bounde
 the timeout: a timeout fails the proof. `km tune verify -guide` with `-require` or `-time-bounded`
 prints the procedure for those requirements.
 
-The three `[test] verify_*` keys are new. A km built before them rejects a config that contains
-any of them as an unknown key, for every command including `km run`, so update km on every
+The `[test] verify_*` keys, `verify_known_failures` included, are new. A km built before them
+rejects a config that contains any of them as an unknown key, for every command including `km run`, so update km on every
 machine and CI job that reads the repository's config before committing them.
 
 The writer keeps the bounded-output wrapper and writes at least two break patches outside the
@@ -1095,6 +1096,24 @@ which step failed, the wrapper writes the failing label to the steps file's name
 added; a wrapper without that line is told so. Prove also times each step from the wrapper's
 record and reports the durations.
 
+**Known failures.** A test that already fails on the default branch is neither dropped nor
+allowed to fail verify. Give it its own step with the wrapper's second function,
+`known_failure 'legacy export' 'make test-legacy-export'`, and list the label in
+`[test] verify_known_failures = ["legacy export"]`. The step runs the command, never stops
+verify, and records whether it failed or passed in the steps file's name with `.known` added.
+`km prove`, the tune summary and the final summary of `km run` name the baseline every time:
+`known failures (verify passes while these fail): legacy export`, and `known_failures` in the
+JSON. When such a step passes, they say `known failure "legacy export" now passes: remove it
+from [test] verify_known_failures and make it a run step` (`known_failures_passing` in the
+JSON); verify still passes, so the entry is removed on purpose and not forgotten. In a proof a
+known failure counts as passing only when it passed in both clean runs.
+
+km checks the list against what ran. A listed label with no `known_failure` step in a clean run,
+or a `known_failure` step whose label is not listed, is refused as `baseline_mismatch`. A label
+cannot be in both `verify_known_failures` and `verify_required`. A break patch that only a
+known-failure step would catch survives, because that step never fails verify. `km run` reads
+the outcomes from the wrapper but does not refuse a mismatch; prove does.
+
 Each break run is given the verify timeout or twice the slowest clean run, whichever is longer,
 so a verify that passes near its limit does not time out on its breaks. The output says when
 that raised it, and the JSON carries `timeout_ms` and `break_timeout_ms`.
@@ -1110,6 +1129,7 @@ that raised it, and the JSON carries `timeout_ms` and `break_timeout_ms`.
 | 13 | A break patch left verify passing |
 | 14 | A required suite's step did not run in a clean run |
 | 15 | A required suite has no break patch that makes verify fail in its step |
+| 16 | `verify_known_failures` does not match the `known_failure` steps that ran |
 
 `-timeout D` is a positive limit per verify run; it defaults to `[test] verify_timeout`, then `10m`. Output names each clean run and
 patch, reports exit codes and durations, and bounds verify output to 40 lines of 300 characters.

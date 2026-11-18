@@ -441,6 +441,10 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 	if err != nil {
 		return err
 	}
+	tested, err := loop.ResolveTest(wt)
+	if err != nil {
+		return err
+	}
 	policy := s.Policy
 	runID := newRunID()
 	if *detachedLaunch != "" {
@@ -524,7 +528,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		Config: loop.Config{
 			ScratchDir: scratch, CAOURL: s.CAOURL, StateDir: loop.StateDir(), RunID: runID, Task: text, Worktree: wt, Chairs: seated, GateWhen: s.GateWhen,
 			Lessons: s.Lessons, LessonsTimeout: s.LessonsTimeout,
-			LearnedBudget: s.LearnedBudget, BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, CheckCommand: checkCmd, Policy: &policy,
+			LearnedBudget: s.LearnedBudget, BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, KnownFailures: tested.VerifyKnownFailures, CheckCommand: checkCmd, Policy: &policy,
 		},
 		Watcher: loop.CAOWatcher{Client: client, Session: podium.SessionName},
 		Stepper: loop.CAOStepper{Client: client, Session: podium.SessionName}, Verify: loop.Retrying(loop.CommandVerifier(verifyCmd), s.VerifyRetries), Progress: stdout,
@@ -1179,6 +1183,7 @@ func finishRunDetail(w io.Writer, sum ensembleSummary, detail bool) error {
 		}
 		fmt.Fprintf(w, "  retried   %s passed only on attempt %d: an earlier attempt failed, so a test may be flaky\n", step, r.Attempts)
 	}
+	printKnownFailures(w, "  ", sum.KnownFailures, sum.KnownFailuresPassing)
 	if sum.Tune != nil {
 		printTune(w, sum, detail)
 		if sum.Outcome != loop.Approved {

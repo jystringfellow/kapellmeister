@@ -705,3 +705,15 @@ func TestAResultNamesEachVerifyThatPassedOnlyAfterARetryWithItsAttemptCount(t *t
 		t.Fatalf("got %+v", res)
 	}
 }
+
+func TestAResultNamesTheListedKnownFailuresAndThoseTheLastPassingVerifyRecordedAsPassing(t *testing.T) {
+	verify := func(context.Context, string) (VerifyResult, error) {
+		return VerifyResult{Output: "ok\n", Known: []KnownFailure{{Label: "legacy"}, {Label: "fixed", Passed: true}}}, nil
+	}
+	eng, _, _ := newEngine(t, verify)
+	eng.Config.KnownFailures = []string{"legacy", "fixed"}
+	res := run(t, eng)
+	if res.Outcome != Approved || len(res.KnownFailures) != 1 || res.KnownFailures[0] != "legacy" || len(res.KnownFailuresPassing) != 1 || res.KnownFailuresPassing[0] != "fixed" {
+		t.Fatalf("got %+v", res)
+	}
+}

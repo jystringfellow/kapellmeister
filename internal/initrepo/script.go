@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/jystringfellow/kapellmeister/internal/loop"
 )
 
 const StubMarker = ": km-unfinished-verify"
@@ -36,9 +38,21 @@ run() {
  fi
 }
 
+known_failure() {
+ sh -c "$2" >"$log" 2>&1
+ status=$?
+ outcome=failed
+ if [ "$status" -eq 0 ]; then outcome=passed; fi
+ if [ -n "${KAPELLMEISTER_VERIFY_STEPS:-}" ]; then
+  printf '%s\n' "$1" >>"$KAPELLMEISTER_VERIFY_STEPS"
+  printf '%s %s\n' "$outcome" "$1" >>"$KAPELLMEISTER_VERIFY_STEPS.known"
+ fi
+ echo "known failure $outcome: $1"
+}
+
 `
 
-const StepsEnv = "KAPELLMEISTER_VERIFY_STEPS"
+const StepsEnv = loop.VerifyStepsEnv
 
 func RenderStub() string {
 	return scriptPrelude + StubMarker + `
