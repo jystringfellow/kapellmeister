@@ -113,7 +113,7 @@ func TestATimeBoundedProcedureCarriesTheTimeTargetAndAllowsCuttingWhatDoesNotFit
 func TestRequiredSuitesAreRunStepsThatAreNeverLeftOutOrNarrowedEvenWhenVerifyIsTimeBounded(t *testing.T) {
 	required := Require([]string{"unit"}, []string{"integration", "unit"}, true)
 	text := required.Procedure()
-	for _, want := range []string{"about two minutes", "Required suites: unit, integration.", "its own `run` step labelled exactly with its name", "list them in [test] verify_required", "Never leave a required suite out or narrow it, for time or any other reason", "km raises the verify timeout", "say so in your reply instead of narrowing it", "\n3. Write at least two"} {
+	for _, want := range []string{"about two minutes", "Required suites: unit, integration.", "its own `run` step labelled exactly with its name", "list them in [test] verify_required", "Never leave a required suite out or narrow it, for time or any other reason", "km raises the verify timeout", "say so in your reply instead of narrowing it", "Every required suite needs a break patch that makes verify fail in that suite's step", "one per required suite that its step is the first to catch", "\n3. Write at least two"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("missing %q", want)
 		}

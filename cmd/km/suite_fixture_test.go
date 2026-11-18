@@ -74,7 +74,12 @@ func suiteReply(t *testing.T, patchDir, command string) string {
 	t.Helper()
 	proofWrite(t, patchDir, "source.patch", suiteSourceBreak, 0644)
 	proofWrite(t, patchDir, "test.patch", suiteTestBreak, 0644)
-	return fmt.Sprintf(`{"command":%q,"left_out":[],"patches":[{"file":%q,"kind":"source"},{"file":%q,"kind":"test"}]}`, command, filepath.Join(patchDir, "source.patch"), filepath.Join(patchDir, "test.patch"))
+	patches := fmt.Sprintf(`{"file":%q,"kind":"source"},{"file":%q,"kind":"test"}`, filepath.Join(patchDir, "source.patch"), filepath.Join(patchDir, "test.patch"))
+	if strings.Contains(command, "suites/slow.sh") {
+		proofWrite(t, patchDir, "slow.patch", suiteSlowOnlyBreak, 0644)
+		patches += fmt.Sprintf(`,{"file":%q,"kind":"source"}`, filepath.Join(patchDir, "slow.patch"))
+	}
+	return fmt.Sprintf(`{"command":%q,"left_out":[],"patches":[%s]}`, command, patches)
 }
 
 func suiteWriter(config string, suites ...string) func(*testing.T, cao.StepRequest, string) string {

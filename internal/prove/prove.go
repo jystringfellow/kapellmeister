@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,12 +24,25 @@ type Options struct {
 const DefaultTimeout = 10 * time.Minute
 
 type RunResult struct {
-	Name       string   `json:"name"`
-	Status     string   `json:"status"`
-	ExitCode   int      `json:"exit_code"`
-	DurationMS int64    `json:"duration_ms"`
-	Output     string   `json:"output"`
-	Steps      []string `json:"steps,omitempty"`
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	ExitCode   int    `json:"exit_code"`
+	DurationMS int64  `json:"duration_ms"`
+	Output     string `json:"output"`
+	Steps      []Step `json:"steps,omitempty"`
+	FailedStep string `json:"failed_step,omitempty"`
+}
+
+type Step struct {
+	Label      string `json:"label"`
+	DurationMS int64  `json:"duration_ms"`
+}
+
+type FlakyStep struct {
+	Step     string `json:"step"`
+	FailedIn string `json:"failed_in"`
+	PassedIn string `json:"passed_in"`
+	Output   string `json:"output"`
 }
 
 type BreakResult struct {
@@ -38,6 +52,7 @@ type BreakResult struct {
 	DurationMS *int64 `json:"duration_ms,omitempty"`
 	Output     string `json:"output"`
 	Reason     string `json:"reason"`
+	FailedStep string `json:"failed_step,omitempty"`
 }
 
 type Result struct {
@@ -48,6 +63,11 @@ type Result struct {
 	Reason     string        `json:"reason"`
 	Runs       []RunResult   `json:"runs"`
 	Breaks     []BreakResult `json:"breaks"`
+
+	Flaky          []FlakyStep `json:"flaky,omitempty"`
+	Unbroken       []string    `json:"unbroken,omitempty"`
+	TimeoutMS      int64       `json:"timeout_ms,omitempty"`
+	BreakTimeoutMS int64       `json:"break_timeout_ms,omitempty"`
 }
 
 func Prove(ctx context.Context, options Options) (result Result) {
@@ -111,6 +131,7 @@ func Prove(ctx context.Context, options Options) (result Result) {
 	if timeout == 0 {
 		timeout = test.Timeout(DefaultTimeout)
 	}
+	result.TimeoutMS = timeout.Milliseconds()
 	patches := make([][]byte, len(options.Breaks))
 	for i, patch := range options.Breaks {
 		data, err := os.ReadFile(patch)
@@ -146,19 +167,19 @@ func Prove(ctx context.Context, options Options) (result Result) {
 		return refuse("scratch copies must live outside the checkout")
 	}
 	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'" }
-	runVerify := func(dir string) (initrepo.VerifyResult, []string, error) {
+	runVerify := func(dir string, limit time.Duration) (initrepo.VerifyResult, []Step, string, error) {
 		tmp := filepath.Join(scratch, filepath.Base(dir)+"-tmp")
 		if err := os.Mkdir(tmp, 0700); err != nil {
-			return initrepo.VerifyResult{}, nil, err
+			return initrepo.VerifyResult{}, nil, "", err
 		}
 		record := filepath.Join(scratch, filepath.Base(dir)+"-steps")
 		prefix := "unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_OBJECT_DIRECTORY\nTMPDIR=" + quote(tmp) + "\n" + initrepo.StepsEnv + "=" + quote(record) + "\nexport TMPDIR " + initrepo.StepsEnv + "\n"
-		run := initrepo.Run(ctx, dir, prefix+command, timeout)
-		var steps []string
-		if data, err := os.ReadFile(record); err == nil {
-			steps = strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
-		}
-		return run, steps, nil
+		stop, timed := make(chan struct{}), make(chan []Step)
+		go func() { timed <- timeSteps(record, stop) }()
+		run := initrepo.Run(ctx, dir, prefix+command, limit)
+		close(stop)
+		failed, _ := os.ReadFile(record + ".failed")
+		return run, <-timed, strings.TrimSuffix(string(failed), "\n"), nil
 	}
 	breakDirs := make([]string, len(options.Breaks))
 	for i, patch := range options.Breaks {
@@ -200,11 +221,11 @@ func Prove(ctx context.Context, options Options) (result Result) {
 		if err != nil {
 			return fail(err)
 		}
-		run, steps, err := runVerify(dir)
+		run, steps, failedStep, err := runVerify(dir, timeout)
 		if err != nil {
 			return fail(err)
 		}
-		result.Runs = append(result.Runs, RunResult{Name: name, Status: run.Status, ExitCode: run.ExitCode, DurationMS: run.DurationMS, Output: run.Output, Steps: steps})
+		result.Runs = append(result.Runs, RunResult{Name: name, Status: run.Status, ExitCode: run.ExitCode, DurationMS: run.DurationMS, Output: run.Output, Steps: steps, FailedStep: failedStep})
 		if ctx.Err() != nil {
 			return finish("interrupted", 1, "interrupted")
 		}
@@ -216,14 +237,29 @@ func Prove(ctx context.Context, options Options) (result Result) {
 		}
 	}
 	if failures == 1 {
-		return finish("flaky", 12, "verify is flaky: only one clean run passed")
+		failed, passed := result.Runs[0], result.Runs[1]
+		if failed.ExitCode == 0 {
+			failed, passed = passed, failed
+		}
+		reason := "verify is flaky, not a failed proof: only one clean run passed"
+		if failed.FailedStep != "" {
+			result.Flaky = []FlakyStep{{Step: failed.FailedStep, FailedIn: failed.Name, PassedIn: passed.Name, Output: failed.Output}}
+			reason = fmt.Sprintf("verify is flaky, not a failed proof: step %q failed in %s and passed in %s", failed.FailedStep, failed.Name, passed.Name)
+		}
+		return finish("flaky", 12, reason)
 	}
 	if failures == 2 {
-		return finish("failed", 12, "verify failed on both clean copies")
+		reason := "verify failed on both clean copies"
+		if first, second := result.Runs[0].FailedStep, result.Runs[1].FailedStep; first != "" && first == second {
+			reason += fmt.Sprintf(" at step %q", first)
+		} else if first != "" && second != "" {
+			reason += fmt.Sprintf(" at steps %q and %q", first, second)
+		}
+		return finish("failed", 12, reason)
 	}
 	for _, suite := range test.VerifyRequired {
 		for _, run := range result.Runs {
-			if slices.Contains(run.Steps, suite) {
+			if slices.ContainsFunc(run.Steps, func(step Step) bool { return step.Label == suite }) {
 				continue
 			}
 			reason := fmt.Sprintf("required suite %q did not run in %s; give it its own step in scripts/verify: run '%s' 'COMMAND'", suite, run.Name, suite)
@@ -233,15 +269,20 @@ func Prove(ctx context.Context, options Options) (result Result) {
 			return finish("suite_not_run", 14, reason)
 		}
 	}
+	breakTimeout := timeout
+	if len(options.Breaks) > 0 {
+		breakTimeout = max(timeout, 2*time.Duration(max(result.Runs[0].DurationMS, result.Runs[1].DurationMS))*time.Millisecond)
+		result.BreakTimeoutMS = breakTimeout.Milliseconds()
+	}
 	survived := []string{}
 	for i, patch := range options.Breaks {
 		dir := breakDirs[i]
-		run, _, err := runVerify(dir)
+		run, _, failedStep, err := runVerify(dir, breakTimeout)
 		if err != nil {
 			return fail(err)
 		}
 		b := &result.Breaks[i]
-		b.Status, b.ExitCode, b.DurationMS, b.Output = "breaks", &run.ExitCode, &run.DurationMS, run.Output
+		b.Status, b.ExitCode, b.DurationMS, b.Output, b.FailedStep = "breaks", &run.ExitCode, &run.DurationMS, run.Output, failedStep
 		if ctx.Err() != nil {
 			b.Status = "interrupted"
 			return finish("interrupted", 1, "interrupted")
@@ -262,7 +303,51 @@ func Prove(ctx context.Context, options Options) (result Result) {
 	if len(options.Breaks) == 0 {
 		return finish("not_proved", 11, "passes, not proved; a break patch is needed: -break PATCH")
 	}
+	var unbroken []string
+	for _, suite := range test.VerifyRequired {
+		if !slices.ContainsFunc(result.Breaks, func(b BreakResult) bool { return b.FailedStep == suite }) {
+			result.Unbroken = append(result.Unbroken, suite)
+			unbroken = append(unbroken, strconv.Quote(suite))
+		}
+	}
+	if len(unbroken) > 0 {
+		reason := fmt.Sprintf("required suites with no break patch that fails in their step: %s; each needs a break patch that its step is the first to catch", strings.Join(unbroken, ", "))
+		if !slices.ContainsFunc(result.Breaks, func(b BreakResult) bool { return b.FailedStep != "" }) {
+			reason += fmt.Sprintf("; verify did not record which step failed: its run wrapper must write the failing label to the file named by $%s with .failed added, as the wrapper km init writes does", initrepo.StepsEnv)
+		}
+		return finish("suite_unbroken", 15, reason)
+	}
 	return finish("proved", 0, "passed twice and every break patch made verify fail")
+}
+
+func timeSteps(record string, stop <-chan struct{}) []Step {
+	start := time.Now()
+	var steps []Step
+	var last time.Duration
+	read := func() {
+		data, err := os.ReadFile(record)
+		if err != nil {
+			return
+		}
+		labels := strings.Split(string(data), "\n")
+		labels = labels[:len(labels)-1]
+		for _, label := range labels[min(len(steps), len(labels)):] {
+			now := time.Since(start)
+			steps = append(steps, Step{Label: label, DurationMS: (now - last).Milliseconds()})
+			last = now
+		}
+	}
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-tick.C:
+			read()
+		case <-stop:
+			read()
+			return steps
+		}
+	}
 }
 
 func removeScratch(root string) error {

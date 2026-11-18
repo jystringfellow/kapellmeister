@@ -264,6 +264,7 @@ func TestABreakOnlyTheSlowSuiteCatchesSurvivesWhenTheSlowStepRunsSomethingElse(t
 	if err := os.WriteFile(patch, []byte(suiteSlowOnlyBreak), 0644); err != nil {
 		t.Fatal(err)
 	}
+	fastOnly := suitePatch(t, "fast-only.patch", suiteTestBreak)
 	for steps, exit := range map[string]int{
 		"run 'fast' 'sh suites/fast.sh'\nrun 'slow' 'true'\n":                         13,
 		"run 'fast' 'sh suites/fast.sh'\nrun 'slow' 'sh suites/slow.sh || true'\n":    13,
@@ -273,7 +274,7 @@ func TestABreakOnlyTheSlowSuiteCatchesSurvivesWhenTheSlowStepRunsSomethingElse(t
 		"run 'slow' 'sh suites/slow.sh'\nrun 'fast' 'sh suites/fast.sh' || exit 99\n": 0,
 	} {
 		proofWrite(t, root, initrepo.ScriptFile, suiteSteps(steps), 0755)
-		if report := proofJSON(t, root, "-break", patch); report.ExitStatus != exit {
+		if report := proofJSON(t, root, "-break", patch, "-break", fastOnly); report.ExitStatus != exit {
 			t.Fatal(steps, report)
 		}
 	}

@@ -1062,7 +1062,10 @@ Prove runs verify twice, each time in a fresh clean scratch copy of the checkout
 the current `.kapellmeister/config.toml` and `scripts/verify`. Those two files may be uncommitted;
 all other uncommitted changes, untracked files and ignored files are absent. The directory must
 be the checkout's top level and HEAD must exist. Both runs must pass; one pass and one failure
-is flaky. Each run's duration is reported. The checkout is left untouched, including when verify
+is flaky, which is reported apart from a failed proof and names the step that failed on one copy
+and passed on the other (`flaky step: integration (failed in clean run 1, passed in clean run 2)`,
+and `flaky` in the JSON with that run's output). A step that fails on both copies is a failed
+proof, named the same way. Each run's duration is reported. The checkout is left untouched, including when verify
 writes files. Copies and their temporary logs live outside the checkout and are removed on
 completion, failure, timeout or a handled interrupt.
 
@@ -1076,8 +1079,18 @@ With `[test] verify_required` set, each clean run must have run a step labelled 
 required suite. Prove gives verify a file in `KAPELLMEISTER_VERIFY_STEPS`, and the `run` wrapper
 km init writes appends each label it runs to it. A required suite missing from either clean run
 is reported as `suite_not_run`, naming the suite and the run; a wrapper written before this
-records nothing and is told so. Running the step does not show the step tests anything: a break
-patch that only that suite catches does.
+records nothing and is told so. Running the step does not show the step tests anything, so with
+break patches every required suite needs at least one patch that makes verify fail in its step;
+otherwise prove reports `suite_unbroken` and names the suites (`unbroken` in the JSON). A patch
+that an earlier step also catches does not count, because verify stops there. A required step
+that runs but tests nothing, such as `run 'slow' 'true'`, therefore cannot be proved. To know
+which step failed, the wrapper writes the failing label to the steps file's name with `.failed`
+added; a wrapper without that line is told so. Prove also times each step from the wrapper's
+record and reports the durations.
+
+Each break run is given the verify timeout or twice the slowest clean run, whichever is longer,
+so a verify that passes near its limit does not time out on its breaks. The output says when
+that raised it, and the JSON carries `timeout_ms` and `break_timeout_ms`.
 
 | Exit status | Meaning |
 |---|---|
@@ -1089,11 +1102,13 @@ patch that only that suite catches does.
 | 12 | Verify failed or was flaky on clean copies |
 | 13 | A break patch left verify passing |
 | 14 | A required suite's step did not run in a clean run |
+| 15 | A required suite has no break patch that makes verify fail in its step |
 
 `-timeout D` is a positive limit per verify run; it defaults to `[test] verify_timeout`, then `10m`. Output names each clean run and
 patch, reports exit codes and durations, and bounds verify output to 40 lines of 300 characters.
 `-json` carries the same facts in `worktree`, `command`, `status`, `exit_status`, `reason`, `runs`
-and `breaks`, including failures and skipped patches. Prove needs Git and the verify command's
+and `breaks`, including failures and skipped patches, with each run's `steps` (label and
+`duration_ms`) and the `failed_step` of a failed run or break. Prove needs Git and the verify command's
 tools; it starts no agents or CAO sessions and makes no network requests of its own.
 
 ### Tiers

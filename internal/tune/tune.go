@@ -47,7 +47,7 @@ func (r Requirements) Procedure() string {
 		text = strings.Replace(strings.Replace(text, mirrorsCI, timeTarget, 1), noTimeReason, timeReason, 1)
 	}
 	if len(r.Suites) > 0 {
-		text = strings.Replace(text, "\n3. ", " Required suites: "+strings.Join(r.Suites, ", ")+". Give each its own `run` step labelled exactly with its name and list them in [test] verify_required. Never leave a required suite out or narrow it, for time or any other reason: km raises the verify timeout for a slow one, and when one cannot pass on a clean copy, say so in your reply instead of narrowing it.\n3. ", 1)
+		text = strings.Replace(text, "\n3. ", " Required suites: "+strings.Join(r.Suites, ", ")+". Give each its own `run` step labelled exactly with its name and list them in [test] verify_required. Never leave a required suite out or narrow it, for time or any other reason: km raises the verify timeout for a slow one, and when one cannot pass on a clean copy, say so in your reply instead of narrowing it. Every required suite needs a break patch that makes verify fail in that suite's step, so write one per required suite that its step is the first to catch.\n3. ", 1)
 	}
 	return text
 }
