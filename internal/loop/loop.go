@@ -242,6 +242,8 @@ type Engine struct {
 	Meter           UsageMeter
 	usage           Usage
 	gateRound       int
+	measurements    []string
+	measured        int
 	Watcher         Watcher
 	watch           watchState
 	Config          Config
@@ -283,7 +285,9 @@ func (e *Engine) Run(ctx context.Context) (res Result, err error) {
 	stopWatcher := e.startWatcher(ctx)
 	defer stopWatcher()
 	e.gateRound = 0
+	e.measurements, e.measured = nil, 0
 	res, err = e.play(ctx)
+	e.reportUnrunMeasurements(&res)
 	if res.Outcome == Failed {
 		res.Reason = cancellationReason(ctx, res.failure)
 	}
@@ -361,7 +365,6 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 
 	var feedback []string
 	var feedbackGate, feedbackTest string
-	var measurements []string
 	for round := 1; round <= cfg.MaxRounds; round++ {
 		res.Rounds = round
 		summary := e.relf("implement-%d.md", round)
@@ -395,18 +398,18 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 		if err != nil {
 			return e.fail(res, err), nil
 		}
-		var files, failed, verdicts []string
+		var files, handed, failed, verdicts []string
 		for _, review := range reviews {
-			if text, err := os.ReadFile(filepath.Join(cfg.Worktree, review.Path)); err == nil {
+			if required, ok := e.readReview(round, review.Path); ok {
 				files = append(files, review.Path)
-				measurements = addMeasurementRequests(measurements, string(text))
+				handed = append(handed, required)
 			}
 			if review.Err != nil {
 				failed = append(failed, fmt.Sprintf("%s (%s)", review.Name, review.Chair))
 			}
 			verdicts = append(verdicts, review.Verdict)
 		}
-		feedback = append(append([]string{}, files...), verifyPath)
+		feedback = append(handed, verifyPath)
 		feedbackGate, feedbackTest = "", ""
 		if !gateRuns(cfg.GateWhen, verify.ExitCode == 0, verdicts) {
 			misses++
@@ -431,12 +434,6 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 		e.gateRound = round
 		if gateVerdict == "APPROVE" {
 			if cfg.Chairs.Tester == nil {
-				if len(measurements) > 0 {
-					res.MeasurementsNotRun = measurements
-					detail := "measurements not run: no tester is seated: " + strings.Join(measurements, "; ")
-					e.progress("  %s", detail)
-					e.record(Record{RunID: cfg.RunID, Round: round, Step: "measurements-not-run", Detail: detail})
-				}
 				res.Outcome = Approved
 				return res, nil
 			}
@@ -444,7 +441,7 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 				return e.fail(res, err), nil
 			}
 			testPath := e.relf("test-%d.md", round)
-			verdict, err := e.testRound(ctx, round, plan, summary, verify, verifyPath, testPath, measurements)
+			verdict, err := e.testRound(ctx, round, plan, summary, verify, verifyPath, testPath, e.measurements)
 			if err != nil {
 				var interrupted *testInterruptedError
 				if errors.As(err, &interrupted) {
@@ -468,6 +465,7 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 				}
 				return e.fail(res, err), nil
 			}
+			e.measured = len(e.measurements)
 			if verdict == "APPROVE" {
 				res.Outcome = Approved
 				return res, nil

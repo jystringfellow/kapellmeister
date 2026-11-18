@@ -722,11 +722,22 @@ another round.
 A request only for more measurements, benchmarks or repeated runs, naming no code or test change,
 is not a required change: reviewers are told it is no reason for `CHANGES`, and the gate that it
 never blocks. A reviewer writes each such request on its own line under the heading
-`Measurements for the tester:`, ending the list with a blank line. km reads the lines under that
-heading from every review of the run, drops repeats, and passes only those lines to the test step;
-the tester sees nothing else of a review. Without a tester, an approved run prints
-`measurements not run: no tester is seated:` with the requests, records the same line as a
-`measurements-not-run` step, and lists them in the result's `measurements_not_run`.
+`Measurements for the tester:`, ending the list with a blank line. km also accepts the heading
+without its colon, a blank line between the heading and the list, and a request on the heading's
+own line. It reads the lines under that heading from every review of the run, drops repeats, and
+passes only those lines to the test step; the tester sees nothing else of a review. A heading with
+no requests under it is printed and recorded as a `measurements-empty` step naming the review
+file; `none` under the heading is not reported.
+
+The implementer is not handed these requests. When a review has the section, km writes a copy
+without it beside the review (`required-N.md` for `review-N.md`) and names the copy in the next
+implement prompt; the review file stays whole, and the gate reads the whole review.
+
+Requests that no finished test step was given are reported whatever the outcome: without a tester
+km prints `measurements not run: no tester is seated:` with the requests, and with one, when the
+run ends first, `measurements not run: the run ended before a test step ran them:`. km records
+the same line as a `measurements-not-run` step, lists the requests in the result's
+`measurements_not_run`, and prints them under the outcome line of the final summary.
 
 Each successful review is classified as soon as it lands, while other reviewers may still be
 running. km waits for every review and classification before deciding whether to run the gate.
