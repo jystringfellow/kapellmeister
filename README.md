@@ -782,7 +782,7 @@ km creates the scratch directory and, in `km run` and `km play`, writes nothing 
 test step that ends in `APPROVE` and its left-running report, km removes everything in scratch
 except `pids`. After a test step that ends in `CHANGES`, times out or fails, scratch stays as it
 is, because the implementer is then asked to reproduce the failures from it. When a run ends
-approved, km removes the directory. When it ends any other way and scratch holds anything, km
+approved, km removes the directory. When it ends any other way and scratch holds anything or cannot be read, km
 keeps it and says where: `km: scratch was kept at <state dir>/scratch/<run id>`; remove it by
 hand when it is no longer needed. `km tune verify` treats its scratch the same way; its break
 patches are also in the run record. Read-only directories, such as a copied module cache, are

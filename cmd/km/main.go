@@ -1244,8 +1244,10 @@ func settleScratch(stderr io.Writer, stateDir, runID string, approved bool) {
 		fmt.Fprintln(stderr, "km: removing scratch:", err)
 		return
 	}
-	if entries, err := os.ReadDir(scratch); !approved && err == nil && len(entries) > 0 {
-		fmt.Fprintf(stderr, "km: scratch was kept at %s\n", scratch)
+	if !approved {
+		if err := os.Remove(scratch); err != nil && !errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(stderr, "km: scratch was kept at %s\n", scratch)
+		}
 		return
 	}
 	if err := loop.RemoveScratch(stateDir, runID); err != nil {

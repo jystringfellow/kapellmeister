@@ -160,6 +160,30 @@ func TestARunIDThatIsNotASinglePathElementIsRefusedAndNothingOutsideItsScratchIs
 	}
 }
 
+func TestAnUnreadableScratchIsKeptAndNamedWhenTheRunWasNotApproved(t *testing.T) {
+	state := t.TempDir()
+	scratch, err := prepareScratch(state, "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept := filepath.Join(scratch, "evidence.txt")
+	if err := os.WriteFile(kept, []byte("kept"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(scratch, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(scratch, 0o700) })
+	var said bytes.Buffer
+	settleScratch(&said, state, "run-1", false)
+	if err := os.Chmod(scratch, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(kept); err != nil || said.String() != "km: scratch was kept at "+scratch+"\n" {
+		t.Fatal(err, said.String())
+	}
+}
+
 func TestTuneRemovesItsScratchDirectoryAndKeepsTheBreakPatchesInTheRunRecord(t *testing.T) {
 	root := tuneFixture(t)
 	f := &tuneCAO{}
