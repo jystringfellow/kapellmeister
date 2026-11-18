@@ -76,6 +76,8 @@ type tuneCAO struct {
 	hold        <-chan struct{}
 	afterStep   func(string)
 	afterSeat   func()
+	writer      func(t *testing.T, req cao.StepRequest, patchDir string) string
+	prompts     []string
 }
 
 func (f *tuneCAO) serve(t *testing.T) *httptest.Server {
@@ -124,6 +126,7 @@ func (f *tuneCAO) serve(t *testing.T) *httptest.Server {
 				w.WriteHeader(500)
 				return
 			}
+			f.prompts = append(f.prompts, req.Prompt)
 			if f.hold != nil {
 				<-f.hold
 			}
@@ -159,6 +162,11 @@ func (f *tuneCAO) serve(t *testing.T) *httptest.Server {
 				patchDir, _, _ := strings.Cut(rest, "\n")
 				if err := os.MkdirAll(patchDir, 0755); err != nil {
 					t.Error(err)
+				}
+				if f.writer != nil {
+					proofWrite(t, req.WorkingDirectory, reply, f.writer(t, req, patchDir), 0644)
+					json.NewEncoder(w).Encode(cao.StepResponse{TerminalID: "writer", Status: "completed"})
+					return
 				}
 				source := "diff --git a/answer.sh b/answer.sh\n--- a/answer.sh\n+++ b/answer.sh\n@@ -1 +1 @@\n-answer() { echo 42; }\n+answer() { echo 0; }\n"
 				test := "diff --git a/answer_test.sh b/answer_test.sh\n--- a/answer_test.sh\n+++ b/answer_test.sh\n@@ -1,2 +1,2 @@\n . ./answer.sh\n-test \"$(answer)\" = 42\n+test \"$(answer)\" = 0\n"
@@ -898,10 +906,10 @@ func TestTuneVerifyDefaultsItsBudgetAndProofTimeoutAndHonoursOverrides(t *testin
 	}
 }
 
-func TestProveKeepsItsTenMinuteDefault(t *testing.T) {
+func TestProveKeepsItsTenMinuteDefaultWhenNoVerifyTimeoutIsSaved(t *testing.T) {
 	var out bytes.Buffer
 	_ = proveAt([]string{"-h"}, &out, &out)
-	if !strings.Contains(out.String(), "default 10m0s") {
+	if !strings.Contains(out.String(), "default [test] verify_timeout, then 10m") || prove.DefaultTimeout != 10*time.Minute {
 		t.Fatal(out.String())
 	}
 }
@@ -934,7 +942,7 @@ func TestTuneProofReuseRequiresIdenticalConfigModesAndOrderedBreakPatchContents(
 				}
 				return prove.Result{Status: "proved"}
 			}
-			hooks, _, err := tuneHooks(root, root, head, runID, t.TempDir(), dir, setup, &bytes.Buffer{}, time.Minute)
+			hooks, _, err := tuneHooks(root, root, head, runID, t.TempDir(), dir, setup, &bytes.Buffer{}, time.Minute, time.Now().Add(30*time.Minute), tune.Requirements{})
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -252,7 +252,7 @@ func TestTunePreservesTheLastProofWhenALaterRevisionCannotBeAdopted(t *testing.T
 }
 
 func TestTheReadingChairReviewsPassingCommandsAndNeverRequestsWordingChanges(t *testing.T) {
-	prompt := tuneReviewPrompt("task", "reply", "proof", "out")
+	prompt := tuneReviewPrompt("task", "reply", "proof", "out", "")
 	for _, want := range []string{"reflects what the repository treats as passing", "left out", "by-hand command", "Do not ask for wording, comment, label or style changes", "name a command to add, remove or alter", "APPROVE or CHANGES", "Do not rerun verification"} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("missing %q", want)
@@ -307,14 +307,12 @@ func TestTuneReportsItsSpentBudgetBeforeRejectingAnUnadoptedRevision(t *testing.
 }
 
 func TestTheReviewerRefusesAnOmissionWithoutAnObservedReasonAndEvidence(t *testing.T) {
-	prompt := tuneReviewPrompt("task", "reply", "proof", "out")
+	prompt := tuneReviewPrompt("task", "reply", "proof", "out", "")
 	for _, want := range []string{
 		"each test left out has one of the permitted reasons with its evidence",
 		"failed or hung in a run made during this tune", "which run", "what it printed",
 		"needs something the clean copy cannot have", "network", "a service", "a credential", "another machine",
-		"the suite does not fit the time target and this is the part cut", "measured time",
 		"by-hand command", "ask for changes when a test is left out without one",
-		"when the whole suite would fit the target",
 		"A test that looks timing-dependent is not a reason.",
 	} {
 		if !strings.Contains(prompt, want) {
