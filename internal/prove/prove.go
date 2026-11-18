@@ -18,15 +18,17 @@ type Options struct {
 	Worktree string
 	Breaks   []string
 	Timeout  time.Duration
-	Required []string
 }
 
+const DefaultTimeout = 10 * time.Minute
+
 type RunResult struct {
-	Name       string `json:"name"`
-	Status     string `json:"status"`
-	ExitCode   int    `json:"exit_code"`
-	DurationMS int64  `json:"duration_ms"`
-	Output     string `json:"output"`
+	Name       string   `json:"name"`
+	Status     string   `json:"status"`
+	ExitCode   int      `json:"exit_code"`
+	DurationMS int64    `json:"duration_ms"`
+	Output     string   `json:"output"`
+	Steps      []string `json:"steps,omitempty"`
 }
 
 type BreakResult struct {
@@ -105,15 +107,9 @@ func Prove(ctx context.Context, options Options) (result Result) {
 	if err != nil {
 		return refuse(err.Error())
 	}
-	if required := append(test.Required, options.Required...); len(required) > 0 {
-		if strings.TrimPrefix(command, "./") != initrepo.ScriptFile {
-			return refuse("required suites need scripts/verify: set [test] verify to scripts/verify and give each required suite its own run step")
-		}
-		for _, suite := range required {
-			if !slices.Contains(initrepo.StepLabels(string(setup[initrepo.ScriptFile].body)), suite) {
-				return refuse(fmt.Sprintf("required suite %q is not a step in scripts/verify; add run '%s' 'COMMAND'", suite, suite))
-			}
-		}
+	timeout := options.Timeout
+	if timeout == 0 {
+		timeout = test.Timeout(DefaultTimeout)
 	}
 	patches := make([][]byte, len(options.Breaks))
 	for i, patch := range options.Breaks {
@@ -149,13 +145,20 @@ func Prove(ctx context.Context, options Options) (result Result) {
 	if rel == "." || rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
 		return refuse("scratch copies must live outside the checkout")
 	}
-	runVerify := func(dir string) (initrepo.VerifyResult, error) {
+	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'" }
+	runVerify := func(dir string) (initrepo.VerifyResult, []string, error) {
 		tmp := filepath.Join(scratch, filepath.Base(dir)+"-tmp")
 		if err := os.Mkdir(tmp, 0700); err != nil {
-			return initrepo.VerifyResult{}, err
+			return initrepo.VerifyResult{}, nil, err
 		}
-		prefix := "unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_OBJECT_DIRECTORY\nTMPDIR='" + strings.ReplaceAll(tmp, "'", "'\"'\"'") + "'\nexport TMPDIR\n"
-		return initrepo.Run(ctx, dir, prefix+command, options.Timeout), nil
+		record := filepath.Join(scratch, filepath.Base(dir)+"-steps")
+		prefix := "unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_OBJECT_DIRECTORY\nTMPDIR=" + quote(tmp) + "\n" + initrepo.StepsEnv + "=" + quote(record) + "\nexport TMPDIR " + initrepo.StepsEnv + "\n"
+		run := initrepo.Run(ctx, dir, prefix+command, timeout)
+		var steps []string
+		if data, err := os.ReadFile(record); err == nil {
+			steps = strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+		}
+		return run, steps, nil
 	}
 	breakDirs := make([]string, len(options.Breaks))
 	for i, patch := range options.Breaks {
@@ -197,11 +200,11 @@ func Prove(ctx context.Context, options Options) (result Result) {
 		if err != nil {
 			return fail(err)
 		}
-		run, err := runVerify(dir)
+		run, steps, err := runVerify(dir)
 		if err != nil {
 			return fail(err)
 		}
-		result.Runs = append(result.Runs, RunResult{Name: name, Status: run.Status, ExitCode: run.ExitCode, DurationMS: run.DurationMS, Output: run.Output})
+		result.Runs = append(result.Runs, RunResult{Name: name, Status: run.Status, ExitCode: run.ExitCode, DurationMS: run.DurationMS, Output: run.Output, Steps: steps})
 		if ctx.Err() != nil {
 			return finish("interrupted", 1, "interrupted")
 		}
@@ -218,10 +221,22 @@ func Prove(ctx context.Context, options Options) (result Result) {
 	if failures == 2 {
 		return finish("failed", 12, "verify failed on both clean copies")
 	}
+	for _, suite := range test.VerifyRequired {
+		for _, run := range result.Runs {
+			if slices.Contains(run.Steps, suite) {
+				continue
+			}
+			reason := fmt.Sprintf("required suite %q did not run in %s; give it its own step in scripts/verify: run '%s' 'COMMAND'", suite, run.Name, suite)
+			if len(run.Steps) == 0 {
+				reason = fmt.Sprintf("required suite %q did not run in %s: verify recorded no steps; its run wrapper must append each label it runs to the file named by $%s, as the wrapper km init writes does", suite, run.Name, initrepo.StepsEnv)
+			}
+			return finish("suite_not_run", 14, reason)
+		}
+	}
 	survived := []string{}
 	for i, patch := range options.Breaks {
 		dir := breakDirs[i]
-		run, err := runVerify(dir)
+		run, _, err := runVerify(dir)
 		if err != nil {
 			return fail(err)
 		}

@@ -2,7 +2,6 @@ package initrepo
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -26,6 +25,7 @@ log=$(mktemp "${TMPDIR:-/tmp}/verify.XXXXXX") || exit 1
 run() {
  sh -c "$2" >"$log" 2>&1
  status=$?
+ if [ -n "${KAPELLMEISTER_VERIFY_STEPS:-}" ]; then printf '%s\n' "$1" >>"$KAPELLMEISTER_VERIFY_STEPS"; fi
  if [ "$status" -ne 0 ]; then
   echo "verify failed at step: $1 (exit $status)"
   echo "--- last 40 lines of $1 ---"
@@ -37,17 +37,7 @@ run() {
 
 `
 
-var stepLine = regexp.MustCompile(`^run (?:'([^']*)'|"([^"]*)"|([A-Za-z0-9_.-]+)) `)
-
-func StepLabels(script string) []string {
-	var labels []string
-	for _, line := range strings.Split(script, "\n") {
-		if m := stepLine.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
-			labels = append(labels, m[1]+m[2]+m[3])
-		}
-	}
-	return labels
-}
+const StepsEnv = "KAPELLMEISTER_VERIFY_STEPS"
 
 func RenderStub() string {
 	return scriptPrelude + StubMarker + `

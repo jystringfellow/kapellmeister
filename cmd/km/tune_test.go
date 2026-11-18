@@ -906,10 +906,10 @@ func TestTuneVerifyDefaultsItsBudgetAndProofTimeoutAndHonoursOverrides(t *testin
 	}
 }
 
-func TestProveKeepsItsTenMinuteDefault(t *testing.T) {
+func TestProveKeepsItsTenMinuteDefaultWhenNoVerifyTimeoutIsSaved(t *testing.T) {
 	var out bytes.Buffer
 	_ = proveAt([]string{"-h"}, &out, &out)
-	if !strings.Contains(out.String(), "default 10m0s") {
+	if !strings.Contains(out.String(), "default [test] verify_timeout, then 10m") || prove.DefaultTimeout != 10*time.Minute {
 		t.Fatal(out.String())
 	}
 }
@@ -942,7 +942,7 @@ func TestTuneProofReuseRequiresIdenticalConfigModesAndOrderedBreakPatchContents(
 				}
 				return prove.Result{Status: "proved"}
 			}
-			hooks, _, err := tuneHooks(root, root, head, runID, t.TempDir(), dir, setup, &bytes.Buffer{}, time.Minute, 30*time.Minute, tune.Requirements{})
+			hooks, _, err := tuneHooks(root, root, head, runID, t.TempDir(), dir, setup, &bytes.Buffer{}, time.Minute, time.Now().Add(30*time.Minute), tune.Requirements{})
 			if err != nil {
 				t.Fatal(err)
 			}

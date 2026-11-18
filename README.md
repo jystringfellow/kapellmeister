@@ -47,7 +47,7 @@ installing the base chair profiles below.
 
 ```sh
 km init [-worktree DIR] [-dry-run] [-json] [-verify CMD] [-check CMD] [-no-run] [-timeout D]  # write config and an unfinished verify script
-km tune verify [-worktree DIR] [-require SUITE]... [-slow] [-detach] [-timeout D] [-budget D] [-verify-timeout D] [-json] [-again] [-guide]  # write and prove verify
+km tune verify [-worktree DIR] [-require SUITE]... [-time-bounded] [-detach] [-timeout D] [-budget D] [-verify-timeout D] [-json] [-again] [-guide]  # write and prove verify
 km prove [-worktree DIR] [-break PATCH]... [-timeout D] [-json]  # prove verify on clean copies and broken code
 km run -repo ~/Code/app [-base BRANCH] -task-file task.md [-ensemble thorough] [-detach]  # one ensemble
 km audition -worktree DIR [-ensemble thorough]   # can this ensemble play? no real work
@@ -872,8 +872,9 @@ because Codex saves trust on that first attempt. This is reported upstream as
 [test]
 verify = "scripts/verify"           # kapellmeister runs this before planning and after each round
 check  = "scripts/check {args}"     # implementers use this for targeted, failures-only runs
-required = ["unit", "integration"]  # suites verify must run, each a run step in scripts/verify; default none
-slow   = true                       # verify may take as long as CI; default false
+verify_required = ["unit", "integration"]  # suites verify must run, each a run step in scripts/verify; default none
+verify_timeout = "20m"              # limit for each verify run in km prove and km tune verify; saved by tune when it raises it
+verify_time_bounded = true          # allow tune to cut what does not fit two minutes; default false
 
 [tiers.claude_code]                 # override any provider's tier model or effort
 large = { model = "claude-fable-5-1" }
@@ -930,7 +931,7 @@ same file decisions, hints, verify result and next steps as one object, includin
 
 ```sh
 km init
-km tune verify [-worktree DIR] [-require SUITE]... [-slow] [-detach] [-timeout D] [-budget D] [-verify-timeout D] [-json] [-again]
+km tune verify [-worktree DIR] [-require SUITE]... [-time-bounded] [-detach] [-timeout D] [-budget D] [-verify-timeout D] [-json] [-again]
 km tune verify -guide
 ```
 
@@ -951,37 +952,47 @@ refused unless `-again` is given. An executable `.kapellmeister/verify` hook mus
 to `scripts/verify` with `[test] verify` updated. Tune starts with the failing unfinished stub;
 `km run` still refuses a failing baseline.
 
-The writer follows the shared guide: aim for about two minutes on a clean copy, never more than
-five, and report the measured time. When the whole suite fits that target, run the whole suite;
-narrow it only when it does not fit. When CI is slower, use its fast format, lint, type check and
-build checks plus unit tests for commonly changed code or a fast marked subset. Leave a test out
-only for an observed reason: it failed or hung in a run made during this tune (say which run and
-what it printed); it needs something the clean copy cannot have (network, a service, a credential,
-another machine); or the suite does not fit the time target and this is the part cut (say the
-measured time). A test that looks timing-dependent is not a reason. Each omission states its reason
-and evidence and the commands to run it by hand: a flaky verify is worse than a narrower one.
-Installation counts toward the cost; use the lockfile and the package manager's cache.
+The writer follows the shared guide. Verify mirrors CI and may take as long as CI: it runs every
+suite CI requires and reports the measured time, and nothing is left out to save time. Speed is
+the job of `check`. Leave a test out only for an observed reason: it failed or hung in a run made
+during this tune (say which run and what it printed), or it needs something the clean copy cannot
+have (network, a service, a credential, another machine). A test that looks timing-dependent is
+not a reason. Each omission states its reason and evidence and the commands to run it by hand: a
+flaky verify is worse than a narrower one. Installation counts toward the cost; use the lockfile
+and the package manager's cache.
 
-The two-minute target and the five-minute limit are defaults. Say which suites verify must run
-with `[test] required = ["unit", "integration"]` or `-require SUITE` (repeatable; the flag adds to
-the list). Each name is the label of a `run` step in `scripts/verify`, such as
-`run 'integration' 'make integration'`. A required suite is never left out or narrowed, for time
-or any other reason: km refuses a round whose `scripts/verify` has no step with that label, and
-publishes nothing without it. Say that verify mirrors CI and may take as long as CI with
-`[test] slow = true` or `-slow`: the writer and the reading chair are then given no time target,
-and time is no longer a permitted reason to leave a test out. Speed is the job of `check`.
-Suites and `slow` given by flag must be written into `[test]` by the tune, so later tunes and
+A time-bounded verify is the caller's explicit choice: `-time-bounded`, recorded by the tune as
+`[test] verify_time_bounded = true`. The guide then aims for about two minutes on a clean copy,
+never more than five. When the whole suite fits that target, run the whole suite; narrow it only
+when it does not fit. When CI is slower, use its fast format, lint, type check and build checks
+plus unit tests for commonly changed code or a fast marked subset, and a third reason to leave a
+test out applies: the suite does not fit the time target and this is the part cut (say the
+measured time). km refuses a round that sets the key when the caller did not ask for it.
+
+Say which suites verify must run with `[test] verify_required = ["unit", "integration"]` or
+`-require SUITE` (repeatable; the flag adds to the list). Each name is the label of a `run` step
+in `scripts/verify`, such as `run 'integration' 'make integration'`. A required suite is never
+left out or narrowed, for time or any other reason, time-bounded or not. The `run` wrapper records
+each label it runs, and the proof needs every required label in both clean runs, so a step that
+is commented out or never reached does not count; km publishes nothing without it. Suites and
+`-time-bounded` given by flag must be written into `[test]` by the tune, so later tunes and
 `km prove` keep them; km refuses a round that leaves them out of the config.
 
-With required suites or `slow`, a verify run that times out during the proof is not a reason to
-narrow. km doubles the verify timeout, says so (`verify timed out at 5m0s; required suites are
-never left out for time, so the timeout is raised to 10m0s`) and proves again, until verify
-finishes or the next timeout would exceed `-budget`; then it stops and names `-budget` and
-`-verify-timeout` as what to raise. The summary shows `required suites:` and
-`verify timeout raised from A to B` with the `km prove -timeout B` that proves it by hand, and
-the JSON summary carries `required`, `slow` and `timeout_raised` (`from_ms`, `to_ms`). Without
-required suites or `slow`, a timeout fails the proof as before. `km tune verify -guide` with
-`-require` or `-slow` prints the procedure for those requirements.
+A clean verify run that times out during the proof is not a reason to narrow. km doubles the
+verify timeout, says so (`verify timed out at 5m0s; a verify is never narrowed for time, so the
+timeout is raised to 10m0s and saved as [test] verify_timeout`), writes the new limit into the
+tuned config and proves again, until verify finishes or two runs at the next limit no longer fit
+in what is left of `-budget`; then it stops and names `-budget` and `-verify-timeout` as what to
+raise. `km prove` and later tunes read the saved limit. A break patch that times out does not
+raise it. The summary shows `required suites:` and `verify timeout raised from A to B and saved
+as [test] verify_timeout`, and the JSON summary carries `required`, `time_bounded` and
+`timeout_raised` (`from_ms`, `to_ms`). A time-bounded tune without required suites does not raise
+the timeout: a timeout fails the proof. `km tune verify -guide` with `-require` or `-time-bounded`
+prints the procedure for those requirements.
+
+The three `[test] verify_*` keys are new. A km built before them rejects a config that contains
+any of them as an unknown key, for every command including `km run`, so update km on every
+machine and CI job that reads the repository's config before committing them.
 
 The writer keeps the bounded-output wrapper and writes at least two break patches outside the
 checkout: one breaks covered source code and one breaks a test expectation. Work takes place in
@@ -995,13 +1006,15 @@ The comparison recognizes the bounded-output wrapper and literal `run LABEL 'COM
 ignores comments and blank lines outside quotes, and ignores those diagnostic step labels.
 Quoted command text is preserved, including hashes and newlines. Unrecognized wrappers, heredocs,
 continuations and ambiguous shell syntax require another proof. Config bytes and mode, script mode,
-and ordered break-patch contents and kinds must also match. The run records both normalized command
+and ordered break-patch contents and kinds must also match. With required suites, the step labels
+must match too, so a renamed required step is proved again. The run records both normalized command
 texts, their SHA-256 digests and the compared inputs; the summary says why the proof was kept.
 
 Tune uses `[run] rounds` and `[run] timeout`; `-timeout D` changes each agent step's limit.
 `-budget D` defaults to `30m` and stops the run between steps, never during a proof. A running
-agent step finishes under its own timeout. `-verify-timeout D` defaults to `5m` for each clean or
-break verification inside tune; direct `km prove` keeps its `10m` default.
+agent step finishes under its own timeout. `-verify-timeout D` limits each clean or
+break verification inside tune and defaults to `[test] verify_timeout`, then `5m`; direct
+`km prove` defaults to `[test] verify_timeout`, then `10m`.
 
 Approval copies only the two setup files back and removes the temporary worktree. If later rounds
 fail, are flaky or exhaust rounds, the last proved setup is copied back with approved-with-notes
@@ -1052,21 +1065,25 @@ verify to fail in each patched copy. A patch that does not apply, is empty or un
 clean passes and at least one break patch, with every patch making verify fail. Without a patch,
 it reports "passes, not proved" and asks for `-break PATCH`.
 
-With `[test] required` set, prove first checks that verify is `scripts/verify` and that it has a
-`run` step labelled with each required suite. A missing one is refused before any run, naming the
-suite.
+With `[test] verify_required` set, each clean run must have run a step labelled with every
+required suite. Prove gives verify a file in `KAPELLMEISTER_VERIFY_STEPS`, and the `run` wrapper
+km init writes appends each label it runs to it. A required suite missing from either clean run
+is reported as `suite_not_run`, naming the suite and the run; a wrapper written before this
+records nothing and is told so. Running the step does not show the step tests anything: a break
+patch that only that suite catches does.
 
 | Exit status | Meaning |
 |---|---|
 | 0 | Proved: two clean passes and every break patch made verify fail |
 | 1 | Command, Git or filesystem error, or interrupted |
 | 3 | A verify run timed out |
-| 10 | Refused: unfinished stub, verify not configured, invalid checkout, a required suite with no step, or bad/setup-touching patch |
+| 10 | Refused: unfinished stub, verify not configured, invalid checkout, or bad/setup-touching patch |
 | 11 | Passes twice, not proved: no break patch supplied |
 | 12 | Verify failed or was flaky on clean copies |
 | 13 | A break patch left verify passing |
+| 14 | A required suite's step did not run in a clean run |
 
-`-timeout D` is a positive limit per verify run, default `10m`. Output names each clean run and
+`-timeout D` is a positive limit per verify run; it defaults to `[test] verify_timeout`, then `10m`. Output names each clean run and
 patch, reports exit codes and durations, and bounds verify output to 40 lines of 300 characters.
 `-json` carries the same facts in `worktree`, `command`, `status`, `exit_status`, `reason`, `runs`
 and `breaks`, including failures and skipped patches. Prove needs Git and the verify command's

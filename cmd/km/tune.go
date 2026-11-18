@@ -66,7 +66,7 @@ type tuneSummary struct {
 	Command       string              `json:"command"`
 	LeftOut       []loop.TuneOmission `json:"left_out"`
 	Required      []string            `json:"required,omitempty"`
-	Slow          bool                `json:"slow,omitempty"`
+	TimeBounded   bool                `json:"time_bounded,omitempty"`
 	TimeoutRaised *tuneRaise          `json:"timeout_raised,omitempty"`
 	prove.Result
 }
@@ -93,12 +93,12 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 	asJSON := fs.Bool("json", false, "print the final summary as JSON; with -detach use km wait -json")
 	timeout := fs.Duration("timeout", 0, "timeout for each agent step (default [run] timeout)")
 	budget := fs.Duration("budget", 30*time.Minute, "time budget for the whole tune run; checked between steps")
-	verifyTimeout := fs.Duration("verify-timeout", defaultTuneVerifyTimeout, "timeout for each verify run inside tune proof")
+	verifyTimeout := fs.Duration("verify-timeout", 0, "timeout for each verify run inside tune proof (default [test] verify_timeout, then 5m)")
 	caoURL := fs.String("cao", "", "CAO URL (default environment, then configuration)")
 	launchPath := fs.String("detached-launch", "", "internal detached tune hand-off")
 	var require breakFlags
-	fs.Var(&require, "require", "suite verify must run, named as its run step in scripts/verify (repeatable; adds to [test] required)")
-	slow := fs.Bool("slow", false, "verify may take as long as CI: no time target (also [test] slow)")
+	fs.Var(&require, "require", "suite verify must run, named as its run step in scripts/verify (repeatable; adds to [test] verify_required)")
+	timeBounded := fs.Bool("time-bounded", false, "aim verify at two minutes and allow cutting what does not fit (also [test] verify_time_bounded); by default nothing is left out for time")
 	roles := chairFlags(fs, "implementer", "reviewer")
 	hideFlags(fs, "detached-launch")
 	if err := fs.Parse(args); err != nil {
@@ -108,7 +108,7 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 		return fmt.Errorf("-require: %w", err)
 	}
 	if *guide {
-		_, err := fmt.Fprintln(stdout, tune.Require(nil, require, *slow).Procedure())
+		_, err := fmt.Fprintln(stdout, tune.Require(nil, require, *timeBounded).Procedure())
 		return err
 	}
 	if fs.NArg() != 0 {
@@ -123,7 +123,7 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 	if *budget <= 0 {
 		return errors.New("-budget must be positive")
 	}
-	if *verifyTimeout <= 0 {
+	if flagsSet(fs)["verify-timeout"] && *verifyTimeout <= 0 {
 		return errors.New("-verify-timeout must be positive")
 	}
 	var launch detachedLaunchRecord
@@ -177,7 +177,10 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 	if err != nil {
 		return err
 	}
-	required := tune.Require(test.Required, require, test.Slow || *slow)
+	required := tune.Require(test.VerifyRequired, require, test.VerifyTimeBounded || *timeBounded)
+	if *verifyTimeout == 0 {
+		*verifyTimeout = test.Timeout(defaultTuneVerifyTimeout)
+	}
 	s, err := loop.LoadSettings(loop.Home(), root)
 	if err != nil {
 		return err
@@ -272,7 +275,7 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 		fmt.Fprintf(&hintText, "%v\n", h)
 	}
 	task := tune.Task(wt, hintText.String(), command, patches, required)
-	hooks, summary, err := tuneHooks(root, wt, head, runID, runDir, patches, setup, progress, *verifyTimeout, *budget, required)
+	hooks, summary, err := tuneHooks(root, wt, head, runID, runDir, patches, setup, progress, *verifyTimeout, started.Add(*budget), required)
 	if err != nil {
 		return err
 	}
@@ -309,12 +312,12 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 	return finishRunDetail(stdout, sum, false)
 }
 
-func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]tuneFile, progress io.Writer, verifyTimeout, budget time.Duration, required tune.Requirements) (*loop.TuneHooks, *tuneSummary, error) {
+func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]tuneFile, progress io.Writer, verifyTimeout time.Duration, deadline time.Time, required tune.Requirements) (*loop.TuneHooks, *tuneSummary, error) {
 	baseline, err := tuneTree(wt)
 	if err != nil {
 		return nil, nil, err
 	}
-	summary := &tuneSummary{Required: required.Suites, Slow: required.Slow, LeftOut: []loop.TuneOmission{}, Breaks: []tuneBreak{}, Result: prove.Result{Worktree: wt, Status: "not_run", Reason: "no proof was run", Runs: []prove.RunResult{}, Breaks: []prove.BreakResult{}}}
+	summary := &tuneSummary{Required: required.Suites, TimeBounded: required.TimeBounded, LeftOut: []loop.TuneOmission{}, Breaks: []tuneBreak{}, Result: prove.Result{Worktree: wt, Status: "not_run", Reason: "no proof was run", Runs: []prove.RunResult{}, Breaks: []prove.BreakResult{}}}
 	var proved *tuneProved
 	currentRound := 0
 	hooks := &loop.TuneHooks{
@@ -350,14 +353,13 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 			if err != nil {
 				return "", err
 			}
+			if config, err := os.ReadFile(filepath.Join(wt, loop.ConfigFile)); err == nil {
+				state[loop.ConfigFile] = fmt.Sprintf("%x", sha256.Sum256([]byte(loop.WithoutVerifyTimeout(string(config)))))
+			}
 			b, err := json.Marshal(state)
 			return string(b), err
 		},
 		Prove: func(ctx context.Context, reply loop.TuneReply, round int) (loop.TuneProof, error) {
-			current, err := readTuneSetup(wt)
-			if err != nil {
-				return loop.TuneProof{}, err
-			}
 			summary.Command, summary.LeftOut = reply.Command, reply.LeftOut
 			recordPatches := []string{}
 			patchDigests := []string{}
@@ -390,20 +392,32 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 			case unrecorded != "":
 				result = prove.Result{Worktree: wt, Command: resolved, Status: "refused", ExitStatus: 10, Reason: unrecorded}
 			default:
-				result = runTuneProof(ctx, prove.Options{Worktree: wt, Breaks: recordPatches, Timeout: verifyTimeout, Required: required.Suites})
-				for why := required.KeepsSlowTests(); result.Status == "timeout" && why != ""; {
-					if 2*verifyTimeout > budget {
-						result.Reason += fmt.Sprintf("; %s and the timeout is not raised past the %s budget: raise -budget and -verify-timeout to give verify the time it needs", why, budget)
+				if summary.TimeoutRaised != nil {
+					if err := loop.SetVerifyTimeout(wt, verifyTimeout); err != nil {
+						return loop.TuneProof{}, err
+					}
+				}
+				result = runTuneProof(ctx, prove.Options{Worktree: wt, Breaks: recordPatches, Timeout: verifyTimeout})
+				for why := required.KeepsSlowTests(); why != "" && cleanRunTimedOut(result); {
+					if left := deadline.Sub(tuneClock()); 2*verifyTimeout > left {
+						result.Reason += fmt.Sprintf("; %s, but the timeout is not raised to %s with %s of the budget left: raise -budget and -verify-timeout to give verify the time it needs", why, 2*verifyTimeout, max(left, 0).Round(time.Second))
 						break
 					}
-					fmt.Fprintf(progress, "verify timed out at %s; %s, so the timeout is raised to %s\n", verifyTimeout, why, 2*verifyTimeout)
+					fmt.Fprintf(progress, "verify timed out at %s; %s, so the timeout is raised to %s and saved as [test] verify_timeout\n", verifyTimeout, why, 2*verifyTimeout)
 					if summary.TimeoutRaised == nil {
 						summary.TimeoutRaised = &tuneRaise{FromMS: verifyTimeout.Milliseconds()}
 					}
 					verifyTimeout *= 2
 					summary.TimeoutRaised.ToMS = verifyTimeout.Milliseconds()
-					result = runTuneProof(ctx, prove.Options{Worktree: wt, Breaks: recordPatches, Timeout: verifyTimeout, Required: required.Suites})
+					if err := loop.SetVerifyTimeout(wt, verifyTimeout); err != nil {
+						return loop.TuneProof{}, err
+					}
+					result = runTuneProof(ctx, prove.Options{Worktree: wt, Breaks: recordPatches, Timeout: verifyTimeout})
 				}
+			}
+			current, err := readTuneSetup(wt)
+			if err != nil {
+				return loop.TuneProof{}, err
 			}
 			summary.ProofKept = nil
 			summary.Result = result
@@ -440,6 +454,9 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 				return false, "", "", err
 			}
 			if !same || !reflect.DeepEqual(digests, proved.patches) {
+				return false, "", "", nil
+			}
+			if written, err := loop.ResolveTest(wt); err != nil || len(written.VerifyRequired) > 0 && !slices.Equal(tune.StepLabels(string(proved.setup[initrepo.ScriptFile].Body)), tune.StepLabels(string(current[initrepo.ScriptFile].Body))) {
 				return false, "", "", nil
 			}
 			kept := &tuneKept{FromRound: proved.round, Round: round, Comparison: comparison, Compared: []string{"scripts/verify normalized commands (sha256)", "scripts/verify mode", ".kapellmeister/config.toml bytes and mode", "ordered break patch bytes and kinds (sha256)"}}
@@ -496,14 +513,21 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 	return hooks, summary, nil
 }
 
+func cleanRunTimedOut(result prove.Result) bool {
+	return result.Status == "timeout" && len(result.Runs) > 0 && result.Runs[len(result.Runs)-1].Status == "timed_out"
+}
+
 func unrecordedRequirement(required tune.Requirements, written loop.TestConfig) string {
 	for _, suite := range required.Suites {
-		if !slices.Contains(written.Required, suite) {
-			return fmt.Sprintf("[test] required must list %q: a required suite stays recorded for later runs", suite)
+		if !slices.Contains(written.VerifyRequired, suite) {
+			return fmt.Sprintf("[test] verify_required must list %q: a required suite stays recorded for later runs", suite)
 		}
 	}
-	if required.Slow && !written.Slow {
-		return "[test] slow must be true: this verify may take as long as CI, and that stays recorded for later runs"
+	if required.TimeBounded && !written.VerifyTimeBounded {
+		return "[test] verify_time_bounded must be true: a time-bounded verify stays recorded for later runs"
+	}
+	if !required.TimeBounded && written.VerifyTimeBounded {
+		return "[test] verify_time_bounded must not be set: only the caller allows a time-bounded verify, with -time-bounded"
 	}
 	return ""
 }
@@ -710,12 +734,12 @@ func printTune(w io.Writer, s ensembleSummary, detail bool) {
 	if len(t.Required) > 0 {
 		fmt.Fprintf(w, "  required suites: %s\n", strings.Join(t.Required, ", "))
 	}
-	if t.Slow {
-		fmt.Fprintln(w, "  slow: verify may take as long as CI")
+	if t.TimeBounded {
+		fmt.Fprintln(w, "  time-bounded: tests that do not fit the time target may be left out")
 	}
 	if raised := t.TimeoutRaised; raised != nil {
 		to := time.Duration(raised.ToMS) * time.Millisecond
-		fmt.Fprintf(w, "  verify timeout raised from %s to %s; prove by hand with km prove -timeout %s\n", time.Duration(raised.FromMS)*time.Millisecond, to, to)
+		fmt.Fprintf(w, "  verify timeout raised from %s to %s and saved as [test] verify_timeout\n", time.Duration(raised.FromMS)*time.Millisecond, to)
 	}
 	if t.ProofKept != nil {
 		fmt.Fprintf(w, "  proof kept from round %d: only comments, blank lines or step labels differ; commands, config, modes and break patches matched\n", t.ProofKept.FromRound)
