@@ -47,7 +47,7 @@ installing the base chair profiles below.
 
 ```sh
 km init [-worktree DIR] [-dry-run] [-json] [-verify CMD] [-check CMD] [-no-run] [-timeout D]  # write config and an unfinished verify script
-km tune verify [-worktree DIR] [-detach] [-timeout D] [-budget D] [-verify-timeout D] [-json] [-again] [-guide]  # write and prove verify
+km tune verify [-worktree DIR] [-require SUITE]... [-slow] [-detach] [-timeout D] [-budget D] [-verify-timeout D] [-json] [-again] [-guide]  # write and prove verify
 km prove [-worktree DIR] [-break PATCH]... [-timeout D] [-json]  # prove verify on clean copies and broken code
 km run -repo ~/Code/app [-base BRANCH] -task-file task.md [-ensemble thorough] [-detach]  # one ensemble
 km audition -worktree DIR [-ensemble thorough]   # can this ensemble play? no real work
@@ -872,6 +872,8 @@ because Codex saves trust on that first attempt. This is reported upstream as
 [test]
 verify = "scripts/verify"           # kapellmeister runs this before planning and after each round
 check  = "scripts/check {args}"     # implementers use this for targeted, failures-only runs
+required = ["unit", "integration"]  # suites verify must run, each a run step in scripts/verify; default none
+slow   = true                       # verify may take as long as CI; default false
 
 [tiers.claude_code]                 # override any provider's tier model or effort
 large = { model = "claude-fable-5-1" }
@@ -928,7 +930,7 @@ same file decisions, hints, verify result and next steps as one object, includin
 
 ```sh
 km init
-km tune verify [-worktree DIR] [-detach] [-timeout D] [-budget D] [-verify-timeout D] [-json] [-again]
+km tune verify [-worktree DIR] [-require SUITE]... [-slow] [-detach] [-timeout D] [-budget D] [-verify-timeout D] [-json] [-again]
 km tune verify -guide
 ```
 
@@ -959,6 +961,27 @@ another machine); or the suite does not fit the time target and this is the part
 measured time). A test that looks timing-dependent is not a reason. Each omission states its reason
 and evidence and the commands to run it by hand: a flaky verify is worse than a narrower one.
 Installation counts toward the cost; use the lockfile and the package manager's cache.
+
+The two-minute target and the five-minute limit are defaults. Say which suites verify must run
+with `[test] required = ["unit", "integration"]` or `-require SUITE` (repeatable; the flag adds to
+the list). Each name is the label of a `run` step in `scripts/verify`, such as
+`run 'integration' 'make integration'`. A required suite is never left out or narrowed, for time
+or any other reason: km refuses a round whose `scripts/verify` has no step with that label, and
+publishes nothing without it. Say that verify mirrors CI and may take as long as CI with
+`[test] slow = true` or `-slow`: the writer and the reading chair are then given no time target,
+and time is no longer a permitted reason to leave a test out. Speed is the job of `check`.
+Suites and `slow` given by flag must be written into `[test]` by the tune, so later tunes and
+`km prove` keep them; km refuses a round that leaves them out of the config.
+
+With required suites or `slow`, a verify run that times out during the proof is not a reason to
+narrow. km doubles the verify timeout, says so (`verify timed out at 5m0s; required suites are
+never left out for time, so the timeout is raised to 10m0s`) and proves again, until verify
+finishes or the next timeout would exceed `-budget`; then it stops and names `-budget` and
+`-verify-timeout` as what to raise. The summary shows `required suites:` and
+`verify timeout raised from A to B` with the `km prove -timeout B` that proves it by hand, and
+the JSON summary carries `required`, `slow` and `timeout_raised` (`from_ms`, `to_ms`). Without
+required suites or `slow`, a timeout fails the proof as before. `km tune verify -guide` with
+`-require` or `-slow` prints the procedure for those requirements.
 
 The writer keeps the bounded-output wrapper and writes at least two break patches outside the
 checkout: one breaks covered source code and one breaks a test expectation. Work takes place in
@@ -1029,12 +1052,16 @@ verify to fail in each patched copy. A patch that does not apply, is empty or un
 clean passes and at least one break patch, with every patch making verify fail. Without a patch,
 it reports "passes, not proved" and asks for `-break PATCH`.
 
+With `[test] required` set, prove first checks that verify is `scripts/verify` and that it has a
+`run` step labelled with each required suite. A missing one is refused before any run, naming the
+suite.
+
 | Exit status | Meaning |
 |---|---|
 | 0 | Proved: two clean passes and every break patch made verify fail |
 | 1 | Command, Git or filesystem error, or interrupted |
 | 3 | A verify run timed out |
-| 10 | Refused: unfinished stub, verify not configured, invalid checkout, or bad/setup-touching patch |
+| 10 | Refused: unfinished stub, verify not configured, invalid checkout, a required suite with no step, or bad/setup-touching patch |
 | 11 | Passes twice, not proved: no break patch supplied |
 | 12 | Verify failed or was flaky on clean copies |
 | 13 | A break patch left verify passing |

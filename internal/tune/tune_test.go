@@ -6,7 +6,7 @@ import (
 )
 
 func TestTheTasksProcedureIsTheCarriedGuideText(t *testing.T) {
-	task := Task("checkout", "hints", "scripts/verify", "/breaks")
+	task := Task("checkout", "hints", "scripts/verify", "/breaks", Requirements{})
 	if strings.Count(task, VerifyProcedure) != 1 {
 		t.Fatal(task)
 	}
@@ -61,5 +61,44 @@ func TestTheProcedureRefusesSuspicionAloneAsAReasonToLeaveATestOut(t *testing.T)
 func TestTheProcedureStaysShortEnoughToRead(t *testing.T) {
 	if len(VerifyProcedure) >= 2200 {
 		t.Fatalf("procedure is %d bytes; keep it below 2200", len(VerifyProcedure))
+	}
+}
+
+func TestTheProcedureIsTheCarriedGuideWhenNothingIsRequiredAndSlowIsNotAccepted(t *testing.T) {
+	if got := (Requirements{}).Procedure(); got != VerifyProcedure {
+		t.Fatal(got)
+	}
+	if rules := (Requirements{}).ReviewRules(); rules != "" {
+		t.Fatal(rules)
+	}
+}
+
+func TestASlowProcedureMirrorsCIWithNoTimeTargetAndNoTimeReasonToLeaveATestOut(t *testing.T) {
+	slow := Requirements{Slow: true}.Procedure()
+	for _, unwanted := range []string{"two minutes", "never more than five", "time target", "does not fit", "fast marked subset"} {
+		if strings.Contains(slow, unwanted) {
+			t.Errorf("contains %q", unwanted)
+		}
+	}
+	for _, want := range []string{"mirrors CI and may take as long as CI", "run every suite CI requires", "report the measured time", "Speed is the job of check", "leave nothing out to save time", "slow = true in [test]", "failed or hung in a run made during this tune", "or it needs something the clean copy cannot have", "A test that looks timing-dependent is not a reason."} {
+		if !strings.Contains(slow, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+	if rules := (Requirements{Slow: true}).ReviewRules(); !strings.Contains(rules, "time is not a permitted reason to leave a test out") {
+		t.Fatal(rules)
+	}
+}
+
+func TestRequiredSuitesAreRunStepsThatAreNeverLeftOutOrNarrowedAndKeepTheTimeTargetForTheRest(t *testing.T) {
+	required := Require([]string{"unit"}, []string{"integration", "unit"}, false)
+	text := required.Procedure()
+	for _, want := range []string{"about two minutes", "Required suites: unit, integration.", "its own `run` step labelled exactly with its name", "list them in [test] required", "Never leave a required suite out or narrow it, for time or any other reason", "km raises the verify timeout", "say so in your reply instead of narrowing it", "\n3. Write at least two"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+	if rules := required.ReviewRules(); !strings.Contains(rules, "Required suites: unit, integration.") || !strings.Contains(rules, "no reason permits leaving one out") {
+		t.Fatal(rules)
 	}
 }

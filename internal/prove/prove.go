@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -17,6 +18,7 @@ type Options struct {
 	Worktree string
 	Breaks   []string
 	Timeout  time.Duration
+	Required []string
 }
 
 type RunResult struct {
@@ -98,6 +100,20 @@ func Prove(ctx context.Context, options Options) (result Result) {
 	}
 	if strings.TrimPrefix(command, "./") == initrepo.ScriptFile && initrepo.IsStub(string(setup[initrepo.ScriptFile].body)) {
 		return refuse("verify is unfinished: scripts/verify is a stub; write the command, then run km prove")
+	}
+	test, err := loop.ResolveTest(root)
+	if err != nil {
+		return refuse(err.Error())
+	}
+	if required := append(test.Required, options.Required...); len(required) > 0 {
+		if strings.TrimPrefix(command, "./") != initrepo.ScriptFile {
+			return refuse("required suites need scripts/verify: set [test] verify to scripts/verify and give each required suite its own run step")
+		}
+		for _, suite := range required {
+			if !slices.Contains(initrepo.StepLabels(string(setup[initrepo.ScriptFile].body)), suite) {
+				return refuse(fmt.Sprintf("required suite %q is not a step in scripts/verify; add run '%s' 'COMMAND'", suite, suite))
+			}
+		}
 	}
 	patches := make([][]byte, len(options.Breaks))
 	for i, patch := range options.Breaks {

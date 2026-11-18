@@ -29,8 +29,24 @@ func AllRoles() []string {
 }
 
 type TestConfig struct {
-	Verify string `toml:"verify"`
-	Check  string `toml:"check"`
+	Verify   string   `toml:"verify"`
+	Check    string   `toml:"check"`
+	Required []string `toml:"required"`
+	Slow     bool     `toml:"slow"`
+}
+
+func ValidSuites(names []string) error {
+	seen := map[string]bool{}
+	for _, name := range names {
+		if strings.TrimSpace(name) == "" || strings.ContainsAny(name, "'\n\r\x00") {
+			return fmt.Errorf("suite %q must be a non-empty name on one line without a single quote", name)
+		}
+		if seen[name] {
+			return fmt.Errorf("suite %q is repeated", name)
+		}
+		seen[name] = true
+	}
+	return nil
 }
 
 type RunConfig struct {
@@ -358,6 +374,9 @@ func decodeConfig(data []byte, name string) (loadedConfig, error) {
 	}
 	if extra := md.Undecoded(); len(extra) > 0 {
 		return cfg, fmt.Errorf("%s: unknown keys %v", name, extra)
+	}
+	if err := ValidSuites(cfg.Test.Required); err != nil {
+		return cfg, fmt.Errorf("%s: test.required: %w", name, err)
 	}
 	return cfg, nil
 }

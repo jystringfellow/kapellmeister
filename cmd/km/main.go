@@ -29,7 +29,7 @@ import (
 
 const usage = `usage:
   km init [-worktree DIR] [-dry-run] [-json] [-verify CMD] [-check CMD] [-no-run] [-timeout D]   write config and an unfinished verify, or wrap -verify CMD
-  km tune verify [-worktree DIR] [-detach] [-timeout D] [-json] [-again] [-guide]   write and prove verify
+  km tune verify [-worktree DIR] [-require SUITE]... [-slow] [-detach] [-timeout D] [-json] [-again] [-guide]   write and prove verify
   km prove [-worktree DIR] [-break PATCH]... [-timeout D] [-json]   prove verify on clean copies and broken code
   km run -repo DIR [-base BRANCH] (-task TEXT | -task-file FILE) [-ensemble NAME] [-detach] [flags]   one ensemble
   km audition -worktree DIR [-ensemble NAME] [-keep]       boot the ensemble, cue every chair once, tear down

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -160,5 +161,19 @@ func TestTheVerifyRunnerStopsOrphansThatKeepItsOutputPipeOpen(t *testing.T) {
 	time.Sleep(1100 * time.Millisecond)
 	if _, err := os.Stat(filepath.Join(root, "survived")); !os.IsNotExist(err) {
 		t.Fatal("orphan survived", err)
+	}
+}
+
+func TestStepLabelsNamesEachRunStepHoweverItsLabelIsQuotedAndSkipsCommentedSteps(t *testing.T) {
+	script, err := RenderVerify("true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script = strings.Replace(script, "run 'verify' 'true'\n", "run 'unit tests' 'make unit'\n  run \"lint\" 'make lint'\nrun integration 'make integration'\n# run 'e2e' 'make e2e'\n", 1)
+	if got := StepLabels(script); !reflect.DeepEqual(got, []string{"unit tests", "lint", "integration"}) {
+		t.Fatal(got)
+	}
+	if got := StepLabels(RenderStub()); len(got) != 0 {
+		t.Fatal(got)
 	}
 }

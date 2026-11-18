@@ -2,6 +2,7 @@ package initrepo
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -35,6 +36,18 @@ run() {
 }
 
 `
+
+var stepLine = regexp.MustCompile(`^run (?:'([^']*)'|"([^"]*)"|([A-Za-z0-9_.-]+)) `)
+
+func StepLabels(script string) []string {
+	var labels []string
+	for _, line := range strings.Split(script, "\n") {
+		if m := stepLine.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
+			labels = append(labels, m[1]+m[2]+m[3])
+		}
+	}
+	return labels
+}
 
 func RenderStub() string {
 	return scriptPrelude + StubMarker + `
