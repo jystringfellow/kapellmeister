@@ -126,6 +126,9 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 		if err := json.Unmarshal(data, &launch); err != nil {
 			return err
 		}
+		if err := loop.ValidRunID(launch.RunID); err != nil {
+			return fmt.Errorf("detached launch %s: %w", *launchPath, err)
+		}
 		*worktree = launch.Checkout
 	}
 	root, err := worktreeDir(*worktree)
@@ -201,7 +204,7 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 	writingChair, _ := s.Policy.Chair("implement", chairs.Implementer, "", 0)
 	readingChair, _ := s.Policy.Chair("review", chairs.Reviewers[0], "", 0)
 	runID := newRunID()
-	if launch.RunID != "" {
+	if *launchPath != "" {
 		runID = launch.RunID
 	}
 	runDir, err := filepath.Abs(filepath.Join(loop.StateDir(), "runs", runID))
@@ -248,7 +251,8 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 	if err != nil {
 		return err
 	}
-	defer removeScratch(stderr, scratch)
+	approved := false
+	defer func() { settleScratch(stderr, loop.StateDir(), runID, approved) }()
 	patches := filepath.Join(scratch, "breaks")
 	if err := os.MkdirAll(patches, 0755); err != nil {
 		return err
@@ -287,6 +291,7 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 		return err
 	}
 	keep = sum.Outcome != loop.Approved
+	approved = !keep
 	if *asJSON {
 		if err := json.NewEncoder(stdout).Encode(sum); err != nil {
 			return err

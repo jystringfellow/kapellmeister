@@ -80,7 +80,8 @@ func playCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer removeScratch(os.Stderr, scratch)
+	approved := false
+	defer func() { settleScratch(os.Stderr, loop.StateDir(), runID, approved) }()
 	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	client := newClient(s.CAOURL, s, os.Stdout)
@@ -107,6 +108,7 @@ func playCommand(args []string) error {
 	if err != nil {
 		return err
 	}
+	approved = sum.Outcome == loop.Approved
 	return finishRun(os.Stdout, sum)
 }
 

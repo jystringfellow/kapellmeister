@@ -138,14 +138,26 @@ func TestRunAndPlayPlaceTheScratchDirectoryUnderStateScratchOutsideTheRunRecords
 	}
 }
 
-func TestRunAndPlayLeaveNoScratchDirectoryBehindWithOrWithoutATester(t *testing.T) {
+func TestKmWritesNothingIntoScratchDuringARunOrPlayAndLeavesNoneBehindWithOrWithoutATester(t *testing.T) {
 	for _, command := range []string{"run", "play"} {
 		for _, tester := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/%t", command, tester), func(t *testing.T) {
 				var err error
-				var url string
+				looks := 0
+				look := func(string, string) {
+					dirs, _ := filepath.Glob(filepath.Join(loop.StateDir(), "scratch", "*"))
+					if len(dirs) != 1 {
+						t.Errorf("scratch directories during the score = %v", dirs)
+						return
+					}
+					looks++
+					entries, readErr := os.ReadDir(dirs[0])
+					if readErr != nil || len(entries) != 0 {
+						t.Errorf("scratch must be empty of anything km wrote, got %v %v", entries, readErr)
+					}
+				}
 				if command == "run" {
-					f := &runCAO{}
+					f := &runCAO{fake: playCAO{afterReply: look}}
 					_, args := runSessionArgs(t, f)
 					if !tester {
 						for i := 0; i < len(args); i++ {
@@ -161,11 +173,13 @@ func TestRunAndPlayLeaveNoScratchDirectoryBehindWithOrWithoutATester(t *testing.
 					if tester {
 						s = safetyStanding(t)
 					}
-					url = (&playCAO{}).serve(t).URL
-					_, err = capturePlay(t, []string{s.Session, "-cao", url})
+					_, err = capturePlay(t, []string{s.Session, "-cao", (&playCAO{afterReply: look}).serve(t).URL})
 				}
 				if err != nil {
 					t.Fatal(err)
+				}
+				if looks == 0 {
+					t.Fatal("scratch was never looked at during the score")
 				}
 				dir, _ := onlyRunResult(t)
 				scratch := filepath.Join(loop.StateDir(), "scratch", filepath.Base(dir))

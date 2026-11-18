@@ -355,6 +355,9 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		if err := json.Unmarshal(data, &launch); err != nil {
 			return err
 		}
+		if err := loop.ValidRunID(launch.RunID); err != nil {
+			return fmt.Errorf("detached launch %s: %w", *detachedLaunch, err)
+		}
 		text = launch.Task
 	} else {
 		text, err = taskText(*c.task, *c.taskFile)
@@ -460,10 +463,10 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 	if err != nil {
 		return err
 	}
-	handedOff := false
+	handedOff, approved := false, false
 	defer func() {
 		if !handedOff {
-			removeScratch(stderr, scratch)
+			settleScratch(stderr, loop.StateDir(), runID, approved)
 		}
 	}()
 	if ctx == nil {
@@ -542,6 +545,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		return err
 	}
 	summarized = true
+	approved = sum.Outcome == loop.Approved
 	return finishRun(stdout, sum)
 }
 
@@ -1216,14 +1220,23 @@ func gitOutput(worktree string, args ...string) (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
-func removeScratch(stderr io.Writer, scratch string) {
-	if err := loop.RemoveScratch(scratch); err != nil {
+func settleScratch(stderr io.Writer, stateDir, runID string, approved bool) {
+	scratch, err := loop.ScratchDir(stateDir, runID)
+	if err != nil {
+		fmt.Fprintln(stderr, "km: removing scratch:", err)
+		return
+	}
+	if entries, err := os.ReadDir(scratch); !approved && err == nil && len(entries) > 0 {
+		fmt.Fprintf(stderr, "km: scratch was kept at %s\n", scratch)
+		return
+	}
+	if err := loop.RemoveScratch(stateDir, runID); err != nil {
 		fmt.Fprintln(stderr, "km: removing scratch:", err)
 	}
 }
 
 func prepareScratch(stateDir, runID string) (string, error) {
-	scratch, err := filepath.Abs(filepath.Join(stateDir, "scratch", runID))
+	scratch, err := loop.ScratchDir(stateDir, runID)
 	if err != nil {
 		return "", err
 	}

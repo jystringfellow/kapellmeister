@@ -507,10 +507,12 @@ func (e *Engine) testerTimeout() time.Duration {
 	return e.Config.StepTimeout
 }
 
-func (e *Engine) testRound(ctx context.Context, round int, plan, summary string, verify VerifyResult, verifyPath, path string) (string, error) {
+func (e *Engine) testRound(ctx context.Context, round int, plan, summary string, verify VerifyResult, verifyPath, path string) (verdict string, err error) {
 	defer func() {
 		e.reportLeftRunning(round)
-		e.clearScratch()
+		if err == nil && verdict == "APPROVE" {
+			e.clearScratch()
+		}
 	}()
 	errs, err := e.readOnlySteps(ctx, []Step{{
 		Name: "test", Round: round, Chair: *e.Config.Chairs.Tester,

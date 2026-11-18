@@ -15,15 +15,19 @@ func freeSpace(t *testing.T, free func(dir string) (uint64, error)) {
 	t.Cleanup(func() { FreeBytes = original })
 }
 
-func TestATestersScratchCopiesAreRemovedAfterEachTestStepAndItsPidsFileIsKept(t *testing.T) {
+func TestATestersScratchCopiesStayAfterATestStepAsksForChangesAndGoWhenOnePassesKeepingPids(t *testing.T) {
 	e, f := testerEngine(t)
 	scratch := e.Config.ScratchDir
 	copyDir := filepath.Join(scratch, "copy", "module")
 	tests := 0
 	f.actions["test"] = func(s Step) {
 		tests++
-		if entries, _ := os.ReadDir(filepath.Join(scratch, "copy")); len(entries) != 0 {
-			t.Errorf("round %d began with the previous round's copies: %v", tests, entries)
+		f.write(s.ReplyPath, "test reply")
+		if tests == 2 {
+			if data, err := os.ReadFile(filepath.Join(copyDir, "file.txt")); err != nil || string(data) != "copied" {
+				t.Errorf("the copies a CHANGES report was written from were gone in round 2: %q, %v", data, err)
+			}
+			return
 		}
 		if err := os.MkdirAll(copyDir, 0755); err != nil {
 			t.Error(err)
@@ -37,7 +41,6 @@ func TestATestersScratchCopiesAreRemovedAfterEachTestStepAndItsPidsFileIsKept(t 
 		if err := os.WriteFile(filepath.Join(scratch, "pids"), []byte("999999999\n"), 0600); err != nil {
 			t.Error(err)
 		}
-		f.write(s.ReplyPath, "test reply")
 	}
 	t.Cleanup(func() { _ = os.Chmod(copyDir, 0755) })
 	f.verdicts["test"] = []string{"CHANGES", "APPROVE"}
@@ -49,11 +52,11 @@ func TestATestersScratchCopiesAreRemovedAfterEachTestStepAndItsPidsFileIsKept(t 
 		t.Fatal(err)
 	}
 	if len(entries) != 1 || entries[0].Name() != "pids" {
-		t.Errorf("scratch holds %v, want only pids", entries)
+		t.Errorf("scratch holds %v after a passing test step, want only pids", entries)
 	}
 }
 
-func TestATestersScratchCopiesAreRemovedWhenTheTestStepFails(t *testing.T) {
+func TestATestersScratchCopiesStayWhenTheTestStepFails(t *testing.T) {
 	e, f := testerEngine(t)
 	scratch := e.Config.ScratchDir
 	f.actions["test"] = func(s Step) {
@@ -70,8 +73,52 @@ func TestATestersScratchCopiesAreRemovedWhenTheTestStepFails(t *testing.T) {
 	if res := run(t, e); res.Outcome != Untested {
 		t.Fatalf("result: %+v", res)
 	}
-	if entries, _ := os.ReadDir(scratch); len(entries) != 0 {
-		t.Errorf("scratch holds %v after a timed-out test step", entries)
+	if entries, _ := os.ReadDir(scratch); len(entries) != 1 || entries[0].Name() != "copy" {
+		t.Errorf("scratch holds %v after a timed-out test step, want the tester's copy", entries)
+	}
+}
+
+func TestRemoveScratchRefusesARunIDThatIsNotASinglePathElement(t *testing.T) {
+	for _, id := range []string{"", ".", "..", "../runs", "a/b", "/abs", `a\b`} {
+		state := t.TempDir()
+		record := filepath.Join(state, "runs", "earlier-run", "result.json")
+		other := filepath.Join(state, "scratch", "other-run", "copy.txt")
+		for _, path := range []string{record, other} {
+			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("kept"), 0644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := RemoveScratch(state, id); err == nil || !strings.Contains(err.Error(), "run id") {
+			t.Errorf("run id %q: error = %v", id, err)
+		}
+		if _, err := ScratchDir(state, id); err == nil {
+			t.Errorf("ScratchDir accepted run id %q", id)
+		}
+		for _, path := range []string{record, other} {
+			if _, err := os.Stat(path); err != nil {
+				t.Errorf("run id %q removed %s: %v", id, path, err)
+			}
+		}
+	}
+	state := t.TempDir()
+	dir, err := ScratchDir(state, "run-1")
+	if err != nil || dir != filepath.Join(state, "scratch", "run-1") {
+		t.Fatalf("ScratchDir = %s, %v", dir, err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "module"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(dir, "module"), 0555); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveScratch(state, "run-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("scratch left: %v", err)
 	}
 }
 

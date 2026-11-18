@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const DefaultMinFreeMB = 1024
@@ -45,10 +46,29 @@ func existingDir(dir string) string {
 	}
 }
 
-func RemoveScratch(dir string) error {
-	if dir == "" {
-		return nil
+func ValidRunID(id string) error {
+	if id == "" || id == "." || id == ".." || strings.ContainsAny(id, `/\`) || filepath.Base(id) != id {
+		return fmt.Errorf("run id %q must be a single path element", id)
 	}
+	return nil
+}
+
+func ScratchDir(stateDir, runID string) (string, error) {
+	if err := ValidRunID(runID); err != nil {
+		return "", err
+	}
+	return filepath.Abs(filepath.Join(stateDir, "scratch", runID))
+}
+
+func RemoveScratch(stateDir, runID string) error {
+	dir, err := ScratchDir(stateDir, runID)
+	if err != nil {
+		return err
+	}
+	return removeTree(dir)
+}
+
+func removeTree(dir string) error {
 	_ = filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
 		if err == nil && entry.IsDir() {
 			_ = os.Chmod(path, 0700)
@@ -67,7 +87,7 @@ func (e *Engine) clearScratch() {
 		if entry.Name() == scratchPids {
 			continue
 		}
-		if err := RemoveScratch(filepath.Join(e.Config.ScratchDir, entry.Name())); err != nil {
+		if err := removeTree(filepath.Join(e.Config.ScratchDir, entry.Name())); err != nil {
 			e.progress("  warning: scratch: %v", err)
 		}
 	}
