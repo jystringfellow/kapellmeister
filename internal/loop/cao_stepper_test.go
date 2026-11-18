@@ -308,7 +308,10 @@ func TestPreflightAgainstCAODeletesTheChosenNameWhenSeatingReturnsNoIdentity(t *
 			if tc.cancelAt == 2 {
 				attempts = 2
 			}
-			if tc.timeout || tc.cancelAt == 1 {
+			if tc.timeout {
+				attempts = 2
+			}
+			if tc.cancelAt == 1 {
 				attempts = 1
 			}
 			if len(chosen) != attempts || len(deleted) != attempts {
@@ -363,7 +366,7 @@ func TestALessonsTerminalIsInspectedAfterItsStepDeadlineExpires(t *testing.T) {
 	})
 }
 
-func TestPreflightDoesNotRetryASeatWhenItsLaunchContextExpires(t *testing.T) {
+func TestPreflightRetriesASeatOnceWhenItsLaunchContextExpiresAndCleansUpBothNames(t *testing.T) {
 	dir := t.TempDir()
 	synctest.Test(t, func(t *testing.T) {
 		client := cao.NewClient("http://cao.invalid")
@@ -395,12 +398,12 @@ func TestPreflightDoesNotRetryASeatWhenItsLaunchContextExpires(t *testing.T) {
 		if callError != context.DeadlineExceeded {
 			t.Fatalf("call error = %v", callError)
 		}
-		if len(chosen) != 1 {
-			t.Errorf("seat requests = %v, want one timed-out attempt", chosen)
+		if len(chosen) != 2 || chosen[1] != chosen[0]+"r" {
+			t.Errorf("seat requests = %v, want one timed-out attempt and one retry under a fresh name", chosen)
 		}
 		equal(t, deleted, chosen)
 		r := results[0]
-		if r.OK || r.Retried || r.SeatRetries != 0 || r.Error != context.DeadlineExceeded.Error() || r.Unseated != 1 || len(r.TeardownErrors) != 0 {
+		if r.OK || !r.Retried || r.SeatRetries != 1 || r.SeatRetryError != context.DeadlineExceeded.Error() || r.Error != context.DeadlineExceeded.Error() || r.Unseated != 2 || len(r.TeardownErrors) != 0 {
 			t.Errorf("timed-out seat result = %+v", r)
 		}
 	})

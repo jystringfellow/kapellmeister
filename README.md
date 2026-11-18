@@ -336,8 +336,11 @@ configure them before contacting CAO. Checks run concurrently once their chairs 
 reports `seat retried N time(s) after <first error>`. Other failures keep one immediate retry;
 a preflight check timeout gets one fresh chair and one retry. km reports whether that second
 attempt passed or failed. Two timeouts can take two full `preflight_timeout`s plus CAO's readiness
-margins and seating time. Seat call timeouts, including an expired launch context, and permission
-blockers are not retried. Real work steps get no additional retry.
+margins and seating time. A seat call that times out, including an expired launch context, gets
+one immediate retry under a fresh name when it is the chair's first attempt, reported as a seat
+retry; a second one fails the chair, so a seat that never comes up can take two launch bounds.
+So every preflight failure gets at least one retry before it fails the run, except an interrupt
+and a permission blocker, which needs a person. Real work steps get no additional retry.
 A seat launch is bounded at three-eighths of `preflight_timeout` (90s by default, at least 10s),
 and never longer than the CAO client's 90s launch bound; other seats wait for that launch to finish.
 Deleting a session also waits its turn, so a deletion never overlaps another chair's creation.

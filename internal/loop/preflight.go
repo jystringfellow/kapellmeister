@@ -137,17 +137,23 @@ func preflightChairAttempts(ctx context.Context, stepper interface {
 			timeoutRetried = true
 			continue
 		}
-		if res.OK || res.Blocker != "" || ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
+		var seatErr *seatFailure
+		seatFailed := errors.As(err, &seatErr)
+		seatTimedOut := seatFailed && errors.Is(err, context.DeadlineExceeded)
+		if res.OK || res.Blocker != "" || ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) && !seatTimedOut {
 			break
 		}
-		var seatErr *seatFailure
-		transient := errors.As(err, &seatErr) && transientSeatFailure(err, attemptName)
+		transient := seatFailed && transientSeatFailure(err, attemptName)
 		if !transient && attempt >= 1 || transient && attempt >= len(seatRetryBackoff) {
 			break
 		}
 		if res.Session != "" {
 			unseat(res.Session)
 			res.Session, res.TerminalID = "", ""
+		}
+		if seatTimedOut {
+			seatRetries++
+			seatRetryError = err.Error()
 		}
 		if transient {
 			if seatRetryError == "" {

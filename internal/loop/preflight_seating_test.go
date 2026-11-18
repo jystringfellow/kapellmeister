@@ -70,8 +70,11 @@ func TestPreflightDoesNotBackOffForA400AboutSomethingElse(t *testing.T) {
 func TestPreflightStopsRetryingASeatAfterTheLastBackoffAndReportsTheLastError(t *testing.T) {
 	assertSeatRetry(t, "500", 9, 3)
 }
-func TestPreflightDoesNotRetryASeatWhoseCAOCallTimedOut(t *testing.T) {
-	assertSeatRetry(t, "timeout", 9, 0)
+func TestPreflightRetriesASeatWhoseCAOCallTimedOutOnceOnAFreshNameWithoutWaiting(t *testing.T) {
+	assertSeatRetry(t, "timeout", 1, 1)
+}
+func TestPreflightFailsTheChairWhenItsSeatCallTimesOutAgainOnTheOneRetry(t *testing.T) {
+	assertSeatRetry(t, "timeout", 9, 1)
 }
 
 func assertSeatRetry(t *testing.T, kind string, failures, retries int) {
@@ -134,7 +137,7 @@ func assertSeatRetry(t *testing.T, kind string, failures, retries int) {
 		data, _ := json.Marshal(r)
 		var fields map[string]any
 		json.Unmarshal(data, &fields)
-		if kind == "500" || kind == "400 session" {
+		if kind == "500" || kind == "400 session" || kind == "timeout" {
 			if fields["seat_retries"] != float64(retries) || fields["seat_retry_error"] == nil {
 				t.Errorf("retry record %s", data)
 			}
@@ -205,7 +208,7 @@ func TestPreflightKeepsOneImmediateRetryForAnHTTP500FromACheck(t *testing.T) {
 	})
 }
 
-func TestPreflightRetriesOnlyACheckWhoseDeadlineErrorIsWrapped(t *testing.T) {
+func TestPreflightRetriesAWrappedDeadlineErrorOnceFromASeatOrACheck(t *testing.T) {
 	for _, step := range []string{"seat", "check"} {
 		t.Run(step, func(t *testing.T) {
 			dir := t.TempDir()
@@ -225,14 +228,14 @@ func TestPreflightRetriesOnlyACheckWhoseDeadlineErrorIsWrapped(t *testing.T) {
 				t.Fatal(err)
 			}
 			r := results[0]
-			want := 1
-			if step == "check" {
-				want = 2
+			seatRetries := 0
+			if step == "seat" {
+				seatRetries = 1
 			}
-			if attempts != want || r.OK || r.Retried != (step == "check") || r.SeatRetries != 0 || r.Error != timeout.Error() {
+			if attempts != 2 || r.OK || !r.Retried || r.SeatRetries != seatRetries || r.Error != timeout.Error() {
 				t.Errorf("attempts = %d, result = %+v", attempts, r)
 			}
-			if step == "seat" && r.Unseated != 1 {
+			if step == "seat" && r.Unseated != 2 {
 				t.Errorf("timed-out seat was not cleaned up: %+v", r)
 			}
 			if step == "check" && (r.Session == "" || len(host.unseated) != 1) {
