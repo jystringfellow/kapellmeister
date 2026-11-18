@@ -84,3 +84,25 @@ func TestARestoreRecordDoesNotCountAsAnUnattributedStepInTheReport(t *testing.T)
 		t.Fatalf("%v", p)
 	}
 }
+
+func TestReportCountsRunsWhereVerifyPassedOnlyAfterARetryUnderItsOwnNameApartFromRetriedSteps(t *testing.T) {
+	root := recordRoot(t)
+	sum := ensembleSummary{Result: loop.Result{RunID: "flaky-run", Outcome: loop.Approved, Rounds: 2, VerifyRetried: []loop.VerifyRetry{{Round: 1, Attempts: 2}, {Round: 2, Attempts: 2}}}}
+	data, err := json.Marshal(sum)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(root, "flaky-run", "result.json"), string(data))
+	doc := reportJSON(t, root)
+	totals := doc["totals"].(map[string]any)
+	if totals["verify_retried"] != float64(1) || totals["retries"] != nil {
+		t.Fatalf("%v", totals)
+	}
+	if run := doc["runs"].([]any)[0].(map[string]any); run["verify_retried"] != float64(2) || run["retries"] != nil {
+		t.Fatalf("%v", run)
+	}
+	out, _ := captureReport(t, root)
+	if !strings.Contains(out, "verify retried: 1\n") || strings.Contains(out, "\nretried: ") {
+		t.Fatal(out)
+	}
+}
