@@ -50,7 +50,7 @@ type setupFile struct {
 
 func readSetup(root string) (map[string]setupFile, error) {
 	setup := map[string]setupFile{}
-	for _, name := range []string{".kapellmeister/config.toml", "scripts/verify"} {
+	for _, name := range []string{".kapellmeister/config.toml", "scripts/verify", StrictFile} {
 		path := filepath.Join(root, name)
 		info, err := os.Lstat(path)
 		if os.IsNotExist(err) {
@@ -130,7 +130,7 @@ type fileState struct {
 
 func setupSnapshot(root string) (map[string]fileState, error) {
 	state := map[string]fileState{}
-	for _, name := range []string{".kapellmeister", "scripts/verify"} {
+	for _, name := range []string{".kapellmeister", "scripts/verify", StrictFile} {
 		err := filepath.WalkDir(filepath.Join(root, name), func(path string, entry fs.DirEntry, err error) error {
 			if os.IsNotExist(err) {
 				return nil
@@ -166,7 +166,7 @@ func setupSnapshot(root string) (map[string]fileState, error) {
 				return err
 			}
 			state[rel] = value
-			if name == "scripts/verify" {
+			if name != ".kapellmeister" {
 				parent, err := os.Lstat(filepath.Join(root, "scripts"))
 				if err != nil {
 					return err
