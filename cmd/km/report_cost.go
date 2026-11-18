@@ -118,7 +118,8 @@ func (report *runReport) addCosts(prices map[string]loop.ReportPrice, source str
 	report.priceSource = source
 	unpriced := map[string]bool{}
 	unpricedCache := map[string]map[string]bool{}
-	note := func(models map[string]reportTokens) {
+	note := func(models map[string]reportTokens) []string {
+		var without []string
 		for model, tokens := range models {
 			if tokens == (reportTokens{}) {
 				continue
@@ -126,6 +127,7 @@ func (report *runReport) addCosts(prices map[string]loop.ReportPrice, source str
 			price, ok := prices[model]
 			if !ok {
 				unpriced[model] = true
+				without = append(without, model)
 				continue
 			}
 			for key, missing := range map[string]bool{
@@ -140,6 +142,8 @@ func (report *runReport) addCosts(prices map[string]loop.ReportPrice, source str
 				}
 			}
 		}
+		sort.Strings(without)
+		return without
 	}
 	for i := range report.Runs {
 		run := &report.Runs[i]
@@ -156,7 +160,7 @@ func (report *runReport) addCosts(prices map[string]loop.ReportPrice, source str
 	if report.Parts != nil {
 		for _, row := range report.Parts.Rows {
 			row.ReportCost = row.Usage.cost(prices)
-			note(row.Usage.models)
+			row.UnpricedModels = note(row.Usage.models)
 		}
 	}
 	for model := range unpriced {
