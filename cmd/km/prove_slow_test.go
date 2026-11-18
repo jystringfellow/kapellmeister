@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,17 +61,41 @@ func TestProveReportsAStepThatFailsOnBothCleanCopiesAsAFailedProofAndNotAsFlaky(
 	}
 }
 
-func TestProveMeasuresEachStepAndNeedsABreakThatFailsInTheSlowestRequiredSuite(t *testing.T) {
+const suiteUnbroken = `required suites with no break patch that fails in their step: %s; each needs a break patch that its step is the first to catch`
+
+func TestProveRefusesAHollowedOutRequiredSuiteBecauseNoBreakFailsInItsStep(t *testing.T) {
+	root := suiteFixture(t)
+	proofWrite(t, root, initrepo.ScriptFile, suiteSteps("run 'fast' 'sh suites/fast.sh'\nrun 'slow' 'true'\n"), 0755)
+	proofWrite(t, root, loop.ConfigFile, suiteConfig(suiteRequired), 0644)
+	result := slowProof(t, root, suitePatch(t, "source.patch", suiteSourceBreak), suitePatch(t, "test.patch", suiteTestBreak))
+	if result.Status != "suite_unbroken" || result.ExitStatus != 15 || !strings.Contains(result.Reason, fmt.Sprintf(suiteUnbroken, `"slow"`)) {
+		t.Fatal(result)
+	}
+}
+
+func TestProveNeedsABreakInEachOfTwoRequiredSuitesThatTakeTheSameTimeWhicheverIsListedFirst(t *testing.T) {
+	for _, required := range []string{"['fast', 'again']", "['again', 'fast']"} {
+		root := suiteFixture(t)
+		proofWrite(t, root, initrepo.ScriptFile, suiteSteps("run 'fast' 'sh suites/fast.sh'\nrun 'again' 'sh suites/fast.sh'\n"), 0755)
+		proofWrite(t, root, loop.ConfigFile, suiteConfig("verify_required = "+required+"\n"), 0644)
+		result := slowProof(t, root, suitePatch(t, "source.patch", suiteSourceBreak), suitePatch(t, "test.patch", suiteTestBreak))
+		if result.Status != "suite_unbroken" || !strings.Contains(result.Reason, fmt.Sprintf(suiteUnbroken, `"again"`)) {
+			t.Fatal(required, result)
+		}
+	}
+}
+
+func TestProveMeasuresEachStepAndNeedsABreakThatFailsInEveryRequiredSuite(t *testing.T) {
 	root := suiteFixture(t)
 	proofWrite(t, root, initrepo.ScriptFile, suiteScript("fast", "slow"), 0755)
 	proofWrite(t, root, loop.ConfigFile, suiteConfig(suiteRequired), 0644)
 	source, test, slowOnly := suitePatch(t, "source.patch", suiteSourceBreak), suitePatch(t, "test.patch", suiteTestBreak), suitePatch(t, "slow.patch", suiteSlowOnlyBreak)
 	result := slowProof(t, root, source, test)
-	if result.Status != "slowest_suite_unbroken" || result.ExitStatus != 15 || result.SlowestRequired != "slow" {
+	if result.Status != "suite_unbroken" || result.ExitStatus != 15 || !strings.Contains(result.Reason, fmt.Sprintf(suiteUnbroken, `"slow"`)) {
 		t.Fatal(result)
 	}
-	if want := `no break patch makes verify fail in "slow", the slowest required suite`; !strings.Contains(result.Reason, want) {
-		t.Fatal(result.Reason)
+	if result := slowProof(t, root, slowOnly); result.Status != "suite_unbroken" || !strings.Contains(result.Reason, fmt.Sprintf(suiteUnbroken, `"fast"`)) {
+		t.Fatal(result)
 	}
 	for _, b := range result.Breaks {
 		if b.FailedStep != "fast" {
@@ -86,7 +111,7 @@ func TestProveMeasuresEachStepAndNeedsABreakThatFailsInTheSlowestRequiredSuite(t
 		t.Fatal(result)
 	}
 	proofWrite(t, root, loop.ConfigFile, suiteConfig(""), 0644)
-	if result := slowProof(t, root, source, test); result.Status != "proved" || result.SlowestRequired != "" {
+	if result := slowProof(t, root, source, test); result.Status != "proved" {
 		t.Fatal(result)
 	}
 }

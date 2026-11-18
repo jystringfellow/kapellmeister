@@ -67,9 +67,6 @@ func printProofDetail(out io.Writer, r prove.Result, detail bool) {
 	for _, flaky := range r.Flaky {
 		fmt.Fprintf(out, "flaky step: %s (failed in %s, passed in %s)\n", flaky.Step, flaky.FailedIn, flaky.PassedIn)
 	}
-	if r.SlowestRequired != "" {
-		fmt.Fprintf(out, "slowest required suite: %s\n", r.SlowestRequired)
-	}
 	if r.BreakTimeoutMS > r.TimeoutMS {
 		fmt.Fprintf(out, "break timeout raised from %s to %s: twice the slowest clean run\n", time.Duration(r.TimeoutMS)*time.Millisecond, time.Duration(r.BreakTimeoutMS)*time.Millisecond)
 	}

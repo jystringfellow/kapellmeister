@@ -1079,11 +1079,14 @@ With `[test] verify_required` set, each clean run must have run a step labelled 
 required suite. Prove gives verify a file in `KAPELLMEISTER_VERIFY_STEPS`, and the `run` wrapper
 km init writes appends each label it runs to it. A required suite missing from either clean run
 is reported as `suite_not_run`, naming the suite and the run; a wrapper written before this
-records nothing and is told so. Running the step does not show the step tests anything: a break
-patch that only that suite catches does. Prove times each step from the wrapper's record, and with
-required suites and break patches at least one patch must make verify fail in the step of the
-slowest required suite; otherwise it reports `slowest_suite_unbroken` and names the suite. A patch
-that an earlier step also catches does not count, because verify stops there.
+records nothing and is told so. Running the step does not show the step tests anything, so with
+break patches every required suite needs at least one patch that makes verify fail in its step;
+otherwise prove reports `suite_unbroken` and names the suites (`unbroken` in the JSON). A patch
+that an earlier step also catches does not count, because verify stops there. A required step
+that runs but tests nothing, such as `run 'slow' 'true'`, therefore cannot be proved. To know
+which step failed, the wrapper writes the failing label to the steps file's name with `.failed`
+added; a wrapper without that line is told so. Prove also times each step from the wrapper's
+record and reports the durations.
 
 Each break run is given the verify timeout or twice the slowest clean run, whichever is longer,
 so a verify that passes near its limit does not time out on its breaks. The output says when
@@ -1099,7 +1102,7 @@ that raised it, and the JSON carries `timeout_ms` and `break_timeout_ms`.
 | 12 | Verify failed or was flaky on clean copies |
 | 13 | A break patch left verify passing |
 | 14 | A required suite's step did not run in a clean run |
-| 15 | No break patch made verify fail in the slowest required suite |
+| 15 | A required suite has no break patch that makes verify fail in its step |
 
 `-timeout D` is a positive limit per verify run; it defaults to `[test] verify_timeout`, then `10m`. Output names each clean run and
 patch, reports exit codes and durations, and bounds verify output to 40 lines of 300 characters.

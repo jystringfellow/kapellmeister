@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -63,10 +64,10 @@ type Result struct {
 	Runs       []RunResult   `json:"runs"`
 	Breaks     []BreakResult `json:"breaks"`
 
-	Flaky           []FlakyStep `json:"flaky,omitempty"`
-	SlowestRequired string      `json:"slowest_required,omitempty"`
-	TimeoutMS       int64       `json:"timeout_ms,omitempty"`
-	BreakTimeoutMS  int64       `json:"break_timeout_ms,omitempty"`
+	Flaky          []FlakyStep `json:"flaky,omitempty"`
+	Unbroken       []string    `json:"unbroken,omitempty"`
+	TimeoutMS      int64       `json:"timeout_ms,omitempty"`
+	BreakTimeoutMS int64       `json:"break_timeout_ms,omitempty"`
 }
 
 func Prove(ctx context.Context, options Options) (result Result) {
@@ -268,20 +269,6 @@ func Prove(ctx context.Context, options Options) (result Result) {
 			return finish("suite_not_run", 14, reason)
 		}
 	}
-	slowestTime := int64(-1)
-	for _, suite := range test.VerifyRequired {
-		var took int64
-		for _, run := range result.Runs {
-			for _, step := range run.Steps {
-				if step.Label == suite {
-					took += step.DurationMS
-				}
-			}
-		}
-		if took > slowestTime {
-			result.SlowestRequired, slowestTime = suite, took
-		}
-	}
 	breakTimeout := timeout
 	if len(options.Breaks) > 0 {
 		breakTimeout = max(timeout, 2*time.Duration(max(result.Runs[0].DurationMS, result.Runs[1].DurationMS))*time.Millisecond)
@@ -316,12 +303,19 @@ func Prove(ctx context.Context, options Options) (result Result) {
 	if len(options.Breaks) == 0 {
 		return finish("not_proved", 11, "passes, not proved; a break patch is needed: -break PATCH")
 	}
-	if slowest := result.SlowestRequired; slowest != "" && !slices.ContainsFunc(result.Breaks, func(b BreakResult) bool { return b.FailedStep == slowest }) {
-		reason := fmt.Sprintf("no break patch makes verify fail in %q, the slowest required suite (%s over two clean runs): add a break patch that only that suite catches", slowest, time.Duration(slowestTime)*time.Millisecond)
+	var unbroken []string
+	for _, suite := range test.VerifyRequired {
+		if !slices.ContainsFunc(result.Breaks, func(b BreakResult) bool { return b.FailedStep == suite }) {
+			result.Unbroken = append(result.Unbroken, suite)
+			unbroken = append(unbroken, strconv.Quote(suite))
+		}
+	}
+	if len(unbroken) > 0 {
+		reason := fmt.Sprintf("required suites with no break patch that fails in their step: %s; each needs a break patch that its step is the first to catch", strings.Join(unbroken, ", "))
 		if !slices.ContainsFunc(result.Breaks, func(b BreakResult) bool { return b.FailedStep != "" }) {
 			reason += fmt.Sprintf("; verify did not record which step failed: its run wrapper must write the failing label to the file named by $%s with .failed added, as the wrapper km init writes does", initrepo.StepsEnv)
 		}
-		return finish("slowest_suite_unbroken", 15, reason)
+		return finish("suite_unbroken", 15, reason)
 	}
 	return finish("proved", 0, "passed twice and every break patch made verify fail")
 }
