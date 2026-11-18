@@ -1098,7 +1098,11 @@ implement, review, gate and test steps use it, clamped to each step's bounds. A 
 answer falls back to the defaults. `-sizing` overrides the mode for one run.
 
 After every `escalate_after` rounds without approval, the implementer moves up one tier (within
-its bounds) in a fresh terminal, including when its starting tier is pinned. Set `escalate = false`
+its bounds) in a fresh terminal, including when its starting tier is pinned. When a pinned
+implementer can be moved this way, `km run` says so before the run starts, under its `tiers` lines
+and in a detached run's output: the pinned tier, the tier escalation can reach, after how many
+rounds, and how to hold the pin. It prints nothing extra when escalation is off or the step's
+bounds already hold the pin. Set `escalate = false`
 in the selected ensemble to turn escalation off for that run. `true` or an omitted key leaves
 `[sizing] escalate_after` in charge; an ensemble cannot enable escalation when the repository sets
 `escalate_after = 0`.
