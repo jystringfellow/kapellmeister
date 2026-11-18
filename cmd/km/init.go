@@ -14,6 +14,8 @@ import (
 	"github.com/jystringfellow/kapellmeister/internal/loop"
 )
 
+const initSavedTimeoutCeiling = 8 * time.Hour
+
 func initAt(args []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("init", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -37,6 +39,9 @@ func initAt(args []string, stdout, stderr io.Writer) error {
 		*timeout = 10 * time.Minute
 		if test, err := loop.ResolveTest(*worktree); err == nil {
 			*timeout = test.Timeout(*timeout)
+		}
+		if *timeout > initSavedTimeoutCeiling {
+			return fmt.Errorf("[test] verify_timeout is %s, more than the %s km init uses by itself: pass -timeout to allow it", *timeout, initSavedTimeoutCeiling)
 		}
 	}
 	if set := flagsSet(flags); set["verify"] && *verify == "" || set["check"] && *check == "" {

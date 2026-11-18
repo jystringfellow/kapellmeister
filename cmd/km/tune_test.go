@@ -943,7 +943,7 @@ func TestTuneProofReuseRequiresIdenticalConfigModesAndOrderedBreakPatchContents(
 				}
 				return prove.Result{Status: "proved"}
 			}
-			hooks, _, err := tuneHooks(root, root, head, runID, t.TempDir(), dir, setup, &bytes.Buffer{}, time.Minute, true, 30*time.Minute, time.Now().Add(30*time.Minute), tune.Requirements{})
+			hooks, _, err := tuneHooks(root, root, head, runID, t.TempDir(), dir, setup, &bytes.Buffer{}, time.Minute, true, time.Now().Add(30*time.Minute), tune.Requirements{})
 			if err != nil {
 				t.Fatal(err)
 			}

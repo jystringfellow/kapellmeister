@@ -1,9 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jystringfellow/kapellmeister/internal/initrepo"
 	"github.com/jystringfellow/kapellmeister/internal/loop"
@@ -75,13 +79,27 @@ func TestAnExplicitBudgetIsKeptAndTuneSaysUpFrontWhetherAWholeProofFitsItAndWhat
 	}
 }
 
-func TestATuneAtTheDefaultVerifyTimeoutStopsAfterOneCleanRunTimeoutAndNamesTheFlag(t *testing.T) {
+func limitsThreeRounds(t *testing.T) {
+	t.Helper()
+	path := filepath.Join(loop.Home(), "config.toml")
+	config, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(config), "rounds = 1") {
+		t.Fatal(string(config), err)
+	}
+	proofWrite(t, loop.Home(), "config.toml", strings.Replace(string(config), "rounds = 1", "rounds = 3", 1), 0644)
+}
+
+func TestATuneAtTheDefaultVerifyTimeoutEndsAfterOneCleanRunTimeoutWithoutAnotherWriterStepAndNamesTheFlag(t *testing.T) {
 	root := suiteFixture(t)
+	limitsThreeRounds(t)
 	f := &tuneCAO{writer: suiteWriter("", "fast", "slow")}
 	calls := limitsTimeout(t)
 	code, out := tuneCall(t, "verify", "-worktree", root, "-cao", f.serve(t).URL, "-budget", "10h")
-	if code == 0 || *calls != 1 || strings.Contains(out, "raised") {
-		t.Fatal(code, *calls, out)
+	if code == 0 || *calls != 1 || strings.Contains(out, "raised") || len(f.steps) != 1 || f.steps[0] != "tune-1.json" {
+		t.Fatal(code, *calls, f.steps, out)
+	}
+	if !strings.Contains(out, "\nverify_limit after 1 round(s) in ") || strings.Contains(out, "rounds_exhausted") {
+		t.Fatal(out)
 	}
 	if !strings.Contains(out, "clean run 1: verify timed out; a verify is never narrowed for time, and 5m0s is only the default limit: pass -verify-timeout with the time one verify run needs, and km sizes the budget from it and saves the limit") {
 		t.Fatal(out)
@@ -91,13 +109,75 @@ func TestATuneAtTheDefaultVerifyTimeoutStopsAfterOneCleanRunTimeoutAndNamesTheFl
 	}
 }
 
-func TestWhenARaiseDoesNotFitTuneNamesTheVerifyTimeoutAndBudgetThatWould(t *testing.T) {
+func TestARaiseThatDoesNotFitEndsTheRunWithoutAnotherWriterStepAndNamesTheLimitAndTheBudgetKmWouldDeriveFromIt(t *testing.T) {
 	root := suiteFixture(t)
+	limitsThreeRounds(t)
 	f := &tuneCAO{writer: suiteWriter("", "fast", "slow")}
-	limitsTimeout(t)
-	_, out := tuneCall(t, "verify", "-worktree", root, "-cao", f.serve(t).URL, "-verify-timeout", "45m")
-	if !strings.Contains(out, "the timeout is not raised to 1h30m0s: a proof at that limit can take 7h30m0s (two clean runs and 3 break runs) and 2h25m0s of the budget is left: pass -verify-timeout 1h30m0s and -budget 8h15m0s or more") {
+	calls := limitsTimeout(t)
+	code, out := tuneCall(t, "verify", "-worktree", root, "-cao", f.serve(t).URL, "-verify-timeout", "45m")
+	if code == 0 || *calls != 1 || len(f.steps) != 1 || !strings.Contains(out, "\nverify_limit after 1 round(s) in ") {
+		t.Fatal(code, *calls, f.steps, out)
+	}
+	if !strings.Contains(out, "the timeout is not raised to 1h30m0s: a proof at that limit can take 7h30m0s (two clean runs and 3 break runs) and 2h25m0s of the budget is left: pass -verify-timeout 1h30m0s, which sizes the budget at 6h10m0s, and pass -budget for more") {
 		t.Fatal(out)
+	}
+	f = &tuneCAO{writer: suiteWriter("", "fast", "slow")}
+	if _, out := tuneCall(t, "verify", "-worktree", root, "-cao", f.serve(t).URL, "-verify-timeout", "1h30m"); !strings.HasPrefix(out, "budget 6h10m0s: ") {
+		t.Fatal(out)
+	}
+}
+
+func TestTuneRefusesToDeriveABudgetAboveEightHoursAndAsksForAnExplicitOneBeforeSeatingAnyChair(t *testing.T) {
+	root := suiteFixture(t)
+	proofWrite(t, root, loop.ConfigFile, suiteConfig("verify_timeout = '100h'\n"), 0644)
+	f := &tuneCAO{writer: suiteWriter("verify_timeout = '100h'\n", "fast", "slow")}
+	calls := limitsTimeout(t)
+	code, out := tuneCall(t, "verify", "-worktree", root, "-cao", f.serve(t).URL)
+	if code == 0 || *calls != 0 || len(f.steps) != 0 || len(f.seated) != 0 {
+		t.Fatal(code, *calls, f.steps, f.seated, out)
+	}
+	if !strings.Contains(out, "a whole proof at the 100h0m0s verify timeout needs a budget of 400h10m0s, more than the 8h0m0s km sets by itself: pass -budget to allow it, or -verify-timeout for a shorter limit") {
+		t.Fatal(out)
+	}
+	if _, out := tuneCall(t, "verify", "-worktree", root, "-cao", f.serve(t).URL, "-budget", "500h"); !strings.HasPrefix(out, "-budget 500h0m0s holds a whole proof at the 100h0m0s verify timeout") || *calls != 1 {
+		t.Fatal(*calls, out)
+	}
+}
+
+func TestADetachedTunePrintsItsBudgetLineFromTheParent(t *testing.T) {
+	root := suiteFixture(t)
+	code, out := tuneCall(t, "verify", "-worktree", root, "-cao", unreachableCAO, "-detach", "-verify-timeout", "45m")
+	if code == 0 || !strings.HasPrefix(out, limitsDerived) {
+		t.Fatal(code, out)
+	}
+}
+
+func TestInitRefusesASavedVerifyTimeoutAboveEightHoursUnlessTheTimeoutIsGivenByFlag(t *testing.T) {
+	root := suiteFixture(t)
+	proofWrite(t, root, initrepo.ScriptFile, suiteScript("fast"), 0755)
+	proofWrite(t, root, loop.ConfigFile, suiteConfig("verify_timeout = '100h'\n"), 0644)
+	var out, stderr bytes.Buffer
+	err := initAt([]string{"-worktree", root}, &out, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "[test] verify_timeout is 100h0m0s, more than the 8h0m0s km init uses by itself: pass -timeout to allow it") || strings.Contains(out.String(), "passed") {
+		t.Fatal(err, out.String())
+	}
+	if out, err := initCall(t, root, "-timeout", "10s"); err != nil || !strings.Contains(out, "passed") {
+		t.Fatal(out, err)
+	}
+}
+
+func TestProveNamesTheBreakTimeoutWhenABreakRunIsWhatTimedOut(t *testing.T) {
+	root := suiteFixture(t)
+	proofWrite(t, root, "suites/slow.sh", "sleep 1.8\n", 0644)
+	proofGit(t, root, "add", ".")
+	proofGit(t, root, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "slower")
+	proofWrite(t, root, initrepo.ScriptFile, suiteScript("slow"), 0755)
+	proofWrite(t, root, loop.ConfigFile, suiteConfig(""), 0644)
+	hang := suitePatch(t, "hang.patch", "diff --git a/suites/slow.sh b/suites/slow.sh\n--- a/suites/slow.sh\n+++ b/suites/slow.sh\n@@ -1 +1 @@\n-sleep 1.8\n+sleep 30\n")
+	report := proofJSON(t, root, "-timeout", "3s", "-break", hang)
+	limit := time.Duration(report.BreakTimeoutMS) * time.Millisecond
+	if report.ExitStatus != 3 || limit <= 3*time.Second || !strings.Contains(report.Reason, "verify timed out at "+limit.String()+", the break timeout; pass -timeout D") {
+		t.Fatal(limit, report)
 	}
 }
 

@@ -30,7 +30,7 @@ func TestTuneStopsRaisingTheVerifyTimeoutWhenAWholeProofAtTheNextLimitDoesNotFit
 	if !strings.Contains(out, "verify timed out at 5m0s; a verify is never narrowed for time, so the timeout is raised to 10m0s and saved as [test] verify_timeout") {
 		t.Fatal(out)
 	}
-	if !strings.Contains(out, "the timeout is not raised to 20m0s: a proof at that limit can take 1h40m0s (two clean runs and 3 break runs) and 55m0s of the budget is left: pass -verify-timeout 20m0s and -budget 1h55m0s or more") || !initrepo.IsStub(initRead(t, root, initrepo.ScriptFile)) {
+	if !strings.Contains(out, "the timeout is not raised to 20m0s: a proof at that limit can take 1h40m0s (two clean runs and 3 break runs) and 55m0s of the budget is left: pass -verify-timeout 20m0s, which sizes the budget at 1h30m0s, and pass -budget for more") || !initrepo.IsStub(initRead(t, root, initrepo.ScriptFile)) {
 		t.Fatal(out)
 	}
 }
