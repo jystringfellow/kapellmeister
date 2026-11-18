@@ -588,6 +588,14 @@ for `[tiers]`, because only you know what your accounts can run. `[cao]`, `[chai
 `[ensembles]`, `[report]`, `[run] worktree_dir` and `[run] trust_folder` are machine-only
 (see [Trusting the folder](#trusting-the-folder)); `[test]` and `[run] base` are repository-only.
 Putting one in the wrong file is an error.
+
+`[run] min_free_mb` (default `1024`, either file, the repository's value wins) is the free space,
+in MiB, that `km run`, `km play` and `km tune verify` require on the filesystems holding the
+worktree and the state directory. They check before seating any chair and again before each
+round. A run below it stops with, for example,
+`low disk: /path has 10 MB free and this run needs 1024 MB ([run] min_free_mb); free some space or lower the setting`
+rather than failing in a later step; mid-run this is the failed run's reason. `0` turns the check
+off, and free space that cannot be measured never stops a run.
 `$CAO_API_BASE_URL` overrides `[cao] url`. State lives in `~/.kapellmeister/state` (`$KAPELLMEISTER_STATE_DIR`).
 User-only `[report] dirs` adds search directories to `<state>/runs` for bare report, status and
 wait commands and their MCP tools. `[report.prices."<model>"]` supplies input/output
@@ -664,6 +672,7 @@ dirs = ["~/kept-sandboxes"]
 timeout = "60m"                     # each agent step
 reply_grace = "15m"
 preflight_timeout = "4m"
+min_free_mb = 1024                  # free disk a run needs, in MiB; 0 turns the check off
 blocker_poll = "20s"
 lessons = true                     # off by default; proposals need human review
 worktree_dir = "~/Code/worktrees"   # optional; defaults to the system temp directory
@@ -766,7 +775,12 @@ test step, including failure, timeout or interruption, km reports each distinct 
 km never signals these processes. It silently skips non-regular `pids` files (including FIFOs) and
 files larger than 1 MiB. The concurrent test-plan step
 relies on its prompt to forbid file changes because implementation is editing at the same time.
-km creates the scratch directory and writes nothing into it. What a tester needs to set up belongs
+km creates the scratch directory and writes nothing into it. After each test step and its
+left-running report, km removes everything in scratch except `pids`, so a later round starts
+without the earlier round's copies; when the run ends, whatever its outcome, km removes the
+directory. `km tune verify` removes its scratch the same way; its break patches are already in the
+run record. Read-only directories, such as a copied module cache, are removed too. A removal that
+fails is reported as a warning and does not change the outcome. What a tester needs to set up belongs
 in the repository's instruction files and lessons: isolated environments, tools to avoid and how
 to start a second conductor are knowledge about that repository. See the [worked example](#checked-in-lessons)
 in this repository's `AGENTS.md`, "Exercising km live", `scripts/nested-km-env` and
@@ -1509,7 +1523,7 @@ RUN                     STARTED              REPOSITORY             ENSEMBLE  RO
 
 Run records (`config.json`, `telemetry.jsonl`, `current.json`, `result.json` and `replies/`) live in
 `<state dir>/runs/<run id>/`. Tester scratch lives separately in `<state dir>/scratch/<run id>/`
-and is left in place after the run. Detached runs also keep `output.log` (complete stdout and
+and is removed when the run ends. Detached runs also keep `output.log` (complete stdout and
 stderr) and `launch.json` (the run id, worktree, base branch and task text passed to their run
 process). They publish `current.json` before preflight and record failures from that point.
 Once `telemetry.jsonl` is created, `km run` and `km play`

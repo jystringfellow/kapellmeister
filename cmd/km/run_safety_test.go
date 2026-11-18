@@ -49,7 +49,7 @@ func safetyGit(t *testing.T, worktree string, args ...string) string {
 	return strings.TrimSpace(string(data))
 }
 
-func TestRunAndPlayCreateTheScratchDirectoryUnderStateScratchOutsideTheRunRecords(t *testing.T) {
+func TestRunAndPlayPlaceTheScratchDirectoryUnderStateScratchOutsideTheRunRecordsAndRemoveItAtTheEnd(t *testing.T) {
 	for _, command := range []string{"run", "play"} {
 		t.Run(command, func(t *testing.T) {
 			var wt string
@@ -74,9 +74,8 @@ func TestRunAndPlayCreateTheScratchDirectoryUnderStateScratchOutsideTheRunRecord
 			}
 			dir, result := onlyRunResult(t)
 			scratch := filepath.Join(loop.StateDir(), "scratch", filepath.Base(dir))
-			info, err := os.Stat(scratch)
-			if err != nil || !info.IsDir() {
-				t.Fatalf("scratch missing: %v", err)
+			if _, err := os.Stat(scratch); !os.IsNotExist(err) {
+				t.Fatalf("scratch left after the run: %v", err)
 			}
 			if _, err := os.Stat(filepath.Join(dir, "scratch")); !os.IsNotExist(err) {
 				t.Errorf("run records contain scratch: %v", err)
@@ -139,7 +138,7 @@ func TestRunAndPlayCreateTheScratchDirectoryUnderStateScratchOutsideTheRunRecord
 	}
 }
 
-func TestRunAndPlayLeaveTheScratchDirectoryEmptyOfAnythingKmWrote(t *testing.T) {
+func TestRunAndPlayLeaveNoScratchDirectoryBehindWithOrWithoutATester(t *testing.T) {
 	for _, command := range []string{"run", "play"} {
 		for _, tester := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/%t", command, tester), func(t *testing.T) {
@@ -170,12 +169,8 @@ func TestRunAndPlayLeaveTheScratchDirectoryEmptyOfAnythingKmWrote(t *testing.T) 
 				}
 				dir, _ := onlyRunResult(t)
 				scratch := filepath.Join(loop.StateDir(), "scratch", filepath.Base(dir))
-				entries, readErr := os.ReadDir(scratch)
-				if readErr != nil {
-					t.Fatal(readErr)
-				}
-				if len(entries) != 0 {
-					t.Errorf("scratch must be empty, got %v", entries)
+				if _, statErr := os.Stat(scratch); !os.IsNotExist(statErr) {
+					t.Errorf("scratch left after the run: %v", statErr)
 				}
 				data, err := os.ReadFile(filepath.Join(dir, "config.json"))
 				if err != nil {
@@ -484,7 +479,7 @@ func TestARunDirectoryWrittenByAnOlderKmStillHoldingScratchStillReads(t *testing
 	}
 }
 
-func TestScratchIsLeftInPlaceAfterTheRunEnds(t *testing.T) {
+func TestScratchIsThereDuringTheScoreAndRemovedAfterTheRunEnds(t *testing.T) {
 	s := safetyStanding(t)
 	fake := &playCAO{afterReply: func(wt, name string) {
 		if name != "test-1.md" {
@@ -500,7 +495,7 @@ func TestScratchIsLeftInPlaceAfterTheRunEnds(t *testing.T) {
 			t.Errorf("scratch missing during the score: %v", err)
 			return
 		}
-		writeFile(t, filepath.Join(scratch, "fixture.txt"), "retained\n")
+		writeFile(t, filepath.Join(scratch, "fixture.txt"), "a tester's copy\n")
 		writeFile(t, filepath.Join(scratch, "pids"), "not-a-pid\n")
 	}}
 	if _, err := capturePlay(t, []string{s.Session, "-cao", fake.serve(t).URL}); err != nil {
@@ -508,9 +503,7 @@ func TestScratchIsLeftInPlaceAfterTheRunEnds(t *testing.T) {
 	}
 	dir, _ := onlyRunResult(t)
 	scratch := filepath.Join(loop.StateDir(), "scratch", filepath.Base(dir))
-	for name, want := range map[string]string{"fixture.txt": "retained\n", "pids": "not-a-pid\n"} {
-		if data, err := os.ReadFile(filepath.Join(scratch, name)); err != nil || string(data) != want {
-			t.Errorf("scratch %s after the run = %q %v", name, data, err)
-		}
+	if _, err := os.Stat(scratch); !os.IsNotExist(err) {
+		t.Errorf("scratch left after the run: %v", err)
 	}
 }

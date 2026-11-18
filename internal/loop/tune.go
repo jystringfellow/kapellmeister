@@ -119,6 +119,9 @@ func (e *Engine) Tune(ctx context.Context, hooks TuneHooks) (res Result, err err
 		if budgetSpent() {
 			return budgetStop()
 		}
+		if err := e.lowDisk(); err != nil {
+			return e.fail(res, err), nil
+		}
 		res.Rounds = round
 		replyPath := e.relf("tune-%d.json", round)
 		out, err := e.step(ctx, Step{Name: "implement", Round: round, Chair: cfg.Chairs.Implementer, Prompt: tuneWritePrompt(cfg.Task, replyPath, feedback), ReplyPath: replyPath, KeepTerminal: true, ReuseTerminal: terminal})

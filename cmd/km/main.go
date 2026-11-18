@@ -453,10 +453,19 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 			return err
 		}
 	}
+	if err := loop.LowDisk(s.MinFreeMB, wt, loop.StateDir()); err != nil {
+		return err
+	}
 	scratch, err := prepareScratch(loop.StateDir(), runID)
 	if err != nil {
 		return err
 	}
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			removeScratch(stderr, scratch)
+		}
+	}()
 	if ctx == nil {
 		var stop context.CancelFunc
 		ctx, stop = loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
@@ -496,6 +505,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		if err != nil {
 			return err
 		}
+		handedOff = true
 		if handle != nil {
 			*handle = h
 			return nil
@@ -521,7 +531,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 	sum, err := runEnsemble(ctx, ensembleRun{
 		RunID: runID, StateDir: runDir, Ensemble: *ensemble, BaseBranch: baseBranch, Meter: loop.NewLogMeter(),
 		Config: loop.Config{
-			ScratchDir: scratch, CAOURL: s.CAOURL, StateDir: loop.StateDir(), RunID: runID, Task: text, Worktree: wt, Chairs: seated, GateWhen: s.GateWhen,
+			ScratchDir: scratch, MinFreeMB: s.MinFreeMB, CAOURL: s.CAOURL, StateDir: loop.StateDir(), RunID: runID, Task: text, Worktree: wt, Chairs: seated, GateWhen: s.GateWhen,
 			Lessons: s.Lessons, LessonsTimeout: s.LessonsTimeout,
 			LearnedBudget: s.LearnedBudget, BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, CheckCommand: checkCmd, Policy: &policy,
 		},
@@ -1204,6 +1214,12 @@ func gitOutput(worktree string, args ...string) (string, error) {
 		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, &stderr)
 	}
 	return strings.TrimSpace(string(output)), nil
+}
+
+func removeScratch(stderr io.Writer, scratch string) {
+	if err := loop.RemoveScratch(scratch); err != nil {
+		fmt.Fprintln(stderr, "km: removing scratch:", err)
+	}
 }
 
 func prepareScratch(stateDir, runID string) (string, error) {
