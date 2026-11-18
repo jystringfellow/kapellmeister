@@ -31,6 +31,11 @@ func ResolveHooks(worktree, verifyFlag string) (verify, check string, err error)
 	return verify, check, nil
 }
 
+func ResolveTest(worktree string) (TestConfig, error) {
+	cfg, _, err := loadConfigFile(filepath.Join(worktree, ConfigFile), ConfigFile)
+	return cfg.Test, err
+}
+
 func CheckUsage(check string) string {
 	const placeholder = "<tests>"
 	if strings.Contains(check, ArgsToken) {

@@ -48,6 +48,7 @@ type reportPartUsagePerStep struct {
 }
 type reportPartRow struct {
 	*ReportCost
+	UnpricedModels          []string                `json:"unpriced_models,omitempty"`
 	Part                    string                  `json:"part"`
 	Provider                string                  `json:"provider"`
 	Model                   string                  `json:"model"`
@@ -526,6 +527,9 @@ func printReportParts(stdout io.Writer, parts *reportParts) error {
 		costText := ""
 		if row.ReportCost != nil {
 			costText = "\t" + row.ReportCost.text()
+			if row.CostUSD == nil && len(row.UnpricedModels) > 0 {
+				costText = "\tcost unknown"
+			}
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\t%s%s\n", row.Part, reportCell(row.Provider, 20), reportCell(row.Model, 32), row.Runs, row.Steps, row.StepErrors, total, average, tokens, tokensAverage, costText)
 	}

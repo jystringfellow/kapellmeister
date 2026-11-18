@@ -25,7 +25,9 @@ log=$(mktemp "${TMPDIR:-/tmp}/verify.XXXXXX") || exit 1
 run() {
  sh -c "$2" >"$log" 2>&1
  status=$?
+ if [ -n "${KAPELLMEISTER_VERIFY_STEPS:-}" ]; then printf '%s\n' "$1" >>"$KAPELLMEISTER_VERIFY_STEPS"; fi
  if [ "$status" -ne 0 ]; then
+  if [ -n "${KAPELLMEISTER_VERIFY_STEPS:-}" ]; then printf '%s\n' "$1" >"$KAPELLMEISTER_VERIFY_STEPS.failed"; fi
   echo "verify failed at step: $1 (exit $status)"
   echo "--- last 40 lines of $1 ---"
   tail -n 40 "$log" | cut -c1-300
@@ -35,6 +37,8 @@ run() {
 }
 
 `
+
+const StepsEnv = "KAPELLMEISTER_VERIFY_STEPS"
 
 func RenderStub() string {
 	return scriptPrelude + StubMarker + `
