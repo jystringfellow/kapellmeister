@@ -26,6 +26,7 @@ type proofReport struct {
 		Patch, Status, Output, Reason string
 		ExitCode                      int `json:"exit_code"`
 	}
+	BreakTimeoutMS int64 `json:"break_timeout_ms"`
 }
 
 func proofGit(t *testing.T, root string, args ...string) string {

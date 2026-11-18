@@ -18,6 +18,18 @@ type Comparison struct {
 
 var stepLabel = regexp.MustCompile(`^run (?:'[^'\n]*'|"[^"$` + "`" + `\\\n]*"|[A-Za-z0-9_.-]+) `)
 
+var labelledStep = regexp.MustCompile(`^run (?:'([^'\n]*)'|"([^"\n]*)"|([A-Za-z0-9_.-]+)) `)
+
+func StepLabels(script string) []string {
+	var labels []string
+	for _, line := range strings.Split(script, "\n") {
+		if m := labelledStep.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
+			labels = append(labels, m[1]+m[2]+m[3])
+		}
+	}
+	return labels
+}
+
 func SameCommands(proved, candidate string) (Comparison, bool) {
 	a, okA := commands(proved)
 	b, okB := commands(candidate)
