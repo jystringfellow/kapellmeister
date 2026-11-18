@@ -31,6 +31,8 @@ type PreflightResult struct {
 	Blocker        string   `json:"blocker,omitempty"`
 	Error          string   `json:"error,omitempty"`
 	TimeoutRetried bool     `json:"timeout_retried,omitempty"`
+	RetryWaitMS    int64    `json:"retry_wait_ms,omitempty"`
+	RetryWaitError string   `json:"retry_wait_error,omitempty"`
 	Retried        bool     `json:"retried,omitempty"`
 	TimedOut       bool     `json:"timed_out,omitempty"`
 	Model          string   `json:"model,omitempty"`
@@ -55,6 +57,13 @@ func Preflight(ctx context.Context, stepper interface {
 	Stepper
 	Seater
 }, worktree string, chairs []Chair, timeout time.Duration) ([]PreflightResult, error) {
+	return PreflightRetryingAfter(ctx, stepper, worktree, chairs, timeout, 0)
+}
+
+func PreflightRetryingAfter(ctx context.Context, stepper interface {
+	Stepper
+	Seater
+}, worktree string, chairs []Chair, timeout, retryWait time.Duration) ([]PreflightResult, error) {
 	if err := PrepareRunDir(worktree, "preflight"); err != nil {
 		return nil, err
 	}
@@ -73,7 +82,7 @@ func Preflight(ctx context.Context, stepper interface {
 		go func() {
 			defer wg.Done()
 			name := fmt.Sprintf("%s-%d", prefix, i)
-			results[i], sessions[i] = preflightChairAttempts(ctx, stepper, worktree, i, chair, timeout, name, &booting, seatSlot)
+			results[i], sessions[i] = preflightChairAttempts(ctx, stepper, worktree, i, chair, timeout, retryWait, name, &booting, seatSlot)
 		}()
 	}
 	done := make(chan struct{})
@@ -96,7 +105,7 @@ func Preflight(ctx context.Context, stepper interface {
 func preflightChairAttempts(ctx context.Context, stepper interface {
 	Stepper
 	Seater
-}, worktree string, i int, chair Chair, timeout time.Duration, name string, booting *atomic.Int64, seatSlot chan struct{}) (PreflightResult, []string) {
+}, worktree string, i int, chair Chair, timeout, retryWait time.Duration, name string, booting *atomic.Int64, seatSlot chan struct{}) (PreflightResult, []string) {
 	var sessions []string
 	var unseated int
 	var teardownErrors []string
@@ -118,6 +127,8 @@ func preflightChairAttempts(ctx context.Context, stepper interface {
 	timeoutRetried := false
 	seatRetries := 0
 	seatRetryError := ""
+	var waited time.Duration
+	waitError := ""
 	for attempt := 0; ; attempt++ {
 		attemptName := name
 		if attempt == 1 {
@@ -137,13 +148,11 @@ func preflightChairAttempts(ctx context.Context, stepper interface {
 			timeoutRetried = true
 			continue
 		}
-		var seatErr *seatFailure
-		seatFailed := errors.As(err, &seatErr)
-		seatTimedOut := seatFailed && errors.Is(err, context.DeadlineExceeded)
-		if res.OK || res.Blocker != "" || ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) && !seatTimedOut {
+		if res.OK || res.Blocker != "" || ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
 			break
 		}
-		transient := seatFailed && transientSeatFailure(err, attemptName)
+		var seatErr *seatFailure
+		transient := errors.As(err, &seatErr) && transientSeatFailure(err, attemptName)
 		if !transient && attempt >= 1 || transient && attempt >= len(seatRetryBackoff) {
 			break
 		}
@@ -151,9 +160,17 @@ func preflightChairAttempts(ctx context.Context, stepper interface {
 			unseat(res.Session)
 			res.Session, res.TerminalID = "", ""
 		}
-		if seatTimedOut {
-			seatRetries++
-			seatRetryError = err.Error()
+		if !transient && seatErr == nil && retryWait > 0 && time.Duration(res.DurationMS)*time.Millisecond < timeout/4 {
+			timer := time.NewTimer(retryWait)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+			case <-timer.C:
+			}
+			if ctx.Err() != nil {
+				break
+			}
+			waited, waitError = retryWait, res.Error
 		}
 		if transient {
 			if seatRetryError == "" {
@@ -174,6 +191,7 @@ func preflightChairAttempts(ctx context.Context, stepper interface {
 	}
 	res.TimeoutRetried = timeoutRetried
 	res.SeatRetries, res.SeatRetryError = seatRetries, seatRetryError
+	res.RetryWaitMS, res.RetryWaitError = waited.Milliseconds(), waitError
 
 	if res.Session != "" {
 		if res.OK && ctx.Err() == nil {

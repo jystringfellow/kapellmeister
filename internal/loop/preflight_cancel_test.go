@@ -372,7 +372,7 @@ func TestPreflightDeletesTheChosenNameWhenSeatingFailsWithoutASession(t *testing
 					t.Fatal(err)
 				}
 				attempts := 2
-				if tc.cancelAt == 1 {
+				if tc.timeout || tc.cancelAt == 1 {
 					attempts = 1
 				}
 				if len(chosen) != attempts || len(deleted) != attempts {
