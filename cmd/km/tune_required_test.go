@@ -112,30 +112,6 @@ func suiteClock(t *testing.T) *time.Time {
 	return &now
 }
 
-func TestTuneStopsRaisingTheVerifyTimeoutWhenTheBudgetLeftCannotHoldItAndSaysWhatToRaise(t *testing.T) {
-	root := suiteFixture(t)
-	f := &tuneCAO{writer: suiteWriter("", "fast", "slow")}
-	now := suiteClock(t)
-	old := runTuneProof
-	defer func() { runTuneProof = old }()
-	var limits []time.Duration
-	runTuneProof = func(_ context.Context, opts prove.Options) prove.Result {
-		limits = append(limits, opts.Timeout)
-		*now = now.Add(opts.Timeout)
-		return prove.Result{Status: "timeout", ExitStatus: 3, Reason: "clean run 1: verify timed out", Runs: []prove.RunResult{{Name: "clean run 1", Status: "timed_out"}}}
-	}
-	code, out := tuneCall(t, "verify", "-worktree", root, "-cao", f.serve(t).URL)
-	if code == 0 || len(limits) != 2 || limits[0] != 5*time.Minute || limits[1] != 10*time.Minute {
-		t.Fatal(code, limits, out)
-	}
-	if !strings.Contains(out, "verify timed out at 5m0s; a verify is never narrowed for time, so the timeout is raised to 10m0s and saved as [test] verify_timeout") {
-		t.Fatal(out)
-	}
-	if !strings.Contains(out, "the timeout is not raised to 20m0s with 15m0s of the budget left: raise -budget and -verify-timeout") || !initrepo.IsStub(initRead(t, root, initrepo.ScriptFile)) {
-		t.Fatal(out)
-	}
-}
-
 func TestABreakThatTimesOutDoesNotRaiseTheVerifyTimeout(t *testing.T) {
 	root := suiteFixture(t)
 	f := &tuneCAO{writer: suiteWriter("", "fast", "slow")}

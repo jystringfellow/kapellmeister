@@ -981,10 +981,17 @@ is commented out or never reached does not count; km publishes nothing without i
 A clean verify run that times out during the proof is not a reason to narrow. km doubles the
 verify timeout, says so (`verify timed out at 5m0s; a verify is never narrowed for time, so the
 timeout is raised to 10m0s and saved as [test] verify_timeout`), writes the new limit into the
-tuned config and proves again, until verify finishes or two runs at the next limit no longer fit
-in what is left of `-budget`; then it stops and names `-budget` and `-verify-timeout` as what to
-raise. `km prove` and later tunes read the saved limit. A break patch that times out does not
-raise it. The summary shows `required suites:` and `verify timeout raised from A to B and saved
+tuned config and proves again, until verify finishes or a whole proof at the next limit no longer
+fits in what is left of `-budget`. A whole proof is two clean runs and one run per break patch,
+each counted at the limit, so with two break patches the default `30m` budget does not hold a
+raise from `5m` to `10m` (40 minutes); km then stops, says how long the proof can take and how
+much budget is left, and names `-budget` and `-verify-timeout` as what to raise. `km prove` and
+later tunes read the saved limit. A break patch that times out does not raise it.
+
+Only the caller and km set `verify_timeout`. A round whose config adds or changes it is refused,
+because the proof ran at km's limit, not the written one. When the limit a tune proves at is
+longer than the one a later `km prove` would use (the saved value, or `10m`), km saves it and
+says so. The summary shows `required suites:` and `verify timeout raised from A to B and saved
 as [test] verify_timeout`, and the JSON summary carries `required`, `time_bounded` and
 `timeout_raised` (`from_ms`, `to_ms`). A time-bounded tune without required suites does not raise
 the timeout: a timeout fails the proof. `km tune verify -guide` with `-require` or `-time-bounded`

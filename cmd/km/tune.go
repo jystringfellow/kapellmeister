@@ -320,6 +320,10 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 	summary := &tuneSummary{Required: required.Suites, TimeBounded: required.TimeBounded, LeftOut: []loop.TuneOmission{}, Breaks: []tuneBreak{}, Result: prove.Result{Worktree: wt, Status: "not_run", Reason: "no proof was run", Runs: []prove.RunResult{}, Breaks: []prove.BreakResult{}}}
 	var proved *tuneProved
 	currentRound := 0
+	savedTimeout := ""
+	if saved, err := loop.ResolveTest(wt); err == nil {
+		savedTimeout = saved.VerifyTimeout
+	}
 	hooks := &loop.TuneHooks{
 		PatchDir:    patches,
 		ReviewRules: required.ReviewRules(),
@@ -380,8 +384,15 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 			}
 			resolved, _, resolveErr := loop.ResolveHooks(wt, "")
 			unrecorded := ""
-			if written, err := loop.ResolveTest(wt); err == nil {
+			written, writtenErr := loop.ResolveTest(wt)
+			if writtenErr == nil {
 				unrecorded = unrecordedRequirement(required, written)
+			}
+			if unrecorded == "" && writtenErr == nil && written.VerifyTimeout != savedTimeout {
+				unrecorded = "[test] verify_timeout must not be set by the tune: km saves the limit it proved at"
+				if savedTimeout != "" {
+					unrecorded = fmt.Sprintf("[test] verify_timeout must stay %q: only the caller and km change it", savedTimeout)
+				}
 			}
 			var result prove.Result
 			switch {
@@ -392,15 +403,17 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 			case unrecorded != "":
 				result = prove.Result{Worktree: wt, Command: resolved, Status: "refused", ExitStatus: 10, Reason: unrecorded}
 			default:
-				if summary.TimeoutRaised != nil {
+				if later := written.Timeout(prove.DefaultTimeout); verifyTimeout > later {
+					fmt.Fprintf(progress, "verify is proved at %s, longer than the %s a later km prove would use, so it is saved as [test] verify_timeout\n", verifyTimeout, later)
 					if err := loop.SetVerifyTimeout(wt, verifyTimeout); err != nil {
 						return loop.TuneProof{}, err
 					}
+					savedTimeout = verifyTimeout.String()
 				}
 				result = runTuneProof(ctx, prove.Options{Worktree: wt, Breaks: recordPatches, Timeout: verifyTimeout})
 				for why := required.KeepsSlowTests(); why != "" && cleanRunTimedOut(result); {
-					if left := deadline.Sub(tuneClock()); 2*verifyTimeout > left {
-						result.Reason += fmt.Sprintf("; %s, but the timeout is not raised to %s with %s of the budget left: raise -budget and -verify-timeout to give verify the time it needs", why, 2*verifyTimeout, max(left, 0).Round(time.Second))
+					if left, whole := deadline.Sub(tuneClock()), time.Duration(2+len(recordPatches))*2*verifyTimeout; whole > left {
+						result.Reason += fmt.Sprintf("; %s, but the timeout is not raised to %s: a proof at that limit can take %s (two clean runs and %d break runs) and %s of the budget is left: raise -budget and -verify-timeout to give verify the time it needs", why, 2*verifyTimeout, whole, len(recordPatches), max(left, 0).Round(time.Second))
 						break
 					}
 					fmt.Fprintf(progress, "verify timed out at %s; %s, so the timeout is raised to %s and saved as [test] verify_timeout\n", verifyTimeout, why, 2*verifyTimeout)
@@ -412,6 +425,7 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 					if err := loop.SetVerifyTimeout(wt, verifyTimeout); err != nil {
 						return loop.TuneProof{}, err
 					}
+					savedTimeout = verifyTimeout.String()
 					result = runTuneProof(ctx, prove.Options{Worktree: wt, Breaks: recordPatches, Timeout: verifyTimeout})
 				}
 			}
