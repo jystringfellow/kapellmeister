@@ -3,6 +3,7 @@ package loop
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -33,17 +34,27 @@ func measurementHeading(line string) (inline string, ok bool) {
 	return strings.TrimSpace(strings.TrimLeft(after[1:], "* ")), true
 }
 
+var measurementMarker = regexp.MustCompile(`^(?:[-*+]|\d+[.)])\s+(\S.*)$`)
+
+func measurementItem(line string) (string, bool) {
+	match := measurementMarker.FindStringSubmatch(line)
+	if match == nil {
+		return "", false
+	}
+	return strings.TrimSpace(match[1]), true
+}
+
 func readMeasurements(review string) measurementSection {
 	var section measurementSection
 	var rest []string
 	state, declined := "before", false
-	add := func(line string) {
-		request := strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), "-* "))
+	add := func(request string) string {
 		if strings.EqualFold(strings.TrimRight(request, "."), "none") {
 			declined = true
-		} else if request != "" {
-			section.requests = append(section.requests, request)
+			return "after"
 		}
+		section.requests = append(section.requests, request)
+		return "list"
 	}
 	for _, line := range strings.SplitAfter(review, "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -57,20 +68,21 @@ func readMeasurements(review string) measurementSection {
 			section.found = true
 			state = "heading"
 			if inline != "" {
-				add(inline)
-				state = "list"
+				state = add(inline)
 			}
 		case "heading", "list":
-			if trimmed == "APPROVE" || trimmed == "CHANGES" {
+			item, listed := measurementItem(trimmed)
+			switch {
+			case trimmed == "" && state == "heading":
+			case trimmed == "":
+				state = "after"
+			case listed:
+				state = add(item)
+			case state == "heading" && strings.EqualFold(strings.TrimRight(trimmed, "."), "none"):
+				declined, state = true, "after"
+			default:
 				rest = append(rest, line)
 				state = "after"
-			} else if trimmed == "" {
-				if state == "list" {
-					state = "after"
-				}
-			} else {
-				add(line)
-				state = "list"
 			}
 		default:
 			rest = append(rest, line)

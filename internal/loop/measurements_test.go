@@ -107,6 +107,47 @@ func TestMeasurementRequestsAreReadAfterABlankLineWithoutTheColonAndFromTheHeadi
 	equal(t, measurementRequests("Measurements for the tester are not needed here.\n- fix a.go:3\n\nCHANGES\n"), nil)
 }
 
+func TestARequiredChangeAfterAMeasurementsHeadingStaysInTheImplementersCopy(t *testing.T) {
+	for name, c := range map[string]struct {
+		review   string
+		requests []string
+		rest     string
+	}{
+		"an empty heading followed by another section": {
+			"Measurements for the tester:\n\n## Required changes\n- fix a.go:3\n\nCHANGES\n", nil,
+			"## Required changes\n- fix a.go:3\n\nCHANGES\n",
+		},
+		"a section that starts with no blank line between": {
+			"Measurements for the tester:\n- rerun the benchmark\nRequired changes:\n- fix a.go:3\n\nCHANGES\n", []string{"rerun the benchmark"},
+			"Required changes:\n- fix a.go:3\n\nCHANGES\n",
+		},
+		"none on the heading's line followed directly by changes": {
+			"Measurements for the tester: none\n- fix a.go:3\n\nCHANGES\n", nil,
+			"- fix a.go:3\n\nCHANGES\n",
+		},
+		"none as the only item followed directly by changes": {
+			"Measurements for the tester:\n- None.\n- fix a.go:3\n\nCHANGES\n", nil,
+			"- fix a.go:3\n\nCHANGES\n",
+		},
+		"a line that is not a list item": {
+			"Measurements for the tester:\nthe parser must also accept empty input\n\nCHANGES\n", nil,
+			"the parser must also accept empty input\n\nCHANGES\n",
+		},
+		"a bold heading after the list": {
+			"Measurements for the tester:\n* time it twice\n**Required changes**\n* fix a.go:3\n\nCHANGES\n", []string{"time it twice"},
+			"**Required changes**\n* fix a.go:3\n\nCHANGES\n",
+		},
+	} {
+		section := readMeasurements(c.review)
+		if section.rest != c.rest {
+			t.Errorf("%s: implementer's copy = %q, want %q", name, section.rest, c.rest)
+		}
+		if len(section.requests) != len(c.requests) || len(c.requests) > 0 && section.requests[0] != c.requests[0] {
+			t.Errorf("%s: requests = %q, want %q", name, section.requests, c.requests)
+		}
+	}
+}
+
 func TestAMeasurementsHeadingThatYieldsNoRequestsIsReportedByItsReviewFile(t *testing.T) {
 	e, f, records := newEngine(t, passing)
 	var progress bytes.Buffer

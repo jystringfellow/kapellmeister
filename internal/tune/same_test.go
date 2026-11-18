@@ -56,3 +56,14 @@ func TestSameCommandsRequiresProofForAnUnrecognisedWrapper(t *testing.T) {
 		t.Fatal("unrecognised quoting was normalized")
 	}
 }
+
+func TestStepLabelsNamesEachRunStepHoweverItsLabelIsQuotedAndSkipsCommentedSteps(t *testing.T) {
+	script, _ := initrepo.RenderVerify("true")
+	script = strings.Replace(script, "run 'verify' 'true'\n", "run 'unit tests' 'make unit'\n  run \"lint\" 'make lint'\nrun integration 'make integration'\n# run 'e2e' 'make e2e'\n", 1)
+	if got := strings.Join(StepLabels(script), "|"); got != "unit tests|lint|integration" {
+		t.Fatal(got)
+	}
+	if got := StepLabels(initrepo.RenderStub()); len(got) != 0 {
+		t.Fatal(got)
+	}
+}

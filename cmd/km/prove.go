@@ -24,7 +24,7 @@ func proveAt(args []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("prove", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	worktree := flags.String("worktree", ".", "checkout whose verify to prove")
-	timeout := flags.Duration("timeout", 10*time.Minute, "timeout for each verify run")
+	timeout := flags.Duration("timeout", 0, "timeout for each verify run (default [test] verify_timeout, then 10m)")
 	asJSON := flags.Bool("json", false, "print runs, patches and verdict as JSON")
 	var patches breakFlags
 	flags.Var(&patches, "break", "patch that must make verify fail (repeatable)")
@@ -34,7 +34,7 @@ func proveAt(args []string, stdout, stderr io.Writer) error {
 	if flags.NArg() != 0 {
 		return errors.New("prove accepts flags only")
 	}
-	if *timeout <= 0 {
+	if flagsSet(flags)["timeout"] && *timeout <= 0 {
 		return errors.New("-timeout must be positive")
 	}
 	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
@@ -63,6 +63,12 @@ func printProofDetail(out io.Writer, r prove.Result, detail bool) {
 		if detail && run.Status != "passed" && run.Output != "" {
 			fmt.Fprintln(out, run.Output)
 		}
+	}
+	for _, flaky := range r.Flaky {
+		fmt.Fprintf(out, "flaky step: %s (failed in %s, passed in %s)\n", flaky.Step, flaky.FailedIn, flaky.PassedIn)
+	}
+	if r.BreakTimeoutMS > r.TimeoutMS {
+		fmt.Fprintf(out, "break timeout raised from %s to %s: twice the slowest clean run\n", time.Duration(r.TimeoutMS)*time.Millisecond, time.Duration(r.BreakTimeoutMS)*time.Millisecond)
 	}
 	for _, b := range r.Breaks {
 		fmt.Fprintf(out, "break %s: %s", b.Patch, b.Status)
