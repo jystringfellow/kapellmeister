@@ -445,3 +445,21 @@ func builtInSettings() loop.Settings {
 }
 
 const builtInAgentConfig = "[agents]\navailable = [\"claude\", \"codex\", \"copilot\", \"agy\"]\n"
+
+func TestTheFinalSummarySaysWhenVerifyPassedOnlyAfterARetryAndOnWhichAttempt(t *testing.T) {
+	var out bytes.Buffer
+	sum := ensembleSummary{Result: loop.Result{Outcome: loop.Approved, Rounds: 1, VerifyRetried: []loop.VerifyRetry{{Round: 0, Attempts: 2}, {Round: 1, Attempts: 3}}}}
+	if err := finishRun(&out, sum); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"  retried   verify[baseline] passed only on attempt 2: an earlier attempt failed, so a test may be flaky\n", "  retried   verify[1] passed only on attempt 3: an earlier attempt failed, so a test may be flaky\n"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatal(out.String())
+		}
+	}
+	out.Reset()
+	_ = finishRun(&out, ensembleSummary{Result: loop.Result{Outcome: loop.Approved, Rounds: 1}})
+	if strings.Contains(out.String(), "retried") {
+		t.Fatal(out.String())
+	}
+}

@@ -689,3 +689,19 @@ func TestABaselineVerifyFailureShowsTheLastLinesOfItsOutputInTheRefusal(t *testi
 		t.Fatal(res.Reason)
 	}
 }
+
+func TestAResultNamesEachVerifyThatPassedOnlyAfterARetryWithItsAttemptCount(t *testing.T) {
+	calls := 0
+	flaky := func(context.Context, string) (VerifyResult, error) {
+		calls++
+		if calls == 2 {
+			return VerifyResult{ExitCode: 1, Output: "timing FAIL\n"}, nil
+		}
+		return VerifyResult{Output: "ok\n"}, nil
+	}
+	eng, _, _ := newEngine(t, Retrying(flaky, 1))
+	res := run(t, eng)
+	if res.Outcome != Approved || len(res.VerifyRetried) != 1 || res.VerifyRetried[0] != (VerifyRetry{Round: 1, Attempts: 2}) {
+		t.Fatalf("got %+v", res)
+	}
+}
