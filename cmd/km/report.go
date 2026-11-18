@@ -168,6 +168,9 @@ func reportCommand(args []string, stdout, stderr io.Writer) error {
 	}
 	if len(prices) > 0 {
 		report.addCosts(prices, priceSource)
+		for _, model := range report.Totals.UnpricedModels {
+			fmt.Fprintf(stderr, "warning: no price for model %s: its cost is unknown; add [report.prices.%q] to %s\n", plain(model), model, plain(priceSource))
+		}
 	}
 	if *asJSON {
 		return printReportJSON(stdout, report)
