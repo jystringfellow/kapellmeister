@@ -923,7 +923,8 @@ verify is kept, and init explains the setting to add by hand. `-verify` override
 for that invocation when existing setup is kept; `-check CMD` adds a focused command using
 `{args}` only to a new config. Init never commits or changes Git state.
 
-`-no-run` writes files without running verify, `-timeout D` changes the default `10m` limit,
+`-no-run` writes files without running verify, `-timeout D` sets the limit for that run (default
+`[test] verify_timeout`, then `10m`; a timeout names both),
 and `-dry-run` prints exact contents without writing or running anything. `-json` reports the
 same file decisions, hints, verify result and next steps as one object, including on failure.
 
@@ -978,15 +979,38 @@ is commented out or never reached does not count; km publishes nothing without i
 `-time-bounded` given by flag must be written into `[test]` by the tune, so later tunes and
 `km prove` keep them; km refuses a round that leaves them out of the config.
 
-A clean verify run that times out during the proof is not a reason to narrow. km doubles the
-verify timeout, says so (`verify timed out at 5m0s; a verify is never narrowed for time, so the
-timeout is raised to 10m0s and saved as [test] verify_timeout`), writes the new limit into the
-tuned config and proves again, until verify finishes or a whole proof at the next limit no longer
-fits in what is left of `-budget`. A whole proof is two clean runs and one run per break patch,
-each counted at the limit, so with two break patches the default `30m` budget does not hold a
-raise from `5m` to `10m` (40 minutes); km then stops, says how long the proof can take and how
-much budget is left, and names `-budget` and `-verify-timeout` as what to raise. `km prove` and
-later tunes read the saved limit. A break patch that times out does not raise it.
+**Slow verifies.** One number sizes a tune: the limit for one verify run, from `-verify-timeout`,
+then the saved `[test] verify_timeout`, then `5m`. A whole proof is two clean runs and one run
+per break patch, each counted at that limit. Before seating any chair, tune prints the budget and
+how it was worked out, counting two break patches or one per required suite if that is more, and
+`10m` for the chairs:
+
+```
+budget 3h10m0s: a whole proof at the 45m0s verify timeout is two clean runs and 2 break runs (3h0m0s), plus 10m0s for the chairs; pass -budget to set it yourself
+```
+
+Without `-budget`, the budget is that sum, and never less than `30m`. An explicit `-budget` is
+kept as given; tune says up front whether a whole proof fits it and, if not, the value that would.
+
+A first tune on a slow repository with default flags stops after one clean-run timeout. It does
+not double the `5m` default; it fails the round and names the flag: `pass -verify-timeout with
+the time one verify run needs`. Run it again with that flag. km saves a limit longer than `10m`
+as `[test] verify_timeout`, and that saved value is what lets later runs scale without flags:
+later tunes size their budget from it, and `km prove` and `km init` use it as their limit.
+
+A clean verify run that times out during the proof is not a reason to narrow. When the caller
+gave the limit, by flag or saved key, km doubles it, says so (`verify timed out at 20m0s; a
+verify is never narrowed for time, so the timeout is raised to 40m0s and saved as [test]
+verify_timeout`), writes the new limit into the tuned config and proves again, until verify
+finishes or a whole proof at the next limit no longer fits in what is left of the budget. km then
+stops, says how long the proof can take and how much budget is left, and gives the
+`-verify-timeout` and `-budget` values that would hold it. A break patch that times out does not
+raise the limit.
+
+Inside a tune the writer runs `scripts/verify` once and does not run `km prove`: km runs the
+proof after the writer's step, outside the agent step's `[run] timeout`, and sends the result
+back when it is not proved. `km tune verify -guide`, for writing a verify by hand, still ends
+with `km prove`.
 
 Only the caller and km set `verify_timeout`. A round whose config adds or changes it is refused,
 because the proof ran at km's limit, not the written one. When the limit a tune proves at is
@@ -1018,7 +1042,8 @@ must match too, so a renamed required step is proved again. The run records both
 texts, their SHA-256 digests and the compared inputs; the summary says why the proof was kept.
 
 Tune uses `[run] rounds` and `[run] timeout`; `-timeout D` changes each agent step's limit.
-`-budget D` defaults to `30m` and stops the run between steps, never during a proof. A running
+`-budget D` defaults to a whole proof at the verify timeout plus `10m`, at least `30m`, and stops
+the run between steps, never during a proof. A running
 agent step finishes under its own timeout. `-verify-timeout D` limits each clean or
 break verification inside tune and defaults to `[test] verify_timeout`, then `5m`; direct
 `km prove` defaults to `[test] verify_timeout`, then `10m`.
@@ -1104,7 +1129,7 @@ that raised it, and the JSON carries `timeout_ms` and `break_timeout_ms`.
 | 14 | A required suite's step did not run in a clean run |
 | 15 | A required suite has no break patch that makes verify fail in its step |
 
-`-timeout D` is a positive limit per verify run; it defaults to `[test] verify_timeout`, then `10m`. Output names each clean run and
+`-timeout D` is a positive limit per verify run; it defaults to `[test] verify_timeout`, then `10m`, and a timeout names the limit and both ways to raise it. Output names each clean run and
 patch, reports exit codes and durations, and bounds verify output to 40 lines of 300 characters.
 `-json` carries the same facts in `worktree`, `command`, `status`, `exit_status`, `reason`, `runs`
 and `breaks`, including failures and skipped patches, with each run's `steps` (label and

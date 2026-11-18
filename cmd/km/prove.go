@@ -40,6 +40,9 @@ func proveAt(args []string, stdout, stderr io.Writer) error {
 	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	result := prove.Prove(ctx, prove.Options{Worktree: *worktree, Breaks: patches, Timeout: *timeout})
+	if result.Status == "timeout" {
+		result.Reason += fmt.Sprintf(" at %s; pass -timeout D, or set [test] verify_timeout, to give verify longer", time.Duration(result.TimeoutMS)*time.Millisecond)
+	}
 	if *asJSON {
 		if err := json.NewEncoder(stdout).Encode(result); err != nil {
 			return err

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jystringfellow/kapellmeister/internal/initrepo"
+	"github.com/jystringfellow/kapellmeister/internal/loop"
 )
 
 func initAt(args []string, stdout, stderr io.Writer) error {
@@ -22,15 +23,21 @@ func initAt(args []string, stdout, stderr io.Writer) error {
 	verify := flags.String("verify", "", "explicit verify command")
 	check := flags.String("check", "", "targeted test command with {args}")
 	noRun := flags.Bool("no-run", false, "draft files without running verify")
-	timeout := flags.Duration("timeout", 10*time.Minute, "verify timeout")
+	timeout := flags.Duration("timeout", 0, "verify timeout (default [test] verify_timeout, then 10m)")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
 		return errors.New("init accepts flags only")
 	}
-	if *timeout <= 0 {
+	if flagsSet(flags)["timeout"] && *timeout <= 0 {
 		return errors.New("-timeout must be positive")
+	}
+	if *timeout == 0 {
+		*timeout = 10 * time.Minute
+		if test, err := loop.ResolveTest(*worktree); err == nil {
+			*timeout = test.Timeout(*timeout)
+		}
 	}
 	if set := flagsSet(flags); set["verify"] && *verify == "" || set["check"] && *check == "" {
 		return errors.New("-verify and -check must not be empty")
@@ -104,7 +111,7 @@ func printInit(out io.Writer, r initrepo.Result, timeout time.Duration) {
 	case "failed":
 		fmt.Fprintf(out, "verify: %s failed (exit %d) in %s\n%s", r.Verify.Command, r.Verify.ExitCode, duration, r.Verify.Output)
 	case "timed_out":
-		fmt.Fprintf(out, "verify: %s timed out after %s\n%s", r.Verify.Command, timeout, r.Verify.Output)
+		fmt.Fprintf(out, "verify: %s timed out after %s; pass -timeout D, or set [test] verify_timeout, to give verify longer\n%s", r.Verify.Command, timeout, r.Verify.Output)
 	default:
 		fmt.Fprintf(out, "verify: skipped (%s)\n", r.Verify.Output)
 	}

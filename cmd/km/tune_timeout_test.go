@@ -23,14 +23,14 @@ func TestTuneStopsRaisingTheVerifyTimeoutWhenAWholeProofAtTheNextLimitDoesNotFit
 		*now = now.Add(opts.Timeout)
 		return prove.Result{Status: "timeout", ExitStatus: 3, Reason: "clean run 1: verify timed out", Runs: []prove.RunResult{{Name: "clean run 1", Status: "timed_out"}}}
 	}
-	code, out := tuneCall(t, "verify", "-worktree", root, "-cao", f.serve(t).URL, "-budget", "70m")
+	code, out := tuneCall(t, "verify", "-worktree", root, "-cao", f.serve(t).URL, "-verify-timeout", "5m", "-budget", "70m")
 	if code == 0 || len(limits) != 2 || limits[0] != 5*time.Minute || limits[1] != 10*time.Minute {
 		t.Fatal(code, limits, out)
 	}
 	if !strings.Contains(out, "verify timed out at 5m0s; a verify is never narrowed for time, so the timeout is raised to 10m0s and saved as [test] verify_timeout") {
 		t.Fatal(out)
 	}
-	if !strings.Contains(out, "the timeout is not raised to 20m0s: a proof at that limit can take 1h40m0s (two clean runs and 3 break runs) and 55m0s of the budget is left: raise -budget and -verify-timeout") || !initrepo.IsStub(initRead(t, root, initrepo.ScriptFile)) {
+	if !strings.Contains(out, "the timeout is not raised to 20m0s: a proof at that limit can take 1h40m0s (two clean runs and 3 break runs) and 55m0s of the budget is left: pass -verify-timeout 20m0s and -budget 1h55m0s or more") || !initrepo.IsStub(initRead(t, root, initrepo.ScriptFile)) {
 		t.Fatal(out)
 	}
 }
@@ -47,7 +47,7 @@ func TestTuneDoesNotRaiseTheVerifyTimeoutWhenTheBudgetHoldsOneRunAtTheNextLimitB
 		*now = now.Add(opts.Timeout)
 		return prove.Result{Status: "timeout", ExitStatus: 3, Reason: "clean run 1: verify timed out", Runs: []prove.RunResult{{Name: "clean run 1", Status: "timed_out"}}}
 	}
-	code, out := tuneCall(t, "verify", "-worktree", root, "-cao", f.serve(t).URL)
+	code, out := tuneCall(t, "verify", "-worktree", root, "-cao", f.serve(t).URL, "-verify-timeout", "5m")
 	if code == 0 || calls != 1 || !strings.Contains(out, "the timeout is not raised to 10m0s: a proof at that limit can take 50m0s (two clean runs and 3 break runs) and 25m0s of the budget is left") {
 		t.Fatal(code, calls, out)
 	}
