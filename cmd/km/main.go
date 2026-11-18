@@ -499,6 +499,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 			fmt.Fprintf(output, "ensemble %s\n", *ensemble)
 		}
 		printPolicy(output, &policy)
+		printPinnedEscalation(output, &policy, chairs.Implementer)
 	}
 	if err := ensureProfilesTo(ctx, client, &policy, stepChairs(chairs), output); err != nil {
 		return err
@@ -728,6 +729,16 @@ func printPolicy(w io.Writer, p *loop.Policy) {
 		sizing += fmt.Sprintf("; the implementer moves up a tier after every %d rounds without approval", after)
 	}
 	fmt.Fprintf(w, "tiers  %s\n       %s\n", strings.Join(steps, ", "), sizing)
+}
+
+func printPinnedEscalation(w io.Writer, p *loop.Policy, implementer loop.Chair) {
+	after := p.EscalateAfter()
+	_, pinned := p.Chair("implement", implementer, "", 0)
+	_, reach := p.Chair("implement", implementer, "", len(loop.TierNames))
+	if after == 0 || pinned.Source != loop.SourcePinned || reach.Tier == pinned.Tier {
+		return
+	}
+	fmt.Fprintf(w, "       the implementer is pinned to %s, but escalation overrides the pin: it can reach %s, one tier after every %d rounds without approval; set escalate = false in the ensemble to hold the pin\n", pinned.Tier, reach.Tier, after)
 }
 
 func stepChairs(s loop.Chairs) map[string][]loop.Chair {
