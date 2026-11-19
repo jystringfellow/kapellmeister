@@ -1238,8 +1238,10 @@ What a repository needs its ensemble to know is checked in to that repository.
 repository and ensemble. With no directory it reads `<state>/runs` plus any directories in the
 user config's `[report] dirs`. `km report ~/kept-sandboxes` searches across kept sandbox copies.
 Runs with restored work add a `restored: N` footer count, and runs that retried a read-only step
-add `retried: N`. JSON includes `restores` and `retries` counts per run and the numbers of
-runs with restores or retries in totals.
+add `retried: N`. Runs where verify passed only after a retry add `verify retried: N`, a separate
+count, so the report agrees with the `retried   verify[...]` line of a run's final summary.
+JSON includes `restores`, `retries` and `verify_retried` counts per run and the numbers of
+runs with each in totals.
 
 To add directories a bare `km report`, `km status` or `km wait` searches, add this to
 `~/.kapellmeister/config.toml` (`$KAPELLMEISTER_HOME` moves this file):

@@ -26,26 +26,27 @@ import (
 
 type reportRun struct {
 	*ReportCost
-	Retries    int         `json:"retries,omitempty"`
-	Restores   int         `json:"restores,omitempty"`
-	Command    string      `json:"command,omitempty"`
-	RunID      string      `json:"run_id"`
-	Path       string      `json:"path"`
-	Started    *time.Time  `json:"started,omitempty"`
-	Repository string      `json:"repository,omitempty"`
-	Ensemble   string      `json:"ensemble,omitempty"`
-	Outcome    string      `json:"outcome,omitempty"`
-	Rounds     *int        `json:"rounds,omitempty"`
-	DurationMS *int64      `json:"duration_ms,omitempty"`
-	Reason     string      `json:"reason,omitempty"`
-	Usage      reportUsage `json:"usage"`
-	Conflict   bool        `json:"conflict,omitempty"`
-	quality    int
-	state      *runState
-	roughStart bool
-	hasResult  bool
-	hasStarted bool
-	parts      *reportPartRun
+	Retries       int         `json:"retries,omitempty"`
+	Restores      int         `json:"restores,omitempty"`
+	VerifyRetried int         `json:"verify_retried,omitempty"`
+	Command       string      `json:"command,omitempty"`
+	RunID         string      `json:"run_id"`
+	Path          string      `json:"path"`
+	Started       *time.Time  `json:"started,omitempty"`
+	Repository    string      `json:"repository,omitempty"`
+	Ensemble      string      `json:"ensemble,omitempty"`
+	Outcome       string      `json:"outcome,omitempty"`
+	Rounds        *int        `json:"rounds,omitempty"`
+	DurationMS    *int64      `json:"duration_ms,omitempty"`
+	Reason        string      `json:"reason,omitempty"`
+	Usage         reportUsage `json:"usage"`
+	Conflict      bool        `json:"conflict,omitempty"`
+	quality       int
+	state         *runState
+	roughStart    bool
+	hasResult     bool
+	hasStarted    bool
+	parts         *reportPartRun
 }
 
 type reportTotals struct {
@@ -53,6 +54,7 @@ type reportTotals struct {
 	UnpricedModels      []string                    `json:"unpriced_models,omitempty"`
 	Retries             int                         `json:"retries,omitempty"`
 	Restores            int                         `json:"restores,omitempty"`
+	VerifyRetried       int                         `json:"verify_retried,omitempty"`
 	Usage               reportUsageTotal            `json:"usage"`
 	EnsembleUsage       map[string]reportUsageTotal `json:"ensemble_usage"`
 	RepositoryUsage     map[string]reportUsageTotal `json:"repository_usage"`
@@ -140,6 +142,9 @@ func reportCommand(args []string, stdout, stderr io.Writer) error {
 		if run.Retries > 0 {
 			report.Totals.Retries++
 		}
+		if run.VerifyRetried > 0 {
+			report.Totals.VerifyRetried++
+		}
 		report.Totals.Usage.add(run.Usage)
 		addReportGroupUsage(report.Totals.EnsembleUsage, reportKnown(run.Ensemble), run.Usage)
 		addReportGroupUsage(report.Totals.RepositoryUsage, reportKnown(run.Repository), run.Usage)
@@ -221,16 +226,17 @@ func readReportRun(dir *os.File, hasResult, hasTelemetry, hasCurrent, hasConfig 
 		path := filepath.Join(dir.Name(), "result.json")
 		data, err := readReportFile(dir, "result.json", false)
 		var recorded *struct {
-			Restores   []loop.Restore  `json:"restores"`
-			Command    string          `json:"command"`
-			RunID      string          `json:"run_id"`
-			Repository string          `json:"repository"`
-			Ensemble   string          `json:"ensemble"`
-			Outcome    string          `json:"outcome"`
-			Reason     string          `json:"reason"`
-			Usage      json.RawMessage `json:"usage"`
-			Rounds     *int            `json:"rounds"`
-			DurationMS *int64          `json:"duration_ms"`
+			Restores      []loop.Restore     `json:"restores"`
+			VerifyRetried []loop.VerifyRetry `json:"verify_retried"`
+			Command       string             `json:"command"`
+			RunID         string             `json:"run_id"`
+			Repository    string             `json:"repository"`
+			Ensemble      string             `json:"ensemble"`
+			Outcome       string             `json:"outcome"`
+			Reason        string             `json:"reason"`
+			Usage         json.RawMessage    `json:"usage"`
+			Rounds        *int               `json:"rounds"`
+			DurationMS    *int64             `json:"duration_ms"`
 		}
 		if err == nil {
 			err = json.Unmarshal(data, &recorded)
@@ -249,6 +255,7 @@ func readReportRun(dir *os.File, hasResult, hasTelemetry, hasCurrent, hasConfig 
 		run.Repository, run.Ensemble = recorded.Repository, recorded.Ensemble
 		run.Command = recorded.Command
 		run.Restores = len(recorded.Restores)
+		run.VerifyRetried = len(recorded.VerifyRetried)
 		for _, restore := range recorded.Restores {
 			if restore.Outcome == "retried" {
 				run.Retries++
@@ -486,6 +493,9 @@ func printReport(stdout io.Writer, report runReport) error {
 	}
 	if report.Totals.Retries > 0 {
 		fmt.Fprintf(w, "retried: %d\n", report.Totals.Retries)
+	}
+	if report.Totals.VerifyRetried > 0 {
+		fmt.Fprintf(w, "verify retried: %d\n", report.Totals.VerifyRetried)
 	}
 	conflicts := 0
 	for _, run := range report.Runs {
