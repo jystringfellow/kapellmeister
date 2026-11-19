@@ -197,6 +197,7 @@ const (
 	Untested        = "untested"
 	RoundsExhausted = "rounds_exhausted"
 	BudgetExhausted = "budget_exhausted"
+	VerifyLimit     = "verify_limit"
 	Failed          = "failed"
 	VerdictFailed   = "FAILED"
 )
