@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -66,16 +67,14 @@ func TestReportJSONCarriesVerifyRetriedInTheShapeResultJSONUses(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(root, "flaky-run", "result.json"), string(data))
-	var recorded struct {
-		VerifyRetried json.RawMessage `json:"verify_retried"`
-	}
-	if err := json.Unmarshal(data, &recorded); err != nil {
+	doc := reportJSON(t, root)
+	encoded, err := json.Marshal(doc["runs"].([]any)[0].(map[string]any)["verify_retried"])
+	if err != nil {
 		t.Fatal(err)
 	}
-	doc := reportJSON(t, root)
-	got, err := json.Marshal(doc["runs"].([]any)[0].(map[string]any)["verify_retried"])
-	if err != nil || string(got) != string(recorded.VerifyRetried) {
-		t.Fatalf("report %s, result.json %s", got, recorded.VerifyRetried)
+	var got []loop.VerifyRetry
+	if err := json.Unmarshal(encoded, &got); err != nil || !slices.Equal(got, retried) {
+		t.Fatalf("report has %s (%v), result.json has %v", encoded, err, retried)
 	}
 	totals := doc["totals"].(map[string]any)
 	if totals["verify_retried_runs"] != float64(1) || totals["verify_retried"] != nil {
