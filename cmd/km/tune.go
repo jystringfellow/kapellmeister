@@ -43,7 +43,7 @@ var tuneClock = time.Now
 var runTuneProof = prove.Prove
 var runTuneOffline = prove.Offline
 
-const tuneSubjects = "subjects:\n  verify  write and prove this repository's verify"
+const tuneSubjects = "subjects:\n  verify  write and prove this repository's verify\n  strict  write and prove strict: what verify had to leave out"
 
 type tuneBreak struct {
 	prove.BreakResult
@@ -84,14 +84,17 @@ type tuneSummary struct {
 }
 
 func tuneCommand(args []string, stdout, stderr io.Writer) error {
-	if len(args) == 0 || args[0] != "verify" {
-		if len(args) > 0 {
-			fmt.Fprintf(stderr, "km tune: unknown subject %q\n", args[0])
-		}
-		fmt.Fprintln(stderr, tuneSubjects)
-		return &exitStatusError{code: 2}
+	switch {
+	case len(args) > 0 && args[0] == "verify":
+		return tuneVerify(nil, args[1:], stdout, stderr)
+	case len(args) > 0 && args[0] == "strict":
+		return tuneStrict(nil, args[1:], stdout, stderr)
 	}
-	return tuneVerify(nil, args[1:], stdout, stderr)
+	if len(args) > 0 {
+		fmt.Fprintf(stderr, "km tune: unknown subject %q\n", args[0])
+	}
+	fmt.Fprintln(stderr, tuneSubjects)
+	return &exitStatusError{code: 2}
 }
 
 func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (runErr error) {
@@ -224,18 +227,56 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 	case *budget < derived:
 		sized = fmt.Sprintf("-budget %s does not hold a whole proof at the %s verify timeout: two clean runs, %d break runs and one run without network can take %s, plus %s for the chairs; -budget %s would", *budget, *verifyTimeout, breaks, whole, tuneChairAllowance, derived)
 	}
+	return conductTune(ctx, tuneConduct{
+		command: "tune verify", args: args, set: flagsSet(fs), roles: roles, root: root, head: head, launchPath: *launchPath, launch: launch,
+		detach: *detach, asJSON: *asJSON, timeout: *timeout, caoURL: *caoURL, budget: *budget, started: started, sized: sized,
+		build: func(wt, runID, runDir, patches string, progress io.Writer) (string, *loop.TuneHooks, *tuneSummary, error) {
+			hints, err := initrepo.Hints(wt)
+			if err != nil {
+				return "", nil, nil, err
+			}
+			var hintText strings.Builder
+			for _, h := range hints {
+				fmt.Fprintf(&hintText, "%v\n", h)
+			}
+			hooks, summary, err := tuneHooks(root, wt, head, runID, runDir, patches, setup, progress, *verifyTimeout, callerLimit, started.Add(*budget), required)
+			return tune.Task(wt, hintText.String(), command, patches, required), hooks, summary, err
+		},
+	}, stdout, stderr)
+}
+
+type tuneConduct struct {
+	command        string
+	args           []string
+	set            map[string]bool
+	roles          map[string]*string
+	root, head     string
+	launchPath     string
+	launch         detachedLaunchRecord
+	detach, asJSON bool
+	timeout        time.Duration
+	caoURL         string
+	budget         time.Duration
+	started        time.Time
+	sized          string
+	prepare        func(wt string) error
+	build          func(wt, runID, runDir, patches string, progress io.Writer) (string, *loop.TuneHooks, *tuneSummary, error)
+}
+
+func conductTune(ctx context.Context, c tuneConduct, stdout, stderr io.Writer) (runErr error) {
+	root, head, launch := c.root, c.head, c.launch
 	s, err := loop.LoadSettings(loop.Home(), root)
 	if err != nil {
 		return err
 	}
-	set := flagsSet(fs)
+	set := c.set
 	if set["cao"] {
-		s.CAOURL = *caoURL
+		s.CAOURL = c.caoURL
 	}
 	if set["timeout"] {
-		s.Timeout = *timeout
+		s.Timeout = c.timeout
 	}
-	chairs, err := tuneChairs(s, roles)
+	chairs, err := tuneChairs(s, c.roles)
 	if err != nil {
 		return err
 	}
@@ -248,10 +289,10 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 		defer stop()
 	}
 	progress := stdout
-	if *asJSON {
+	if c.asJSON {
 		progress = stderr
 	}
-	fmt.Fprintln(progress, sized)
+	fmt.Fprintln(progress, c.sized)
 	client := newClient(s.CAOURL, s, progress)
 	if err := tunePreflight(ctx, client, chairs); err != nil {
 		return err
@@ -262,23 +303,23 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 	writingChair, _ := s.Policy.Chair("implement", chairs.Implementer, "", 0)
 	readingChair, _ := s.Policy.Chair("review", chairs.Reviewers[0], "", 0)
 	runID := newRunID()
-	if *launchPath != "" {
+	if c.launchPath != "" {
 		runID = launch.RunID
 	}
 	runDir, err := filepath.Abs(filepath.Join(loop.StateDir(), "runs", runID))
 	if err != nil {
 		return err
 	}
-	if *detach && *launchPath == "" {
-		handle, err := startDetached(ctx, args, runDir, detachedLaunchRecord{Command: "tune verify", RunID: runID, Worktree: root, Checkout: root}, nil)
+	if c.detach && c.launchPath == "" {
+		handle, err := startDetached(ctx, c.args, runDir, detachedLaunchRecord{Command: c.command, RunID: runID, Worktree: root, Checkout: root}, nil)
 		if err != nil {
 			return err
 		}
 		_, err = fmt.Fprintf(stdout, "run       %s\npid       %d\nworktree  %s\noutput    %s\n", handle.RunID, handle.PID, handle.Worktree, handle.Output)
 		return err
 	}
-	if *launchPath != "" {
-		state := initialRunState(runID, "tune verify", root, "", s.Rounds, time.Now())
+	if c.launchPath != "" {
+		state := initialRunState(runID, c.command, root, "", s.Rounds, time.Now())
 		defer func() { recordDetachedFailure(ctx, runDir, launch, state, runErr) }()
 		if err := writeRunState(runDir, state); err != nil {
 			return err
@@ -315,16 +356,12 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 	if err := os.MkdirAll(patches, 0755); err != nil {
 		return err
 	}
-	hints, err := initrepo.Hints(wt)
-	if err != nil {
-		return err
+	if c.prepare != nil {
+		if err := c.prepare(wt); err != nil {
+			return err
+		}
 	}
-	var hintText strings.Builder
-	for _, h := range hints {
-		fmt.Fprintf(&hintText, "%v\n", h)
-	}
-	task := tune.Task(wt, hintText.String(), command, patches, required)
-	hooks, summary, err := tuneHooks(root, wt, head, runID, runDir, patches, setup, progress, *verifyTimeout, callerLimit, started.Add(*budget), required)
+	task, hooks, summary, err := c.build(wt, runID, runDir, patches, progress)
 	if err != nil {
 		return err
 	}
@@ -341,8 +378,8 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 		}
 	}()
 	sum, err := runEnsemble(ctx, ensembleRun{
-		Command: "tune verify", RunID: runID, StateDir: runDir, Meter: loop.NewLogMeter(), Tune: hooks, TuneSummary: summary, TuneCheckout: root,
-		Config:  loop.Config{RunID: runID, Task: task, Worktree: wt, Chairs: chairs, MaxRounds: s.Rounds, Budget: *budget, BudgetStarted: started, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, Policy: &s.Policy, CAOURL: s.CAOURL, StateDir: loop.StateDir(), ScratchDir: scratch, MinFreeMB: s.MinFreeMB, BlockerPoll: s.BlockerPoll},
+		Command: c.command, RunID: runID, StateDir: runDir, Meter: loop.NewLogMeter(), Tune: hooks, TuneSummary: summary, TuneCheckout: root,
+		Config:  loop.Config{RunID: runID, Task: task, Worktree: wt, Chairs: chairs, MaxRounds: s.Rounds, Budget: c.budget, BudgetStarted: c.started, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, Policy: &s.Policy, CAOURL: s.CAOURL, StateDir: loop.StateDir(), ScratchDir: scratch, MinFreeMB: s.MinFreeMB, BlockerPoll: s.BlockerPoll},
 		Watcher: loop.CAOWatcher{Client: client, Session: podium.SessionName}, Stepper: loop.CAOStepper{Client: client, Session: podium.SessionName}, Progress: progress,
 	})
 	if err != nil {
@@ -350,7 +387,7 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 	}
 	keep = sum.Outcome != loop.Approved
 	approved = !keep
-	if *asJSON {
+	if c.asJSON {
 		if err := json.NewEncoder(stdout).Encode(sum); err != nil {
 			return err
 		}
@@ -798,9 +835,12 @@ type tuneFile struct {
 	Exists bool
 }
 
-func readTuneSetup(root string) (map[string]tuneFile, error) {
+func readTuneSetup(root string, names ...string) (map[string]tuneFile, error) {
 	result := map[string]tuneFile{}
-	for _, name := range []string{initrepo.ScriptFile, loop.ConfigFile} {
+	if len(names) == 0 {
+		names = []string{initrepo.ScriptFile, loop.ConfigFile}
+	}
+	for _, name := range names {
 		parent := filepath.Dir(filepath.Join(root, name))
 		if info, err := os.Lstat(parent); err == nil && !info.IsDir() {
 			return nil, fmt.Errorf("setup parent %s must be a directory", parent)
@@ -901,7 +941,7 @@ func tuneTree(root string) (map[string]string, error) {
 
 func printTune(w io.Writer, s ensembleSummary, detail bool) {
 	t := s.Tune
-	fmt.Fprintf(w, "  tune verify: %s\n", t.Command)
+	fmt.Fprintf(w, "  %s: %s\n", firstNonEmpty(s.Command, "tune verify"), t.Command)
 	proof := t.Result
 	proof.Breaks = nil
 	for _, patch := range t.Breaks {

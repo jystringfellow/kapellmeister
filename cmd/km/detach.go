@@ -111,7 +111,7 @@ func recordDetachedFailure(ctx context.Context, dir string, launch detachedLaunc
 	}
 	base, _ := gitOutput(launch.Worktree, "rev-parse", "HEAD")
 	sum := ensembleSummary{Result: loop.Result{RunID: launch.RunID, Worktree: launch.Worktree, RunDir: filepath.Join(launch.Worktree, loop.RunDirRel(launch.RunID)), Outcome: loop.Failed, Reason: reason}, Ensemble: state.Ensemble, Repository: state.Repository, BaseBranch: launch.BaseBranch, Base: base, DurationMS: time.Since(state.Started).Milliseconds()}
-	if launch.Command == "tune verify" {
+	if strings.HasPrefix(launch.Command, "tune ") {
 		sum.Command = launch.Command
 		sum.Tune = &tuneSummary{}
 	}

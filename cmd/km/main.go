@@ -30,6 +30,7 @@ import (
 const usage = `usage:
   km init [-worktree DIR] [-dry-run] [-json] [-verify CMD] [-check CMD] [-no-run] [-timeout D]   write config and an unfinished verify, or wrap -verify CMD
   km tune verify [-worktree DIR] [-require SUITE]... [-known-failure LABEL]... [-time-bounded] [-detach] [-timeout D] [-json] [-again] [-guide]   write and prove verify
+  km tune strict [-worktree DIR] [-strict-timeout D] [-detach] [-timeout D] [-json] [-again] [-guide]   write and prove strict: what verify had to leave out
   km prove [-worktree DIR] [-level verify|strict] [-break PATCH]... [-timeout D] [-json]   prove verify or strict on clean copies and broken code
   km run -repo DIR [-base BRANCH] (-task TEXT | -task-file FILE) [-ensemble NAME] [-detach] [flags]   one ensemble
   km audition -worktree DIR [-ensemble NAME] [-keep]       boot the ensemble, cue every chair once, tear down
@@ -1048,7 +1049,7 @@ func runEnsemble(ctx context.Context, p ensembleRun) (sum ensembleSummary, runEr
 			res.Outcome, res.Reason = loop.Failed, reason
 			sum = ensembleSummary{Result: res, DurationMS: time.Since(start).Milliseconds(), Ensemble: p.Ensemble, Repository: repository, Base: base, BaseBranch: p.BaseBranch}
 			if p.Tune != nil {
-				sum.Command, sum.Tune = "tune verify", p.TuneSummary
+				sum.Command, sum.Tune = p.Command, p.TuneSummary
 			}
 			if err := writeJSON(filepath.Join(p.StateDir, "result.json"), sum); err != nil {
 				fmt.Fprintln(os.Stderr, "km: writing result.json:", err)
@@ -1118,7 +1119,7 @@ func runEnsemble(ctx context.Context, p ensembleRun) (sum ensembleSummary, runEr
 		sum.Head, sum.HeadMoved = head, true
 	}
 	if p.Tune != nil {
-		sum.Command, sum.Tune = "tune verify", p.TuneSummary
+		sum.Command, sum.Tune = p.Command, p.TuneSummary
 		if sum.Outcome == loop.Approved || sum.Tune.Published {
 			sum.Worktree = p.TuneCheckout
 			sum.RunDir = filepath.Join(p.StateDir, "replies")

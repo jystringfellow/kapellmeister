@@ -279,7 +279,7 @@ func readReportRun(dir *os.File, hasResult, hasTelemetry, hasCurrent, hasConfig 
 			diagnose(filepath.Join(dir.Name(), "current.json"), err)
 		} else {
 			run.state = state
-			if state.Command == "tune verify" {
+			if strings.HasPrefix(state.Command, "tune ") {
 				run.Command = state.Command
 			}
 			run.Repository, run.Ensemble = state.Repository, state.Ensemble
@@ -474,7 +474,7 @@ func printReport(stdout io.Writer, report runReport) error {
 			}
 		}
 		repoWidth, ensembleWidth := 20, 8
-		if run.Command == "tune verify" {
+		if strings.HasPrefix(run.Command, "tune ") {
 			repoWidth, ensembleWidth = 17, 11
 		}
 		costText := ""
@@ -589,7 +589,7 @@ func printReportNotSearched(w io.Writer, report runReport) error {
 }
 
 func reportRunLabel(ensemble, command string) string {
-	if ensemble == "" && command == "tune verify" {
+	if ensemble == "" && strings.HasPrefix(command, "tune ") {
 		return command
 	}
 	return reportKnown(ensemble)

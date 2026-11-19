@@ -94,3 +94,14 @@ func RenderConfig(verify, check string) string {
 	}
 	return out
 }
+
+const StrictFile = "scripts/strict"
+const StrictReadyFile = "scripts/strict-ready"
+
+func RenderStrictStub() string {
+	return scriptPrelude + StubMarker + `
+rm -f "$log"
+printf '%s\n' 'The strict command has not been written.' 'Strict runs what verify had to leave out. Run km tune strict to write and prove it with your ensemble, or write it by hand and run km prove -level strict.' >&2
+exit 1
+`
+}

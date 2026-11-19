@@ -48,6 +48,7 @@ installing the base chair profiles below.
 ```sh
 km init [-worktree DIR] [-dry-run] [-json] [-verify CMD] [-check CMD] [-no-run] [-timeout D]  # write config and an unfinished verify script
 km tune verify [-worktree DIR] [-require SUITE]... [-known-failure LABEL]... [-time-bounded] [-detach] [-timeout D] [-budget D] [-verify-timeout D] [-json] [-again] [-guide]  # write and prove verify
+km tune strict [-worktree DIR] [-strict-timeout D] [-budget D] [-detach] [-json] [-again] [-guide]  # write and prove strict: what verify had to leave out
 km prove [-worktree DIR] [-level verify|strict] [-break PATCH]... [-timeout D] [-json]  # prove verify or strict on clean copies and broken code
 km run -repo ~/Code/app [-base BRANCH] -task-file task.md [-ensemble thorough] [-detach]  # one ensemble
 km audition -worktree DIR [-ensemble thorough]   # can this ensemble play? no real work
@@ -1413,8 +1414,45 @@ copies, then every break patch must make it fail. The scripts `[test] verify`, `
 missing or not executable is refused as a broken probe (exit 10). Otherwise the probe runs first
 in its own clean copy; when it fails the result is `strict_not_run` (exit 17), never `proved`.
 The output says `strict failed, as required` for each break, and the JSON carries `level`.
-`[test] verify_required` applies to the verify level only. `km tune strict` does not exist yet;
-write `scripts/strict` by hand and prove it.
+`[test] verify_required` applies to the verify level only.
+
+### Tuning strict
+
+```sh
+km tune strict [-worktree DIR] [-strict-timeout D] [-budget D] [-detach] [-json] [-again] [-guide]
+```
+
+`km tune strict` has the ensemble write `scripts/strict` and km prove it, the way `km tune verify`
+does for verify. Tune verify first: strict holds what verify had to leave out, so that verify and
+strict together run everything CI runs.
+
+- **What goes in.** Every suite in `[[test.excluded]]`, and whatever a time-bounded verify cut.
+  The writer is given each excluded suite with the command km recorded for it. Strict has no time
+  target, so nothing is left out of it to save time.
+- **km refuses a strict that leaves an excluded suite uncovered.** Each excluded suite needs a
+  `run` step in `scripts/strict` labelled exactly with its name, and that step must run in both
+  clean runs. Otherwise the round is refused and names the suite and its by-hand command.
+- **km decides whether a probe is needed.** When strict holds a suite excluded for `network`, km
+  requires `scripts/strict-ready` and `[test] strict_ready`; the writer writes the probe and km
+  refuses the round without it. When strict holds no such suite, a round that adds a probe is
+  refused. A `strict_ready` the config already had is kept.
+- **A probe that fails on this machine is not a proof.** The round ends `strict_not_run`, nothing
+  is published, and the probe's output is in the reason. Run the tune where strict can run.
+- **What the writer may change:** `scripts/strict`, `scripts/strict-ready`, and the `strict`,
+  `strict_ready` and `strict_timeout` keys of `[test]`. A round that changes `scripts/verify`,
+  another `[test]` key or `[[test.excluded]]` is refused.
+- **The limit.** Each strict run in the proof gets `-strict-timeout`, then `[test]
+  strict_timeout`, then `verify_timeout`, then `10m`. A limit passed by flag must be recorded as
+  `[test] strict_timeout` in the config the writer leaves, so later runs use it. When a clean run
+  times out, the tune stops and asks for `-strict-timeout`; it does not raise the limit by itself.
+- **The budget** is sized from that limit: two clean runs and two break runs, plus ten minutes for
+  the chairs. There is no run without network.
+- Without `-again`, a config that already sets `[test] strict` is left alone. When no
+  `scripts/strict` exists, km puts an unfinished one with the bounded-output wrapper in the tune's
+  worktree for the writer to fill.
+
+The proved files are copied back uncommitted, as after `km tune verify`, and the summary starts
+`tune strict: COMMAND`.
 
 ### Tiers
 

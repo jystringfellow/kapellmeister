@@ -38,6 +38,8 @@ type TuneProof struct {
 }
 
 type TuneHooks struct {
+	Subject     string
+	ReviewBrief string
 	PatchDir    string
 	ReviewRules string
 	Changed     func() ([]string, error)
@@ -89,6 +91,10 @@ func (e *Engine) Tune(ctx context.Context, hooks TuneHooks) (res Result, err err
 			_ = e.Stepper.Release(context.WithoutCancel(ctx), terminal)
 		}
 	}()
+	subject := hooks.Subject
+	if subject == "" {
+		subject = "verify"
+	}
 	feedback := ""
 	lastReason := ""
 	provedRound := 0
@@ -100,9 +106,9 @@ func (e *Engine) Tune(ctx context.Context, hooks TuneHooks) (res Result, err err
 			if err := hooks.Publish(provedRound); err != nil {
 				return e.fail(res, err), nil
 			}
-			reason += fmt.Sprintf("; best proved verify is round %d's, copied back", provedRound)
+			reason += fmt.Sprintf("; best proved %s is round %d's, copied back", subject, provedRound)
 		} else {
-			reason += "; no verify was proved, checkout left untouched"
+			reason += "; no " + subject + " was proved, checkout left untouched"
 		}
 		res.Outcome, res.Reason = outcome, reason
 		return res, nil
@@ -132,7 +138,7 @@ func (e *Engine) Tune(ctx context.Context, hooks TuneHooks) (res Result, err err
 		}
 		res.Rounds = round
 		replyPath := e.relf("tune-%d.json", round)
-		out, err := e.step(ctx, Step{Name: "implement", Round: round, Chair: cfg.Chairs.Implementer, Prompt: tuneWritePrompt(cfg.Task, replyPath, feedback), ReplyPath: replyPath, KeepTerminal: true, ReuseTerminal: terminal})
+		out, err := e.step(ctx, Step{Name: "implement", Round: round, Chair: cfg.Chairs.Implementer, Prompt: tuneWritePrompt(cfg.Task, replyPath, feedback, subject), ReplyPath: replyPath, KeepTerminal: true, ReuseTerminal: terminal})
 		if out.TerminalID != "" {
 			terminal = out.TerminalID
 		}
@@ -251,7 +257,7 @@ func (e *Engine) Tune(ctx context.Context, hooks TuneHooks) (res Result, err err
 		proofPath := proof.Path
 
 		reviewPath := e.relf("tune-review-%d.md", round)
-		errs, err := e.readOnlySteps(ctx, []Step{{Name: "review", Round: round, Chair: cfg.Chairs.Reviewers[0], ReplyPath: reviewPath, Prompt: tuneReviewPrompt(cfg.Task, replyPath, proofPath, reviewPath, hooks.ReviewRules)}})
+		errs, err := e.readOnlySteps(ctx, []Step{{Name: "review", Round: round, Chair: cfg.Chairs.Reviewers[0], ReplyPath: reviewPath, Prompt: tuneReviewPrompt(cfg.Task, replyPath, proofPath, reviewPath, hooks.ReviewRules, hooks.ReviewBrief)}})
 		if err != nil {
 			return e.fail(res, err), nil
 		}
@@ -352,26 +358,31 @@ func readTuneReply(text, patchDir string) (TuneReply, error) {
 	return reply, nil
 }
 
-func tuneWritePrompt(task, reply, feedback string) string {
+func tuneWritePrompt(task, reply, feedback, subject string) string {
 	more := ""
 	if feedback != "" {
 		more = "Read the previous feedback in " + feedback + " and address it.\n"
 	}
-	return preamble("implementer") + taskBlock(task) + "\n" + more + fmt.Sprintf(`Write the verify and the break patches, following the procedure above.
+	return preamble("implementer") + taskBlock(task) + "\n" + more + fmt.Sprintf(`Write the %[2]s and the break patches, following the procedure above.
 Write your reply as JSON with this shape:
-{"command":"the command inside scripts/verify","left_out":[{"what":"omitted check","why":"reason"}],"patches":[{"file":"absolute patch path","kind":"source"},{"file":"absolute patch path","kind":"test"}]}
+{"command":"the command inside scripts/%[2]s","left_out":[{"what":"omitted check","why":"reason"}],"patches":[{"file":"absolute patch path","kind":"source"},{"file":"absolute patch path","kind":"test"}]}
 Use an empty left_out list when nothing was omitted. Do not put patches in the checkout.
-Write the JSON to %s. When done, reply with one short sentence.
-`, reply)
+Write the JSON to %[1]s. When done, reply with one short sentence.
+`, reply, subject)
 }
 
-func tuneReviewPrompt(task, reply, proof, out, rules string) string {
-	return preamble("reviewer") + taskBlock(task) + fmt.Sprintf(`
-Read %s and the conductor's proof in %s. Read scripts/verify against CI workflows, the Makefile or task runner and README test instructions.
+const verifyReviewBrief = `Read scripts/verify against CI workflows, the Makefile or task runner and README test instructions.
 Check that the verify reflects what the repository treats as passing. Check that each test left out has one of the permitted reasons with its evidence (it failed or hung in a run made during this tune: which run and what it printed; or it needs something the clean copy cannot have: network, a service, a credential, another machine) and a by-hand command; ask for changes when a test is left out without one. A test that looks timing-dependent is not a reason. Check that the source and test patches exercise what they claim.
-%sDo not ask for wording, comment, label or style changes. A request for CHANGES must name a command to add, remove or alter; otherwise APPROVE.
+`
+
+func tuneReviewPrompt(task, reply, proof, out, rules, brief string) string {
+	if brief == "" {
+		brief = verifyReviewBrief
+	}
+	return preamble("reviewer") + taskBlock(task) + fmt.Sprintf(`
+Read %s and the conductor's proof in %s. %s%sDo not ask for wording, comment, label or style changes. A request for CHANGES must name a command to add, remove or alter; otherwise APPROVE.
 Do not rerun verification. The conductor's proof is authoritative.
 Write your findings to %s. Put APPROVE or CHANGES alone on its last line.
 Do not modify any other file. When done, reply with one short sentence.
-`, reply, proof, rules, out)
+`, reply, proof, brief, rules, out)
 }
