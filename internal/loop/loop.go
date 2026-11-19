@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -126,6 +127,7 @@ type VerifyResult struct {
 	Attempts int
 	Known    []KnownFailure
 	Mismatch string
+	TimedOut bool
 }
 
 type Verifier func(ctx context.Context, dir string) (VerifyResult, error)
@@ -133,6 +135,7 @@ type Verifier func(ctx context.Context, dir string) (VerifyResult, error)
 type Config struct {
 	StrictCommand      string
 	StrictReadyCommand string
+	StrictTimeout      time.Duration
 	Lessons            bool
 	LessonsTimeout     time.Duration
 	LearnedBudget      int
@@ -1231,7 +1234,7 @@ func Retrying(v Verifier, retries int) Verifier {
 				fmt.Fprintf(&out, "\n--- km: attempt %d ---\n", attempt)
 			}
 			out.WriteString(r.Output)
-			if r.ExitCode == 0 || attempt > retries {
+			if r.ExitCode == 0 || r.TimedOut || attempt > retries {
 				r.Attempts = attempt
 				r.Output = out.String()
 				return r, nil
@@ -1251,9 +1254,29 @@ func Serialized(v Verifier, mu *sync.Mutex) Verifier {
 const verifySkipEnv = "KAPELLMEISTER_VERIFY_SKIP"
 
 func CommandVerifier(command string) Verifier {
-	return func(ctx context.Context, dir string) (VerifyResult, error) {
+	return CommandVerifierWithin(command, 0)
+}
+
+func CommandVerifierWithin(command string, limit time.Duration) Verifier {
+	return func(parent context.Context, dir string) (VerifyResult, error) {
+		ctx := parent
+		if limit > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(parent, limit)
+			defer cancel()
+		}
 		cmd := exec.CommandContext(ctx, "sh", "-c", "unset "+verifySkipEnv+"\n"+command)
 		cmd.Dir = dir
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		stopGroup := func() error {
+			err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			if errors.Is(err, syscall.ESRCH) {
+				return os.ErrProcessDone
+			}
+			return err
+		}
+		cmd.Cancel = stopGroup
+		cmd.WaitDelay = 200 * time.Millisecond
 		var known func() []KnownFailure
 		if record, recordErr := os.MkdirTemp("", "km-verify-steps-"); recordErr == nil {
 			defer os.RemoveAll(record)
@@ -1261,11 +1284,19 @@ func CommandVerifier(command string) Verifier {
 			cmd.Env = append(os.Environ(), VerifyStepsEnv+"="+steps)
 			known = func() []KnownFailure { return ReadKnownFailures(steps) }
 		}
-		out, err := cmd.CombinedOutput()
-		if ctx.Err() != nil {
-			return VerifyResult{Output: string(out)}, ctx.Err()
+		var out lockedBuffer
+		cmd.Stdout, cmd.Stderr = &out, &out
+		err := cmd.Run()
+		if ctx.Err() != nil && cmd.Process != nil {
+			_ = stopGroup()
 		}
-		result := VerifyResult{Output: string(out)}
+		if parent.Err() != nil {
+			return VerifyResult{Output: out.String()}, parent.Err()
+		}
+		if ctx.Err() != nil {
+			return VerifyResult{ExitCode: -1, TimedOut: true, Output: strings.TrimRight(out.String(), "\n") + fmt.Sprintf("\nkm: the command did not finish within %s; km stopped it and every process it started\n", limit)}, nil
+		}
+		result := VerifyResult{Output: out.String()}
 		if known != nil {
 			result.Known = known()
 		}
@@ -1274,8 +1305,28 @@ func CommandVerifier(command string) Verifier {
 			result.ExitCode = exit.ExitCode()
 			return result, nil
 		}
+		if errors.Is(err, exec.ErrWaitDelay) {
+			return result, nil
+		}
 		return result, err
 	}
+}
+
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 func verifyStepName(round int) string {

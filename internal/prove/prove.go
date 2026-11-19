@@ -167,6 +167,9 @@ func Prove(ctx context.Context, options Options) (result Result) {
 	timeout := options.Timeout
 	if timeout == 0 {
 		timeout = test.Timeout(DefaultTimeout)
+		if level == LevelStrict {
+			timeout = test.StrictLimit(timeout)
+		}
 	}
 	result.TimeoutMS = timeout.Milliseconds()
 	patches := make([][]byte, len(options.Breaks))
