@@ -1423,8 +1423,15 @@ func copyDir(src, dst string) error {
 }
 
 func timeoutRetryNote(r loop.PreflightResult, timeout time.Duration) string {
-	if r.RetryWaitMS > 0 && !r.OK && r.Error == r.RetryWaitError {
-		return fmt.Sprintf("; the retry after waiting %s failed the same way: run the command again in a few minutes", time.Duration(r.RetryWaitMS)*time.Millisecond)
+	if r.RetryWaitMS > 0 && !r.OK {
+		waited := time.Duration(r.RetryWaitMS) * time.Millisecond
+		switch {
+		case r.Error == r.RetryWaitError:
+			return fmt.Sprintf("; the retry after waiting %s failed the same way: run the command again in a few minutes", waited)
+		case r.RetryWaitError == "":
+			return fmt.Sprintf("; the retry after waiting %s failed too: run the command again in a few minutes", waited)
+		}
+		return fmt.Sprintf("; first attempt failed (%s), the retry after waiting %s failed too: run the command again in a few minutes", r.RetryWaitError, waited)
 	}
 	if r.RetryWaitMS > 0 {
 		return fmt.Sprintf("; first attempt failed (%s), retried after waiting %s", r.RetryWaitError, time.Duration(r.RetryWaitMS)*time.Millisecond)

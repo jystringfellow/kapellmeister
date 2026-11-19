@@ -341,8 +341,11 @@ chair. When the check itself failed fast, in under a quarter of `preflight_timeo
 blocker on screen, km waits `[run] preflight_retry_wait` (default `20s`) before that retry: a
 provider that refuses with "still loading, try again" refuses again a second later. The line then
 reports `first attempt failed (<error>), retried after waiting 20s`, and the JSON result carries
-`retry_wait_ms` and `retry_wait_error`. When the retry fails with the same error, the line says
-`the retry after waiting 20s failed the same way: run the command again in a few minutes`. Set the key to `0s` for an immediate retry, or longer
+`retry_wait_ms` and `retry_wait_error`. When the retry after waiting also fails, whatever its error
+says, the line tells you to run the command again in a few minutes: `the retry after waiting 20s
+failed the same way: run the command again in a few minutes` when the two errors match, otherwise
+`first attempt failed (<error>), the retry after waiting 20s failed too: run the command again in
+a few minutes`. Set the key to `0s` for an immediate retry, or longer
 when a provider needs more time. A slower failure and a failed seat call are retried at once;
 a preflight check timeout gets one fresh chair and one retry. km reports whether that second
 attempt passed or failed. Two timeouts can take two full `preflight_timeout`s plus CAO's readiness
