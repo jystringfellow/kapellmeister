@@ -74,6 +74,7 @@ optional = true
 name = "plan"
 kind = "produce"
 part = "planner"
+writes = "reply"
 next = { done = "implement" }
 
 [[steps]]
@@ -114,7 +115,7 @@ author's problem, and validation could no longer say that a step can finish.
 
 | Kind | Who plays | May change the worktree | Exits |
 |---|---|---|---|
-| produce | one chair | yes | `done` |
+| produce | one chair | yes, unless `writes = "reply"` | `done` |
 | review | every chair of the part, in parallel | no | `approve`, `changes` |
 | decide | one chair | no | `approve`, `changes` |
 | test | one chair, in its scratch directory | no | `approve`, `changes` |
@@ -122,6 +123,13 @@ author's problem, and validation could no longer say that a step can finish.
 The clarification: **`test` means the tester's step, not verify.** check, verify and strict are not
 steps a score lists. km runs the baseline verify before the first step, verify after every produce
 step that may change the worktree, and strict once after the score ends approved, exactly as today.
+
+**A produce step that writes only its reply** sets `writes = "reply"`. The planner is one: it
+writes `plan.md` and nothing else. km does not run verify after such a step, as it runs none after
+plan today. Every other produce step is followed by verify. The background step is always of this
+sort. Today the planner is told to modify no other file and km does not check; the default score
+keeps that, and giving these steps the read-only guard would be a change made on purpose, with its
+own test.
 A score cannot leave them out, move them or reword what chairs are told about them. That keeps
 "km runs the tests and hands agents a short result" true under every score, and it means no score
 can approve a change that verify never saw. A decide step does not run while the latest verify is
@@ -143,7 +151,7 @@ Other rules:
 - **`reads` is the handoff.** A step is handed the newest file of each step it lists. A step that
   lists nothing from review is blind to reviews, which is how the tester stays blind.
 - **`optional` parts.** A step of a part no chair plays takes its `absent` exit.
-- **One background step.** `background = true` on a produce step that writes only its reply file:
+- **One background step.** `background = true` on a produce step with `writes = "reply"`:
   it starts when the step before it exits and is joined before the first step that reads it. The
   default score needs this for `test-plan`. A score may have at most one.
 - **`gate_when` stays an ensemble key.** Under the default score `any` and `all` set the review
@@ -221,13 +229,13 @@ So:
 - **Built-in names are reserved.** No file may be named `default`, and no part file may take a
   built-in part's name. A repository that could replace `gate` would change what every plain
   `km run` in it means. To change a built-in, copy it to a new name; km can print each built-in for that.
-- **Approval: none inside km, by default.** km prints, before the run, each score and part that
+- **Approval: none inside km.** km prints, before the run, each score and part that
   comes from the repository with a short content hash, and records the hashes in the result. A
   user who wants a hard stop sets `[run] repository_scores = false` in their own config, and km
   then refuses a repository-supplied score or part. A per-worktree approval step was one reason km
   left CAO workflows, and an approval here would protect less than the `[test]` commands already
-  expose. **This default is the owner's call**; the alternative is first-use approval recorded by
-  content hash.
+  expose. First-use approval recorded by content hash was the alternative, and was
+  rejected.
 
 ## 7. Status as data
 
@@ -237,6 +245,7 @@ So:
 {
   "schema": 1,
   "run_id": "…", "command": "run", "repository": "…", "liveness": "alive",
+  "cao": "http://127.0.0.1:9889",
   "ensemble": {
     "name": "thorough", "source": "repository",
     "sections": [{
@@ -245,6 +254,7 @@ So:
         "address": "review.lead@thorough", "name": "lead", "part": "reviewer",
         "agent": "claude", "provider": "claude_code", "model": "…", "tier": "medium",
         "state": "playing", "step": "review", "since": "…", "memory": "fresh",
+        "terminal": "06a3cc61",
         "needs_input": { "count": 0, "reason": "" },
         "usage": { "input_tokens": 0, "output_tokens": 0, "measured": "all" }
       }]
@@ -266,6 +276,11 @@ So:
 
 - **Nothing assumes the six parts.** A part is a string on a chair and on a step. A page draws
   sections, chairs and steps from the lists and needs no table of names.
+- **`cao` is the run's CAO server address and each chair carries its `terminal`,** the id of the
+  CAO terminal its occupant sits in. A page links a chair to its terminal with the two, and a run
+  may use its own CAO server, so the address is per run. `terminal` is empty while no occupant is
+  seated: under `km run` a fresh chair has a terminal only while it plays, and a resumed or
+  standing chair keeps one.
 - **`current` is a list** because review chairs and the background step play at once.
 - **Chair `state`** is `waiting`, `playing`, `done` or `unknown`. Waiting for a person is not a
   state: it is `needs_input` with a count and a reason.
@@ -316,12 +331,10 @@ So:
   today, and never reads the run's score.
 - **`km audition` and `km rehearse`:** check the ensemble against its score first. Rehearse briefs
   each chair from its part file.
-- **`km play`:** plays the score the standing ensemble names. **One conflict needs the owner's
-  decision.** A standing chair keeps its terminal, so under `km play` a reviewer remembers earlier
-  rounds today. Either `km play` reseats each review chair's occupant before its step, which
-  honours "review is always fresh" and changes `km play` on purpose, or `km play` is exempt and
-  says so in its summary. I recommend reseating: the chair keeps its address and replacing the
-  occupant is what the chair and occupant split is for.
+- **`km play`:** plays the score the standing ensemble names. A standing chair keeps its terminal,
+  so a reviewer under `km play` remembers earlier rounds today. `km play` will reseat each review
+  chair's occupant before its step: the chair keeps its address, and review is always fresh under
+  every command. This changes `km play` on purpose.
 
 ## 11. Slices
 
@@ -341,7 +354,7 @@ One PR each. The order differs from the proposal in two places, marked.
 6. **Memory:** `resume` for any non-review part, the fallbacks, the limits, and the measurement:
    the same task with the implementer resumed (today) and fresh, comparing rounds, tokens and
    outcome.
-7. **(added, if approved) `km play` reseats review chairs.**
+7. **(added) `km play` reseats review chairs.**
 8. **README and `km init`.**
 
 ## Rejected
