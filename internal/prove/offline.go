@@ -23,12 +23,16 @@ const (
 	MethodProxy     = "proxy variables (best effort)"
 )
 
-const offlineProfile = "(version 1)(allow default)(deny network*)"
+const offlineProfile = `(version 1)(allow default)(deny network*)(allow network-bind (local ip "localhost:*"))(allow network-inbound (local ip "localhost:*"))(allow network-outbound (remote ip "localhost:*"))(allow network-bind (local unix-socket))(allow network-inbound (local unix-socket))(allow network-outbound (remote unix-socket))`
+
+const namespaceInner = `ip link set lo up 2>/dev/null || ifconfig lo up 2>/dev/null || exit 125
+exec unshare --map-user="$1" --map-group="$2" sh -c "$3"`
 
 type OfflineOptions struct {
 	Worktree string
 	Timeout  time.Duration
 	Method   string
+	Labels   []string
 }
 
 type OfflineFailure struct {
@@ -63,7 +67,7 @@ func withoutNetwork(method, command string) string {
 	case MethodSandbox:
 		return "sandbox-exec -p " + shellQuote(offlineProfile) + " sh -c " + shellQuote(command)
 	case MethodNamespace:
-		return `unshare --net --map-user="$(id -u)" --map-group="$(id -g)" sh -c ` + shellQuote(command)
+		return "unshare --net --map-root-user sh -c " + shellQuote(namespaceInner) + ` sh "$(id -u)" "$(id -g)" ` + shellQuote(command)
 	}
 	proxy := shellQuote("http://" + closedPort())
 	names := "http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY"
@@ -71,7 +75,7 @@ func withoutNetwork(method, command string) string {
 	for _, name := range strings.Fields(names) {
 		b.WriteString(name + "=" + proxy + "\n")
 	}
-	b.WriteString("no_proxy=\nNO_PROXY=\nexport " + names + " no_proxy NO_PROXY\n")
+	b.WriteString("no_proxy=localhost,127.0.0.1,::1\nNO_PROXY=$no_proxy\nexport " + names + " no_proxy NO_PROXY\n")
 	return b.String() + command
 }
 
@@ -117,6 +121,15 @@ func offlineEvidence(output string) string {
 	return evidence + ": " + last
 }
 
+type offlineRun struct {
+	passed   bool
+	timedOut bool
+	step     string
+	evidence string
+	ran      []string
+	output   string
+}
+
 func Offline(ctx context.Context, options OfflineOptions) (result OfflineResult) {
 	finish := func(status, reason string) OfflineResult {
 		result.Status, result.Reason = status, reason
@@ -157,7 +170,7 @@ func Offline(ctx context.Context, options OfflineOptions) (result OfflineResult)
 	if result.Method == "" {
 		result.Method = NoNetworkMethod(ctx)
 	}
-	scratch, err := os.MkdirTemp("", "km-offline-")
+	scratch, err := os.MkdirTemp("", "km-prove-")
 	if err != nil {
 		return fail(err)
 	}
@@ -170,46 +183,98 @@ func Offline(ctx context.Context, options OfflineOptions) (result OfflineResult)
 		return fail(err)
 	}
 	skip := filepath.Join(scratch, "skip")
-	var skipped []string
-	for {
+	run := func(skipped []string, network bool) (offlineRun, error) {
 		result.Runs++
-		name := fmt.Sprintf("offline-%d", result.Runs)
+		name := fmt.Sprintf("clean-%d", result.Runs)
 		dir, err := cleanCopy(ctx, root, head, scratch, name, setup)
 		if err != nil {
-			return fail(err)
+			return offlineRun{}, err
 		}
 		tmp := filepath.Join(scratch, name+"-tmp")
 		if err := os.Mkdir(tmp, 0700); err != nil {
-			return fail(err)
+			return offlineRun{}, err
 		}
-		if err := os.WriteFile(skip, []byte(strings.Join(skipped, "\n")+"\n"), 0600); err != nil {
-			return fail(err)
+		names := ""
+		if len(skipped) > 0 {
+			names = strings.Join(skipped, "\n") + "\n"
+		}
+		if err := os.WriteFile(skip, []byte(names), 0600); err != nil {
+			return offlineRun{}, err
 		}
 		record := filepath.Join(scratch, name+"-steps")
 		prefix := "unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_OBJECT_DIRECTORY\nTMPDIR=" + shellQuote(tmp) + "\n" + initrepo.StepsEnv + "=" + shellQuote(record) + "\n" + initrepo.SkipEnv + "=" + shellQuote(skip) + "\nexport TMPDIR " + initrepo.StepsEnv + " " + initrepo.SkipEnv + "\n"
-		run := initrepo.Run(ctx, dir, prefix+withoutNetwork(result.Method, command), timeout)
+		wrapped := command
+		if !network {
+			wrapped = withoutNetwork(result.Method, command)
+		}
+		verify := initrepo.Run(ctx, dir, prefix+wrapped, timeout)
+		recorded, _ := os.ReadFile(record)
+		failed, _ := os.ReadFile(record + ".failed")
+		out := offlineRun{passed: verify.Status == "passed" && verify.ExitCode == 0, timedOut: verify.Status == "timed_out", step: strings.TrimSuffix(string(failed), "\n"), evidence: offlineEvidence(verify.Output), ran: strings.Split(strings.TrimSuffix(string(recorded), "\n"), "\n"), output: verify.Output}
+		if out.timedOut {
+			out.step, out.evidence = "", fmt.Sprintf("did not finish within %s", timeout)
+			for _, label := range options.Labels {
+				if !slices.Contains(out.ran, label) && !slices.Contains(skipped, label) {
+					out.step = label
+					break
+				}
+			}
+		}
+		return out, nil
+	}
+	var skipped []string
+	for {
+		first, err := run(skipped, false)
+		if err != nil {
+			return fail(err)
+		}
 		if ctx.Err() != nil {
 			return finish("interrupted", "interrupted")
 		}
-		if run.Status == "timed_out" {
-			return finish("timeout", fmt.Sprintf("verify timed out without network after %s", timeout))
-		}
-		if run.ExitCode == 0 {
+		if first.passed {
 			if len(result.Failed) == 0 {
 				return finish("passed", "verify passes on a clean copy without network")
 			}
 			return finish("failed", "")
 		}
-		failed, _ := os.ReadFile(record + ".failed")
-		step := strings.TrimSuffix(string(failed), "\n")
-		if step == "" {
-			return finish("unknown", fmt.Sprintf("verify fails on a clean copy without network and did not record which step failed; its run wrapper must write the failing label to the file named by $%s with .failed added, as the wrapper km init writes does: %s", initrepo.StepsEnv, bounded(run.Output)))
+		if first.step == "" && first.timedOut {
+			return finish("timeout", fmt.Sprintf("verify timed out without network after %s and km could not tell which step was running", timeout))
 		}
-		if slices.Contains(skipped, step) {
+		if first.step == "" {
+			return finish("unknown", fmt.Sprintf("verify fails on a clean copy without network and did not record which step failed; its run wrapper must write the failing label to the file named by $%s with .failed added, as the wrapper km init writes does: %s", initrepo.StepsEnv, bounded(first.output)))
+		}
+		if slices.Contains(skipped, first.step) {
 			result.Partial = true
 			return finish("failed", "")
 		}
-		result.Failed = append(result.Failed, OfflineFailure{Suite: step, Evidence: offlineEvidence(run.Output)})
-		skipped = append(skipped, step)
+		alone := slices.Clone(skipped)
+		if at := slices.Index(options.Labels, first.step); at >= 0 {
+			alone = append(alone, options.Labels[at+1:]...)
+		}
+		again, err := run(alone, false)
+		if err != nil {
+			return fail(err)
+		}
+		if ctx.Err() != nil {
+			return finish("interrupted", "interrupted")
+		}
+		if again.timedOut && again.step == "" {
+			again.step = first.step
+		}
+		if again.step != first.step {
+			return finish("flaky", fmt.Sprintf("step %q failed once without network (%s) and passed when run again without it: flaky, not a suite that needs network", first.step, first.evidence))
+		}
+		with, err := run(alone, true)
+		if err != nil {
+			return fail(err)
+		}
+		if ctx.Err() != nil {
+			return finish("interrupted", "interrupted")
+		}
+		if with.step == first.step || !slices.Contains(with.ran, first.step) {
+			return finish("failure", fmt.Sprintf("step %q failed twice without network (%s) and failed again with it: not a suite that needs network", first.step, first.evidence))
+		}
+		result.Failed = append(result.Failed, OfflineFailure{Suite: first.step, Evidence: first.evidence})
+		skipped = append(skipped, first.step)
 	}
 }

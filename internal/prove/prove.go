@@ -64,10 +64,11 @@ type Result struct {
 	Runs       []RunResult   `json:"runs"`
 	Breaks     []BreakResult `json:"breaks"`
 
-	Flaky          []FlakyStep `json:"flaky,omitempty"`
-	Unbroken       []string    `json:"unbroken,omitempty"`
-	TimeoutMS      int64       `json:"timeout_ms,omitempty"`
-	BreakTimeoutMS int64       `json:"break_timeout_ms,omitempty"`
+	Excluded       []loop.Exclusion `json:"excluded,omitempty"`
+	Flaky          []FlakyStep      `json:"flaky,omitempty"`
+	Unbroken       []string         `json:"unbroken,omitempty"`
+	TimeoutMS      int64            `json:"timeout_ms,omitempty"`
+	BreakTimeoutMS int64            `json:"break_timeout_ms,omitempty"`
 }
 
 func Prove(ctx context.Context, options Options) (result Result) {
@@ -123,10 +124,14 @@ func Prove(ctx context.Context, options Options) (result Result) {
 	if strings.TrimPrefix(command, "./") == initrepo.ScriptFile && initrepo.IsStub(string(setup[initrepo.ScriptFile].body)) {
 		return refuse("verify is unfinished: scripts/verify is a stub; write the command, then run km prove")
 	}
+	if initrepo.SetsSkip(command) || initrepo.SetsSkip(string(setup[initrepo.ScriptFile].body)) {
+		return refuse(fmt.Sprintf("verify must not set %s: only km sets it, for its own run without network", initrepo.SkipEnv))
+	}
 	test, err := loop.ResolveTest(root)
 	if err != nil {
 		return refuse(err.Error())
 	}
+	result.Excluded = test.Excluded
 	timeout := options.Timeout
 	if timeout == 0 {
 		timeout = test.Timeout(DefaultTimeout)
@@ -167,13 +172,17 @@ func Prove(ctx context.Context, options Options) (result Result) {
 		return refuse("scratch copies must live outside the checkout")
 	}
 	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'" }
+	skip := filepath.Join(scratch, "skip")
+	if err := os.WriteFile(skip, nil, 0600); err != nil {
+		return fail(err)
+	}
 	runVerify := func(dir string, limit time.Duration) (initrepo.VerifyResult, []Step, string, error) {
 		tmp := filepath.Join(scratch, filepath.Base(dir)+"-tmp")
 		if err := os.Mkdir(tmp, 0700); err != nil {
 			return initrepo.VerifyResult{}, nil, "", err
 		}
 		record := filepath.Join(scratch, filepath.Base(dir)+"-steps")
-		prefix := "unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_OBJECT_DIRECTORY " + initrepo.SkipEnv + "\nTMPDIR=" + quote(tmp) + "\n" + initrepo.StepsEnv + "=" + quote(record) + "\nexport TMPDIR " + initrepo.StepsEnv + "\n"
+		prefix := "unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_OBJECT_DIRECTORY\nTMPDIR=" + quote(tmp) + "\n" + initrepo.StepsEnv + "=" + quote(record) + "\n" + initrepo.SkipEnv + "=" + quote(skip) + "\nexport TMPDIR " + initrepo.StepsEnv + " " + initrepo.SkipEnv + "\n"
 		stop, timed := make(chan struct{}), make(chan []Step)
 		go func() { timed <- timeSteps(record, stop) }()
 		run := initrepo.Run(ctx, dir, prefix+command, limit)

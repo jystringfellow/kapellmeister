@@ -53,6 +53,9 @@ func proveAt(args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 	} else {
+		for _, entry := range result.Excluded {
+			fmt.Fprintf(stdout, "verify excludes %s\n", entry)
+		}
 		printProof(stdout, result)
 	}
 	if result.ExitStatus != 0 {

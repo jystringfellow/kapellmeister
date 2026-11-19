@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jystringfellow/kapellmeister/internal/cao"
 	"github.com/jystringfellow/kapellmeister/internal/initrepo"
@@ -41,27 +42,28 @@ func excludedWriter(rounds ...[]string) func(*testing.T, cao.StepRequest, string
 func TestTuneRecordsASuiteThatFailsWithoutNetworkAsExcludedAndPublishesAVerifyWithoutIt(t *testing.T) {
 	root := suiteFixture(t)
 	excludedRounds(t, "2")
-	f := &tuneCAO{writer: excludedWriter([]string{"fast", "network"}, []string{"fast"})}
+	f := &tuneCAO{writer: excludedWriter([]string{"fast", "loopback", "network"}, []string{"fast", "loopback"})}
 	code, out := tuneCall(t, "verify", "-worktree", root, "-cao", f.serve(t).URL, "-json")
 	var sum struct {
 		RunID string `json:"run_id"`
 		Tune  struct {
-			Status   string
-			Excluded []loop.Exclusion
+			Status    string
+			Excluded  []loop.Exclusion
+			NoNetwork string `json:"no_network_method"`
 		}
 	}
 	if code != 0 || json.Unmarshal([]byte(out), &sum) != nil {
 		t.Fatal(code, out)
 	}
 	method := prove.NoNetworkMethod(context.Background())
-	if sum.Tune.Status != "proved" || len(sum.Tune.Excluded) != 1 {
+	if sum.Tune.Status != "proved" || len(sum.Tune.Excluded) != 1 || sum.Tune.NoNetwork != method {
 		t.Fatal(out)
 	}
 	entry := sum.Tune.Excluded[0]
 	if entry.Suite != "network" || entry.Reason != "network" || entry.Method != method || !strings.HasPrefix(entry.Evidence, "exit ") || entry.Run != "sh suites/network.sh" {
 		t.Fatal(entry)
 	}
-	if script := initRead(t, root, initrepo.ScriptFile); strings.Contains(script, "network") || !strings.Contains(script, "run 'fast' 'sh suites/fast.sh'") {
+	if script := initRead(t, root, initrepo.ScriptFile); strings.Contains(script, "network") || !strings.Contains(script, "run 'fast' 'sh suites/fast.sh'") || !strings.Contains(script, "run 'loopback' 'sh suites/loopback.sh'") {
 		t.Fatal(script)
 	}
 	published, err := loop.ResolveTest(root)
@@ -100,7 +102,7 @@ func TestARequiredSuiteThatFailsWithoutNetworkIsAnErrorAndIsNotExcluded(t *testi
 	write := suiteWriter("verify_required = ['network']\n", "fast", "network")
 	f := &tuneCAO{writer: func(t *testing.T, req cao.StepRequest, patchDir string) string {
 		worktree = req.WorkingDirectory
-		proofWrite(t, patchDir, "network.patch", "diff --git a/suites/network.url b/suites/network.url\n--- a/suites/network.url\n+++ b/suites/network.url\n@@ -1 +1 @@\n-"+strings.TrimSpace(initRead(t, root, "suites/network.url"))+"\n+http://127.0.0.1:1/\n", 0644)
+		proofWrite(t, patchDir, "network.patch", "diff --git a/suites/network.sh b/suites/network.sh\n--- a/suites/network.sh\n+++ b/suites/network.sh\n@@ -1 +1 @@\n-"+suiteHelperScript("network")+"+"+suiteHelperScript("unknown"), 0644)
 		reply := write(t, req, patchDir)
 		return strings.Replace(reply, `"patches":[`, `"patches":[{"file":"`+filepath.Join(patchDir, "network.patch")+`","kind":"test"},`, 1)
 	}}
@@ -171,5 +173,92 @@ func TestRunSaysWhichSuitesVerifyExcludesBeforeItStarts(t *testing.T) {
 	proofWrite(t, root, loop.ConfigFile, suiteConfig(""), 0644)
 	if printExcluded(&out, root); out.Len() != 0 {
 		t.Fatal(out.String())
+	}
+}
+
+func offlineStub(t *testing.T, result prove.OfflineResult) *prove.OfflineOptions {
+	t.Helper()
+	old := runTuneOffline
+	t.Cleanup(func() { runTuneOffline = old })
+	var seen prove.OfflineOptions
+	runTuneOffline = func(_ context.Context, options prove.OfflineOptions) prove.OfflineResult {
+		seen = options
+		return result
+	}
+	return &seen
+}
+
+func offlinePasses(t *testing.T) *prove.OfflineOptions {
+	t.Helper()
+	return offlineStub(t, prove.OfflineResult{Method: prove.MethodProxy, Status: "passed", Runs: 1})
+}
+
+func TestTheTuneSummaryNamesHowTheNetworkWasCutEvenWhenNothingIsExcluded(t *testing.T) {
+	root := suiteFixture(t)
+	f := &tuneCAO{writer: suiteWriter("", "fast", "loopback")}
+	code, out := tuneCall(t, "verify", "-worktree", root, "-cao", f.serve(t).URL)
+	method := prove.NoNetworkMethod(context.Background())
+	if code != 0 || !strings.Contains(out, "  network cut by: "+method+"\n") || strings.Contains(out, "excluded:") {
+		t.Fatal(code, out)
+	}
+}
+
+func TestTheRunWithoutNetworkGetsTwiceTheSlowestCleanRunAsItsLimitAndTheProofsStepOrder(t *testing.T) {
+	root := suiteFixture(t)
+	f := &tuneCAO{writer: suiteWriter("", "fast", "slow")}
+	old := runTuneProof
+	defer func() { runTuneProof = old }()
+	runTuneProof = func(context.Context, prove.Options) prove.Result {
+		return prove.Result{Status: "proved", Runs: []prove.RunResult{{Name: "clean run 1", Status: "passed", DurationMS: 650, Steps: []prove.Step{{Label: "fast"}, {Label: "slow"}}}, {Name: "clean run 2", Status: "passed", DurationMS: 700, Steps: []prove.Step{{Label: "fast"}, {Label: "slow"}}}}}
+	}
+	seen := offlinePasses(t)
+	if code, out := tuneCall(t, "verify", "-worktree", root, "-cao", f.serve(t).URL, "-verify-timeout", "800ms"); code != 0 {
+		t.Fatal(code, out)
+	}
+	if seen.Timeout != 1400*time.Millisecond || strings.Join(seen.Labels, ",") != "fast,slow" {
+		t.Fatal(*seen)
+	}
+	code, out := tuneCall(t, "verify", "-worktree", suiteFixture(t), "-cao", (&tuneCAO{writer: suiteWriter("", "fast", "slow")}).serve(t).URL, "-verify-timeout", "5s")
+	if code != 0 || seen.Timeout != 5*time.Second {
+		t.Fatal(code, out, *seen)
+	}
+}
+
+func TestAStepThatIsFlakyOrFailsWithNetworkTooFailsTheRoundWithItsOwnStatusAndIsNotRecorded(t *testing.T) {
+	for status, advice := range map[string]string{
+		"flaky":   "nothing was recorded for it: make the step reliable, or leave it out as flaky with this evidence",
+		"failure": "nothing was recorded for it: it passed in the proof, so make the step reliable, or leave it out with this evidence",
+	} {
+		root := suiteFixture(t)
+		var worktree string
+		write := suiteWriter("", "fast", "slow")
+		f := &tuneCAO{writer: func(t *testing.T, req cao.StepRequest, patchDir string) string {
+			worktree = req.WorkingDirectory
+			return write(t, req, patchDir)
+		}}
+		offlineStub(t, prove.OfflineResult{Method: prove.MethodSandbox, Status: status, Reason: `step "slow" did something`, Runs: 2})
+		code, out := tuneCall(t, "verify", "-worktree", root, "-cao", f.serve(t).URL)
+		if code == 0 || !initrepo.IsStub(initRead(t, root, initrepo.ScriptFile)) {
+			t.Fatal(status, code, out)
+		}
+		if want := "no_network_" + status + `: without network (sandbox profile): step "slow" did something; ` + advice; !strings.Contains(out, want) {
+			t.Fatal(want, out)
+		}
+		if kept, err := loop.ResolveTest(worktree); err != nil || len(kept.Excluded) != 0 {
+			t.Fatal(kept, err)
+		}
+	}
+}
+
+func TestProveSaysWhichSuitesVerifyExcludes(t *testing.T) {
+	root := suiteFixture(t)
+	proofWrite(t, root, initrepo.ScriptFile, suiteScript("fast"), 0755)
+	proofWrite(t, root, loop.ConfigFile, suiteConfig(excludedEntry), 0644)
+	want := "verify excludes network (network; network namespace): exit 7; run it by hand: sh suites/network.sh\n"
+	if code, out := proofCall(t, root); code != 11 || !strings.HasPrefix(out, want) {
+		t.Fatal(code, out)
+	}
+	if report := proofJSON(t, root); len(report.Excluded) != 1 || report.Excluded[0].Suite != "network" {
+		t.Fatal(report)
 	}
 }

@@ -28,7 +28,7 @@ func limitsTimeout(t *testing.T) *int {
 	return &calls
 }
 
-const limitsDerived = "budget 3h10m0s: a whole proof at the 45m0s verify timeout is two clean runs and 2 break runs (3h0m0s), plus 10m0s for the chairs; pass -budget to set it yourself\n"
+const limitsDerived = "budget 3h55m0s: a whole proof at the 45m0s verify timeout is two clean runs, 2 break runs and one run without network (3h45m0s), plus 10m0s for the chairs; pass -budget to set it yourself\n"
 
 func TestTuneSizesItsDefaultBudgetFromTheVerifyTimeoutFlagAndSaysHowBeforeSeatingAnyChair(t *testing.T) {
 	root := suiteFixture(t)
@@ -38,7 +38,7 @@ func TestTuneSizesItsDefaultBudgetFromTheVerifyTimeoutFlagAndSaysHowBeforeSeatin
 	if code == 0 || !strings.HasPrefix(out, limitsDerived) {
 		t.Fatal(code, out)
 	}
-	if *calls != 1 || !strings.Contains(out, "and 2h25m0s of the budget is left") {
+	if *calls != 1 || !strings.Contains(out, "and 3h10m0s of the budget is left") {
 		t.Fatal(*calls, out)
 	}
 }
@@ -53,14 +53,14 @@ func TestTuneSizesItsDefaultBudgetFromTheSavedVerifyTimeout(t *testing.T) {
 	}
 }
 
-func TestTheDefaultBudgetStaysThirtyMinutesAtTheDefaultVerifyTimeoutAndCountsOneBreakPerRequiredSuite(t *testing.T) {
+func TestTheDefaultBudgetIsThirtyFiveMinutesAtTheDefaultVerifyTimeoutAndCountsOneBreakPerRequiredSuite(t *testing.T) {
 	root := suiteFixture(t)
 	f := &tuneCAO{writer: suiteWriter("", "fast", "slow")}
 	limitsTimeout(t)
-	if _, out := tuneCall(t, "verify", "-worktree", root, "-cao", f.serve(t).URL); !strings.Contains(out, "budget 30m0s: a whole proof at the 5m0s verify timeout is two clean runs and 2 break runs (20m0s), plus 10m0s for the chairs; pass -budget to set it yourself\n") {
+	if _, out := tuneCall(t, "verify", "-worktree", root, "-cao", f.serve(t).URL); !strings.Contains(out, "budget 35m0s: a whole proof at the 5m0s verify timeout is two clean runs, 2 break runs and one run without network (25m0s), plus 10m0s for the chairs; pass -budget to set it yourself\n") {
 		t.Fatal(out)
 	}
-	if _, out := tuneCall(t, "verify", "-worktree", root, "-cao", f.serve(t).URL, "-require", "fast", "-require", "slow", "-require", "unit"); !strings.Contains(out, "budget 35m0s: a whole proof at the 5m0s verify timeout is two clean runs and 3 break runs (25m0s), plus 10m0s for the chairs") {
+	if _, out := tuneCall(t, "verify", "-worktree", root, "-cao", f.serve(t).URL, "-require", "fast", "-require", "slow", "-require", "unit"); !strings.Contains(out, "budget 40m0s: a whole proof at the 5m0s verify timeout is two clean runs, 3 break runs and one run without network (30m0s), plus 10m0s for the chairs") {
 		t.Fatal(out)
 	}
 }
@@ -70,11 +70,11 @@ func TestAnExplicitBudgetIsKeptAndTuneSaysUpFrontWhetherAWholeProofFitsItAndWhat
 	f := &tuneCAO{writer: suiteWriter("", "fast", "slow")}
 	calls := limitsTimeout(t)
 	code, out := tuneCall(t, "verify", "-worktree", root, "-cao", f.serve(t).URL, "-verify-timeout", "45m", "-budget", "50m")
-	short := strings.HasPrefix(out, "-budget 50m0s does not hold a whole proof at the 45m0s verify timeout: two clean runs and 2 break runs can take 3h0m0s, plus 10m0s for the chairs; -budget 3h10m0s would\n")
+	short := strings.HasPrefix(out, "-budget 50m0s does not hold a whole proof at the 45m0s verify timeout: two clean runs, 2 break runs and one run without network can take 3h45m0s, plus 10m0s for the chairs; -budget 3h55m0s would\n")
 	if code == 0 || !short || *calls != 1 || !strings.Contains(out, "and 5m0s of the budget is left") {
 		t.Fatal(code, *calls, out)
 	}
-	if _, out := tuneCall(t, "verify", "-worktree", root, "-cao", f.serve(t).URL, "-verify-timeout", "45m", "-budget", "4h"); !strings.Contains(out, "-budget 4h0m0s holds a whole proof at the 45m0s verify timeout: two clean runs and 2 break runs can take 3h0m0s, plus 10m0s for the chairs\n") {
+	if _, out := tuneCall(t, "verify", "-worktree", root, "-cao", f.serve(t).URL, "-verify-timeout", "45m", "-budget", "4h"); !strings.Contains(out, "-budget 4h0m0s holds a whole proof at the 45m0s verify timeout: two clean runs, 2 break runs and one run without network can take 3h45m0s, plus 10m0s for the chairs\n") {
 		t.Fatal(out)
 	}
 }
@@ -118,11 +118,11 @@ func TestARaiseThatDoesNotFitEndsTheRunWithoutAnotherWriterStepAndNamesTheLimitA
 	if code == 0 || *calls != 1 || len(f.steps) != 1 || !strings.Contains(out, "\nverify_limit after 1 round(s) in ") {
 		t.Fatal(code, *calls, f.steps, out)
 	}
-	if !strings.Contains(out, "the timeout is not raised to 1h30m0s: a proof at that limit can take 7h30m0s (two clean runs and 3 break runs) and 2h25m0s of the budget is left: pass -verify-timeout 1h30m0s, which sizes the budget at 6h10m0s, and pass -budget for more") {
+	if !strings.Contains(out, "the timeout is not raised to 1h30m0s: a proof at that limit can take 9h0m0s (two clean runs, 3 break runs and one run without network) and 3h10m0s of the budget is left: pass -verify-timeout 1h30m0s, which sizes the budget at 7h40m0s, and pass -budget for more") {
 		t.Fatal(out)
 	}
 	f = &tuneCAO{writer: suiteWriter("", "fast", "slow")}
-	if _, out := tuneCall(t, "verify", "-worktree", root, "-cao", f.serve(t).URL, "-verify-timeout", "1h30m"); !strings.HasPrefix(out, "budget 6h10m0s: ") {
+	if _, out := tuneCall(t, "verify", "-worktree", root, "-cao", f.serve(t).URL, "-verify-timeout", "1h30m"); !strings.HasPrefix(out, "budget 7h40m0s: ") {
 		t.Fatal(out)
 	}
 }
@@ -136,10 +136,10 @@ func TestTuneRefusesToDeriveABudgetAboveEightHoursAndAsksForAnExplicitOneBeforeS
 	if code == 0 || *calls != 0 || len(f.steps) != 0 || len(f.seated) != 0 {
 		t.Fatal(code, *calls, f.steps, f.seated, out)
 	}
-	if !strings.Contains(out, "a whole proof at the 100h0m0s verify timeout needs a budget of 400h10m0s, more than the 8h0m0s km sets by itself: pass -budget to allow it, or -verify-timeout for a shorter limit") {
+	if !strings.Contains(out, "a whole proof at the 100h0m0s verify timeout needs a budget of 500h10m0s, more than the 8h0m0s km sets by itself: pass -budget to allow it, or -verify-timeout for a shorter limit") {
 		t.Fatal(out)
 	}
-	if _, out := tuneCall(t, "verify", "-worktree", root, "-cao", f.serve(t).URL, "-budget", "500h"); !strings.HasPrefix(out, "-budget 500h0m0s holds a whole proof at the 100h0m0s verify timeout") || *calls != 1 {
+	if _, out := tuneCall(t, "verify", "-worktree", root, "-cao", f.serve(t).URL, "-budget", "600h"); !strings.HasPrefix(out, "-budget 600h0m0s holds a whole proof at the 100h0m0s verify timeout") || *calls != 1 {
 		t.Fatal(*calls, out)
 	}
 }

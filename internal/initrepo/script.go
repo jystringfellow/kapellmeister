@@ -2,6 +2,7 @@ package initrepo
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -41,6 +42,12 @@ run() {
 
 const StepsEnv = "KAPELLMEISTER_VERIFY_STEPS"
 const SkipEnv = "KAPELLMEISTER_VERIFY_SKIP"
+
+var setsSkip = regexp.MustCompile(SkipEnv + `:?=`)
+
+func SetsSkip(text string) bool {
+	return setsSkip.MatchString(text)
+}
 
 func RenderStub() string {
 	return scriptPrelude + StubMarker + `

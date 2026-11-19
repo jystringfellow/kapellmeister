@@ -32,5 +32,10 @@ jobs:
         run: test -z "$(gofmt -l .)"
       - name: go vet
         run: go vet ./...
+      - name: allow user namespaces
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - name: go test
+        env:
+          KAPELLMEISTER_TEST_NO_NETWORK_METHOD: ${{ runner.os == 'Linux' && 'network namespace' || 'sandbox profile' }}
         run: go test ./...

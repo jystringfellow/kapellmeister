@@ -18,6 +18,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if mode := os.Getenv(suiteHelperEnv); mode != "" {
+		os.Exit(suiteHelper(mode))
+	}
 	if os.Getenv("KM_TEST_AS_KM") == "1" {
 		if os.Getenv("KM_TEST_REFUSE_RECURSION") == "1" && strings.Contains(strings.Join(os.Args[1:], " "), "-detached-launch") {
 			for _, arg := range os.Args[1:] {

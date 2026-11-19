@@ -879,7 +879,7 @@ func TestTuneVerifyDefaultsItsBudgetAndProofTimeoutAndHonoursOverrides(t *testin
 			}
 			args := []string{"verify", "-worktree", root, "-cao", srv.URL, "-json"}
 			expected := 5 * time.Minute
-			budget := 30 * time.Minute
+			budget := 35 * time.Minute
 			if override {
 				expected = time.Minute
 				budget = 2 * time.Minute

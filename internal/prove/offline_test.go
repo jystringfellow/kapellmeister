@@ -20,10 +20,10 @@ func TestTheNoNetworkMethodIsARealIsolationWhenItsProbePassesAndTheLabelledFallb
 	}
 }
 
-func TestTheProxyFallbackPointsEveryProxyVariableAtALocalPortAndClearsTheExceptions(t *testing.T) {
-	out, err := exec.Command("sh", "-c", withoutNetwork(MethodProxy, `echo "$http_proxy $HTTPS_PROXY $ALL_PROXY [$no_proxy$NO_PROXY]"`)).Output()
+func TestTheProxyFallbackPointsEveryProxyVariableAtALocalPortAndExemptsOnlyLoopback(t *testing.T) {
+	out, err := exec.Command("sh", "-c", withoutNetwork(MethodProxy, `echo "$http_proxy $HTTPS_PROXY $ALL_PROXY [$no_proxy|$NO_PROXY]"`)).Output()
 	fields := strings.Fields(string(out))
-	if err != nil || len(fields) != 4 || fields[0] != fields[1] || fields[1] != fields[2] || !strings.HasPrefix(fields[0], "http://127.0.0.1:") || fields[3] != "[]" {
+	if err != nil || len(fields) != 4 || fields[0] != fields[1] || fields[1] != fields[2] || !strings.HasPrefix(fields[0], "http://127.0.0.1:") || fields[3] != "[localhost,127.0.0.1,::1|localhost,127.0.0.1,::1]" {
 		t.Fatal(string(out), err)
 	}
 }
