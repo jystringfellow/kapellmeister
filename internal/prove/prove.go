@@ -173,7 +173,7 @@ func Prove(ctx context.Context, options Options) (result Result) {
 			return initrepo.VerifyResult{}, nil, "", err
 		}
 		record := filepath.Join(scratch, filepath.Base(dir)+"-steps")
-		prefix := "unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_OBJECT_DIRECTORY\nTMPDIR=" + quote(tmp) + "\n" + initrepo.StepsEnv + "=" + quote(record) + "\nexport TMPDIR " + initrepo.StepsEnv + "\n"
+		prefix := "unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_OBJECT_DIRECTORY " + initrepo.SkipEnv + "\nTMPDIR=" + quote(tmp) + "\n" + initrepo.StepsEnv + "=" + quote(record) + "\nexport TMPDIR " + initrepo.StepsEnv + "\n"
 		stop, timed := make(chan struct{}), make(chan []Step)
 		go func() { timed <- timeSteps(record, stop) }()
 		run := initrepo.Run(ctx, dir, prefix+command, limit)

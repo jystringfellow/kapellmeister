@@ -1189,9 +1189,11 @@ func Serialized(v Verifier, mu *sync.Mutex) Verifier {
 	}
 }
 
+const verifySkipEnv = "KAPELLMEISTER_VERIFY_SKIP"
+
 func CommandVerifier(command string) Verifier {
 	return func(ctx context.Context, dir string) (VerifyResult, error) {
-		cmd := exec.CommandContext(ctx, "sh", "-c", command)
+		cmd := exec.CommandContext(ctx, "sh", "-c", "unset "+verifySkipEnv+"\n"+command)
 		cmd.Dir = dir
 		out, err := cmd.CombinedOutput()
 		if ctx.Err() != nil {

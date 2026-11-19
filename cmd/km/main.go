@@ -441,6 +441,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 	if err != nil {
 		return err
 	}
+	printExcluded(stdout, wt)
 	policy := s.Policy
 	runID := newRunID()
 	if *detachedLaunch != "" {

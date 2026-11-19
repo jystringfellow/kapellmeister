@@ -883,6 +883,13 @@ verify_required = ["unit", "integration"]  # suites verify must run, each a run 
 verify_timeout = "20m"              # limit for each verify run in km prove and km tune verify; saved by tune when it raises it
 verify_time_bounded = true          # allow tune to cut what does not fit two minutes; default false
 
+[[test.excluded]]                   # a suite left out of verify; written by km tune verify, not by hand or by a chair
+suite    = "e2e"
+reason   = "network"
+method   = "network namespace"      # how km cut the network: or "sandbox profile", or "proxy variables (best effort)"
+evidence = "exit 7: could not resolve host"
+run      = "make e2e"               # how to run it by hand
+
 [tiers.claude_code]                 # override any provider's tier model or effort
 large = { model = "claude-fable-5-1" }
 
@@ -1004,9 +1011,36 @@ as [test] verify_timeout`, and the JSON summary carries `required`, `time_bounde
 the timeout: a timeout fails the proof. `km tune verify -guide` with `-require` or `-time-bounded`
 prints the procedure for those requirements.
 
-The three `[test] verify_*` keys are new. A km built before them rejects a config that contains
-any of them as an unknown key, for every command including `km run`, so update km on every
-machine and CI job that reads the repository's config before committing them.
+**Which suites belong in verify.** A suite belongs in verify when it passes on a clean copy
+without network. km decides this by test, not by a chair's opinion. After a round's proof passes,
+km runs the same verify once more on a clean copy with the network cut. A step that fails there,
+having passed with network in the proof, does not belong: km writes it into the tuned config as
+a `[[test.excluded]]` entry with the reason `network`, the method used, the evidence (the step's
+exit status and the last line it printed) and the step's command to run by hand. The round is
+not proved, and the writer is told to remove that step. The writer is asked to give every suite
+CI runs its own step and leave this decision to km.
+
+km cuts the network with the strongest method the machine offers and records which one it used:
+`network namespace` on Linux (`unshare --net`), `sandbox profile` on macOS (`sandbox-exec`), and
+otherwise `proxy variables (best effort)`, which points the proxy variables at a closed local
+port and so only stops programs that honour them. All failing steps are found in one pass: the
+`run` wrapper skips the steps named in the file `KAPELLMEISTER_VERIFY_SKIP` points at, and km
+adds each failing step to that file and runs again. `km prove` and `km run` unset that variable,
+so no step is skipped anywhere else. A wrapper written before this has no skip line; km then
+finds one step per round and says the result is partial.
+
+Only km writes `[[test.excluded]]`, and only the caller removes an entry. A round whose config
+adds, changes or drops an entry is refused, and so is a verify that still has a step for an
+excluded suite. A required suite is never excluded: when one fails without network the round is
+refused with `a required suite cannot be excluded: make it pass without network, or stop
+requiring it`. The tune summary lists each entry (`excluded: e2e (network; network namespace):
+exit 7: could not resolve host; run it by hand: make e2e`, and `excluded` in the JSON), and
+`km run` prints `verify excludes ...` for each one before it starts, so an exclusion is never
+silent. The extra run costs one verify per proved round, plus one for each suite it excludes.
+
+The three `[test] verify_*` keys and `[[test.excluded]]` are new. A km built before them rejects
+a config that contains any of them as an unknown key, for every command including `km run`, so
+update km on every machine and CI job that reads the repository's config before committing them.
 
 The writer keeps the bounded-output wrapper and writes at least two break patches outside the
 checkout: one breaks covered source code and one breaks a test expectation. Work takes place in

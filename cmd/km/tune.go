@@ -32,6 +32,7 @@ const tuneSummaryWidth = 80
 
 var tuneClock = time.Now
 var runTuneProof = prove.Prove
+var runTuneOffline = prove.Offline
 
 const tuneSubjects = "subjects:\n  verify  write and prove this repository's verify"
 
@@ -68,6 +69,7 @@ type tuneSummary struct {
 	Required      []string            `json:"required,omitempty"`
 	TimeBounded   bool                `json:"time_bounded,omitempty"`
 	TimeoutRaised *tuneRaise          `json:"timeout_raised,omitempty"`
+	Excluded      []loop.Exclusion    `json:"excluded,omitempty"`
 	prove.Result
 }
 
@@ -320,6 +322,11 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 	summary := &tuneSummary{Required: required.Suites, TimeBounded: required.TimeBounded, LeftOut: []loop.TuneOmission{}, Breaks: []tuneBreak{}, Result: prove.Result{Worktree: wt, Status: "not_run", Reason: "no proof was run", Runs: []prove.RunResult{}, Breaks: []prove.BreakResult{}}}
 	var proved *tuneProved
 	currentRound := 0
+	var savedExcluded []loop.Exclusion
+	if saved, err := loop.ResolveTest(wt); err == nil {
+		savedExcluded = saved.Excluded
+	}
+	summary.Excluded = slices.Clone(savedExcluded)
 	savedTimeout := ""
 	if saved, err := loop.ResolveTest(wt); err == nil {
 		savedTimeout = saved.VerifyTimeout
@@ -358,7 +365,7 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 				return "", err
 			}
 			if config, err := os.ReadFile(filepath.Join(wt, loop.ConfigFile)); err == nil {
-				state[loop.ConfigFile] = fmt.Sprintf("%x", sha256.Sum256([]byte(loop.WithoutVerifyTimeout(string(config)))))
+				state[loop.ConfigFile] = fmt.Sprintf("%x", sha256.Sum256([]byte(loop.WithoutExcluded(loop.WithoutVerifyTimeout(string(config))))))
 			}
 			b, err := json.Marshal(state)
 			return string(b), err
@@ -394,6 +401,15 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 					unrecorded = fmt.Sprintf("[test] verify_timeout must stay %q: only the caller and km change it", savedTimeout)
 				}
 			}
+			script, _ := os.ReadFile(filepath.Join(wt, initrepo.ScriptFile))
+			if unrecorded == "" && writtenErr == nil && !slices.Equal(written.Excluded, savedExcluded) {
+				unrecorded = "[[test.excluded]] is written by km from its own run without network, not by the tune: leave it as it was"
+			}
+			for _, entry := range savedExcluded {
+				if unrecorded == "" && slices.Contains(tune.StepLabels(string(script)), entry.Suite) {
+					unrecorded = fmt.Sprintf("suite %q is excluded from verify (%s: %s): remove its step from scripts/verify; only the caller removes an entry from [[test.excluded]]", entry.Suite, entry.Reason, entry.Evidence)
+				}
+			}
 			var result prove.Result
 			switch {
 			case resolveErr != nil:
@@ -427,6 +443,38 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 					}
 					savedTimeout = verifyTimeout.String()
 					result = runTuneProof(ctx, prove.Options{Worktree: wt, Breaks: recordPatches, Timeout: verifyTimeout})
+				}
+				if result.Status == "proved" {
+					offline := runTuneOffline(ctx, prove.OfflineOptions{Worktree: wt, Timeout: verifyTimeout})
+					commands := tune.StepCommands(string(script))
+					var reasons []string
+					added := false
+					for _, failed := range offline.Failed {
+						if slices.Contains(written.VerifyRequired, failed.Suite) {
+							reasons = append(reasons, fmt.Sprintf("required suite %q passes with network and fails on a clean copy without it (%s): %s; a required suite cannot be excluded: make it pass without network, or stop requiring it", failed.Suite, offline.Method, failed.Evidence))
+							continue
+						}
+						savedExcluded = append(savedExcluded, loop.Exclusion{Suite: failed.Suite, Reason: "network", Method: offline.Method, Evidence: failed.Evidence, Run: commands[failed.Suite]})
+						added = true
+						reasons = append(reasons, fmt.Sprintf("suite %q passes with network and fails on a clean copy without it (%s): %s; km recorded it in [[test.excluded]]: remove its step from scripts/verify", failed.Suite, offline.Method, failed.Evidence))
+					}
+					if added {
+						if err := loop.SetExcluded(wt, savedExcluded); err != nil {
+							return loop.TuneProof{}, err
+						}
+						summary.Excluded = slices.Clone(savedExcluded)
+					}
+					if offline.Partial {
+						reasons = append(reasons, fmt.Sprintf("the run wrapper in scripts/verify does not skip the steps named in the file $%s points at, as the wrapper km init writes does, so the steps after that one were not tried without network", initrepo.SkipEnv))
+					}
+					switch offline.Status {
+					case "passed":
+						fmt.Fprintf(progress, "verify passes on a clean copy without network (%s)\n", offline.Method)
+					case "failed":
+						result.Status, result.ExitStatus, result.Reason = "needs_network", 16, strings.Join(reasons, "; ")
+					default:
+						result.Status, result.ExitStatus, result.Reason = "no_network_"+offline.Status, 16, fmt.Sprintf("without network (%s): %s", offline.Method, offline.Reason)
+					}
 				}
 			}
 			current, err := readTuneSetup(wt)
@@ -750,6 +798,9 @@ func printTune(w io.Writer, s ensembleSummary, detail bool) {
 	}
 	if t.TimeBounded {
 		fmt.Fprintln(w, "  time-bounded: tests that do not fit the time target may be left out")
+	}
+	for _, entry := range t.Excluded {
+		fmt.Fprintf(w, "  excluded: %s\n", entry)
 	}
 	if raised := t.TimeoutRaised; raised != nil {
 		to := time.Duration(raised.ToMS) * time.Millisecond

@@ -30,6 +30,18 @@ func StepLabels(script string) []string {
 	return labels
 }
 
+var quotedStep = regexp.MustCompile(`^run (?:'([^'\n]*)'|"([^"\n]*)"|([A-Za-z0-9_.-]+)) (?:'([^'\n]*)'|"([^"\n]*)")`)
+
+func StepCommands(script string) map[string]string {
+	commands := map[string]string{}
+	for _, line := range strings.Split(script, "\n") {
+		if m := quotedStep.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
+			commands[m[1]+m[2]+m[3]] = m[4] + m[5]
+		}
+	}
+	return commands
+}
+
 func SameCommands(proved, candidate string) (Comparison, bool) {
 	a, okA := commands(proved)
 	b, okB := commands(candidate)
