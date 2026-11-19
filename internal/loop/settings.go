@@ -34,6 +34,8 @@ type TestConfig struct {
 	VerifyRequired    []string `toml:"verify_required"`
 	VerifyTimeBounded bool     `toml:"verify_time_bounded"`
 	VerifyTimeout     string   `toml:"verify_timeout"`
+	Strict            string   `toml:"strict"`
+	StrictReady       string   `toml:"strict_ready"`
 
 	VerifyKnownFailures []string    `toml:"verify_known_failures"`
 	Excluded            []Exclusion `toml:"excluded"`
@@ -394,6 +396,14 @@ func decodeConfig(data []byte, name string) (loadedConfig, error) {
 	}
 	if err := ValidSuites(cfg.Test.VerifyRequired); err != nil {
 		return cfg, fmt.Errorf("%s: test.verify_required: %w", name, err)
+	}
+	for key, command := range map[string]string{"verify": cfg.Test.Verify, "check": cfg.Test.Check, "strict": cfg.Test.Strict, "strict_ready": cfg.Test.StrictReady} {
+		if emptyCommand(command) {
+			return cfg, fmt.Errorf("%s: test.%s: the command is empty: write a command or remove the key", name, key)
+		}
+	}
+	if cfg.Test.StrictReady != "" && cfg.Test.Strict == "" {
+		return cfg, fmt.Errorf("%s: test.strict_ready: needs test.strict, the command the probe is for", name)
 	}
 	if err := ValidSuites(cfg.Test.VerifyKnownFailures); err != nil {
 		return cfg, fmt.Errorf("%s: test.verify_known_failures: %w", name, err)

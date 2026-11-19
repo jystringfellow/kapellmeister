@@ -15,7 +15,13 @@ import (
 	"github.com/jystringfellow/kapellmeister/internal/loop"
 )
 
+const (
+	LevelVerify = "verify"
+	LevelStrict = "strict"
+)
+
 type Options struct {
+	Level    string
 	Worktree string
 	Breaks   []string
 	Timeout  time.Duration
@@ -59,6 +65,7 @@ type BreakResult struct {
 
 type Result struct {
 	Worktree   string        `json:"worktree"`
+	Level      string        `json:"level,omitempty"`
 	Command    string        `json:"command"`
 	Status     string        `json:"status"`
 	ExitStatus int           `json:"exit_status"`
@@ -116,19 +123,37 @@ func Prove(ctx context.Context, options Options) (result Result) {
 	if err != nil {
 		return refuse("worktree has no HEAD commit: " + err.Error())
 	}
+	level := options.Level
+	if level == "" {
+		level = LevelVerify
+	}
+	if level != LevelVerify && level != LevelStrict {
+		return refuse(fmt.Sprintf("level must be %s or %s, not %q", LevelVerify, LevelStrict, level))
+	}
 	command, _, err := loop.ResolveHooks(root, "")
 	if err != nil {
 		return refuse(err.Error())
 	}
-	result.Command = command
-	if command == "" {
-		return refuse("verify is not configured")
-	}
-	setup, err := readSetup(root)
+	levels, err := loop.ResolveTest(root)
 	if err != nil {
 		return refuse(err.Error())
 	}
-	if strings.TrimPrefix(command, "./") == initrepo.ScriptFile && initrepo.IsStub(string(setup[initrepo.ScriptFile].body)) {
+	if level == LevelStrict {
+		command = levels.Strict
+	}
+	result.Command, result.Level = command, level
+	scripts := loop.StrictScripts(levels)
+	if command == "" && level == LevelStrict {
+		return refuse("strict is not configured: set [test] strict")
+	}
+	if command == "" {
+		return refuse("verify is not configured")
+	}
+	setup, err := readSetup(root, scripts...)
+	if err != nil {
+		return refuse(err.Error())
+	}
+	if level == LevelVerify && strings.TrimPrefix(command, "./") == initrepo.ScriptFile && initrepo.IsStub(string(setup[initrepo.ScriptFile].body)) {
 		return refuse("verify is unfinished: scripts/verify is a stub; write the command, then run km prove")
 	}
 	if initrepo.SetsSkip(command) || initrepo.SetsSkip(string(setup[initrepo.ScriptFile].body)) {
@@ -206,7 +231,7 @@ func Prove(ctx context.Context, options Options) (result Result) {
 		if err != nil {
 			return fail(err)
 		}
-		before, err := setupSnapshot(dir)
+		before, err := setupSnapshot(dir, scripts...)
 		if err != nil {
 			return fail(err)
 		}
@@ -219,12 +244,12 @@ func Prove(ctx context.Context, options Options) (result Result) {
 		if applyErr != nil {
 			reason = fmt.Sprintf("break %s: patch did not apply: %s", patch, applyErr)
 		} else {
-			after, err := setupSnapshot(dir)
+			after, err := setupSnapshot(dir, scripts...)
 			if err != nil {
 				return fail(err)
 			}
 			if !reflect.DeepEqual(before, after) {
-				reason = fmt.Sprintf("break %s: patch touches setup files (.kapellmeister/ or scripts/verify)", patch)
+				reason = fmt.Sprintf("break %s: patch touches setup files (%s)", patch, setupNames(scripts))
 			}
 		}
 		if reason != "" {
@@ -232,6 +257,30 @@ func Prove(ctx context.Context, options Options) (result Result) {
 			return refuse(reason)
 		}
 		breakDirs[i] = dir
+	}
+	if level == LevelStrict && test.StrictReady != "" {
+		if fault := loop.ProbeFault(root, test.StrictReady); fault != "" {
+			return refuse("the strict_ready probe is broken: " + fault + "; fix [test] strict_ready")
+		}
+		dir, err := cleanCopy(ctx, root, head, scratch, "ready", setup)
+		if err != nil {
+			return fail(err)
+		}
+		probe := initrepo.Run(ctx, dir, test.StrictReady, timeout)
+		if ctx.Err() != nil {
+			return finish("interrupted", 1, "interrupted")
+		}
+		if probe.Status != "passed" {
+			outcome := fmt.Sprintf("exited %d", probe.ExitCode)
+			if probe.Status == "timed_out" {
+				outcome = "timed out at " + timeout.String()
+			}
+			return finish("strict_not_run", 17, fmt.Sprintf("strict not run: %s %s: %s", test.StrictReady, outcome, bounded(probe.Output)))
+		}
+	}
+	required := test.VerifyRequired
+	if level != LevelVerify {
+		required = nil
 	}
 	failures := 0
 	for i := 1; i <= 2; i++ {
@@ -249,7 +298,7 @@ func Prove(ctx context.Context, options Options) (result Result) {
 			return finish("interrupted", 1, "interrupted")
 		}
 		if run.Status == "timed_out" {
-			return finish("timeout", 3, name+": verify timed out")
+			return finish("timeout", 3, name+": "+level+" timed out")
 		}
 		if run.ExitCode != 0 {
 			failures++
@@ -260,15 +309,15 @@ func Prove(ctx context.Context, options Options) (result Result) {
 		if failed.ExitCode == 0 {
 			failed, passed = passed, failed
 		}
-		reason := "verify is flaky, not a failed proof: only one clean run passed"
+		reason := level + " is flaky, not a failed proof: only one clean run passed"
 		if failed.FailedStep != "" {
 			result.Flaky = []FlakyStep{{Step: failed.FailedStep, FailedIn: failed.Name, PassedIn: passed.Name, Output: failed.Output}}
-			reason = fmt.Sprintf("verify is flaky, not a failed proof: step %q failed in %s and passed in %s", failed.FailedStep, failed.Name, passed.Name)
+			reason = fmt.Sprintf("%s is flaky, not a failed proof: step %q failed in %s and passed in %s", level, failed.FailedStep, failed.Name, passed.Name)
 		}
 		return finish("flaky", 12, reason)
 	}
 	if failures == 2 {
-		reason := "verify failed on both clean copies"
+		reason := level + " failed on both clean copies"
 		if first, second := result.Runs[0].FailedStep, result.Runs[1].FailedStep; first != "" && first == second {
 			reason += fmt.Sprintf(" at step %q", first)
 		} else if first != "" && second != "" {
@@ -276,7 +325,7 @@ func Prove(ctx context.Context, options Options) (result Result) {
 		}
 		return finish("failed", 12, reason)
 	}
-	for _, suite := range test.VerifyRequired {
+	for _, suite := range required {
 		for _, run := range result.Runs {
 			if slices.ContainsFunc(run.Steps, func(step Step) bool { return step.Label == suite }) {
 				continue
@@ -345,22 +394,22 @@ func Prove(ctx context.Context, options Options) (result Result) {
 		}
 		if run.Status == "timed_out" {
 			b.Status = "timeout"
-			return finish("timeout", 3, "break "+patch+": verify timed out")
+			return finish("timeout", 3, "break "+patch+": "+level+" timed out")
 		}
 		if run.ExitCode == 0 {
 			b.Status = "survives"
-			b.Reason = "patch did not make verify fail"
+			b.Reason = "patch did not make " + level + " fail"
 			survived = append(survived, patch)
 		}
 	}
 	if len(survived) > 0 {
-		return finish("survived", 13, "break patch did not make verify fail: "+strings.Join(survived, ", "))
+		return finish("survived", 13, "break patch did not make "+level+" fail: "+strings.Join(survived, ", "))
 	}
 	if len(options.Breaks) == 0 {
 		return finish("not_proved", 11, "passes, not proved; a break patch is needed: -break PATCH")
 	}
 	var unbroken []string
-	for _, suite := range test.VerifyRequired {
+	for _, suite := range required {
 		if !slices.ContainsFunc(result.Breaks, func(b BreakResult) bool { return b.FailedStep == suite }) {
 			result.Unbroken = append(result.Unbroken, suite)
 			unbroken = append(unbroken, strconv.Quote(suite))
@@ -373,7 +422,7 @@ func Prove(ctx context.Context, options Options) (result Result) {
 		}
 		return finish("suite_unbroken", 15, reason)
 	}
-	return finish("proved", 0, "passed twice and every break patch made verify fail")
+	return finish("proved", 0, "passed twice and every break patch made "+level+" fail")
 }
 
 func timeSteps(record string, stop <-chan struct{}) []Step {
@@ -414,4 +463,12 @@ func removeScratch(root string) error {
 		return nil
 	})
 	return os.RemoveAll(root)
+}
+
+func setupNames(scripts []string) string {
+	names := append([]string{".kapellmeister/", "scripts/verify"}, scripts...)
+	if len(names) == 2 {
+		return names[0] + " or " + names[1]
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " or " + names[len(names)-1]
 }

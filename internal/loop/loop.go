@@ -131,29 +131,31 @@ type VerifyResult struct {
 type Verifier func(ctx context.Context, dir string) (VerifyResult, error)
 
 type Config struct {
-	Lessons        bool
-	LessonsTimeout time.Duration
-	LearnedBudget  int
-	CAOURL         string
-	StateDir       string
-	ScratchDir     string
-	MinFreeMB      int
-	BlockerPoll    time.Duration
-	GateWhen       string
-	RunID          string
-	Task           string
-	Worktree       string
-	Chairs         Chairs
-	MaxRounds      int
-	Budget         time.Duration
-	BudgetStarted  time.Time
-	StepTimeout    time.Duration
-	VerifyCommand  string
-	KnownFailures  []string
-	CheckCommand   string
-	ReplyGrace     time.Duration
-	SkipBaseline   bool
-	Policy         *Policy
+	StrictCommand      string
+	StrictReadyCommand string
+	Lessons            bool
+	LessonsTimeout     time.Duration
+	LearnedBudget      int
+	CAOURL             string
+	StateDir           string
+	ScratchDir         string
+	MinFreeMB          int
+	BlockerPoll        time.Duration
+	GateWhen           string
+	RunID              string
+	Task               string
+	Worktree           string
+	Chairs             Chairs
+	MaxRounds          int
+	Budget             time.Duration
+	BudgetStarted      time.Time
+	StepTimeout        time.Duration
+	VerifyCommand      string
+	KnownFailures      []string
+	CheckCommand       string
+	ReplyGrace         time.Duration
+	SkipBaseline       bool
+	Policy             *Policy
 }
 
 type Record struct {
@@ -225,6 +227,7 @@ type VerifyRetry struct {
 type Result struct {
 	Restores      []Restore     `json:"restores,omitempty"`
 	VerifyRetried []VerifyRetry `json:"verify_retried,omitempty"`
+	Strict        *StrictResult `json:"strict,omitempty"`
 	failure       error
 	Usage         *Usage         `json:"usage,omitempty"`
 	Lessons       *LessonsReport `json:"lessons,omitempty"`
@@ -260,6 +263,7 @@ type Engine struct {
 	Meter           UsageMeter
 	usage           Usage
 	gateRound       int
+	strictBefore    map[string]string
 	measurements    []string
 	measured        int
 	Watcher         Watcher
@@ -309,7 +313,16 @@ func (e *Engine) Run(ctx context.Context) (res Result, err error) {
 	defer stopWatcher()
 	e.gateRound = 0
 	e.measurements, e.measured = nil, 0
+	e.strictBefore = e.strictScriptStates()
 	res, err = e.play(ctx)
+	if err == nil && e.Config.StrictCommand != "" {
+		switch res.Outcome {
+		case Approved:
+			res = e.strict(ctx, res)
+		case Untested:
+			res = e.strictNotReached(res)
+		}
+	}
 	e.reportUnrunMeasurements(&res)
 	if res.Outcome == Failed {
 		res.Reason = cancellationReason(ctx, res.failure)

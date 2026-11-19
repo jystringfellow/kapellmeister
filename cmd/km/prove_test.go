@@ -15,9 +15,9 @@ import (
 )
 
 type proofReport struct {
-	Worktree, Command, Status, Reason string
-	ExitStatus                        int `json:"exit_status"`
-	Runs                              []struct {
+	Worktree, Command, Status, Reason, Level string
+	ExitStatus                               int `json:"exit_status"`
+	Runs                                     []struct {
 		Name, Status, Output string
 		ExitCode             int   `json:"exit_code"`
 		DurationMS           int64 `json:"duration_ms"`

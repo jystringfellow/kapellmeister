@@ -109,10 +109,7 @@ func waitAt(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	for {
 		sum, resultErr := readWaitResult(dir)
 		if resultErr == nil {
-			code := 0
-			if sum.Outcome != loop.Approved {
-				code = 1
-			}
+			code := outcomeExitStatus(sum.Outcome)
 			return emit("finished", code, sum.Reason, &sum)
 		}
 		if !errors.Is(resultErr, os.ErrNotExist) {
@@ -131,10 +128,7 @@ func waitAt(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 			if live != "alive" {
 				// A result can be published between checking it and checking the process.
 				if sum, err := readWaitResult(dir); err == nil {
-					code := 0
-					if sum.Outcome != loop.Approved {
-						code = 1
-					}
+					code := outcomeExitStatus(sum.Outcome)
 					return emit("finished", code, sum.Reason, &sum)
 				}
 				reason := fmt.Sprintf("run %s is unfinished: its process is gone and no result was recorded", plain(run.RunID))

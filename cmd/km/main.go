@@ -30,7 +30,7 @@ import (
 const usage = `usage:
   km init [-worktree DIR] [-dry-run] [-json] [-verify CMD] [-check CMD] [-no-run] [-timeout D]   write config and an unfinished verify, or wrap -verify CMD
   km tune verify [-worktree DIR] [-require SUITE]... [-known-failure LABEL]... [-time-bounded] [-detach] [-timeout D] [-json] [-again] [-guide]   write and prove verify
-  km prove [-worktree DIR] [-break PATCH]... [-timeout D] [-json]   prove verify on clean copies and broken code
+  km prove [-worktree DIR] [-level verify|strict] [-break PATCH]... [-timeout D] [-json]   prove verify or strict on clean copies and broken code
   km run -repo DIR [-base BRANCH] (-task TEXT | -task-file FILE) [-ensemble NAME] [-detach] [flags]   one ensemble
   km audition -worktree DIR [-ensemble NAME] [-keep]       boot the ensemble, cue every chair once, tear down
   km rehearse -worktree DIR (-task TEXT | -task-file FILE) [-ensemble NAME]  brief the ensemble and leave it standing
@@ -542,7 +542,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		Config: loop.Config{
 			ScratchDir: scratch, MinFreeMB: s.MinFreeMB, CAOURL: s.CAOURL, StateDir: loop.StateDir(), RunID: runID, Task: text, Worktree: wt, Chairs: seated, GateWhen: s.GateWhen,
 			Lessons: s.Lessons, LessonsTimeout: s.LessonsTimeout,
-			LearnedBudget: s.LearnedBudget, BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, KnownFailures: tested.VerifyKnownFailures, CheckCommand: checkCmd, Policy: &policy,
+			LearnedBudget: s.LearnedBudget, BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, KnownFailures: tested.VerifyKnownFailures, CheckCommand: checkCmd, StrictCommand: tested.Strict, StrictReadyCommand: tested.StrictReady, Policy: &policy,
 		},
 		Watcher: loop.CAOWatcher{Client: client, Session: podium.SessionName},
 		Stepper: loop.CAOStepper{Client: client, Session: podium.SessionName}, Verify: loop.Retrying(loop.CommandVerifier(verifyCmd), s.VerifyRetries), Progress: stdout,
@@ -1191,6 +1191,7 @@ func finishRun(w io.Writer, sum ensembleSummary) error {
 func finishRunDetail(w io.Writer, sum ensembleSummary, detail bool) error {
 	printOutcome(w, sum)
 	printRestores(w, sum.Restores)
+	printStrict(w, sum.Strict)
 	for _, r := range sum.VerifyRetried {
 		step := "verify[baseline]"
 		if r.Round > 0 {
@@ -1209,7 +1210,7 @@ func finishRunDetail(w io.Writer, sum ensembleSummary, detail bool) error {
 			fmt.Fprintf(w, "  the worktree was kept at %s\n", kept)
 		}
 	}
-	if sum.Worktree != "" && (sum.Outcome == loop.Approved || sum.DiffStat != "" || sum.HeadMoved) {
+	if sum.Worktree != "" && (sum.Outcome == loop.Approved || sum.Strict != nil || sum.DiffStat != "" || sum.HeadMoved) {
 		fmt.Fprintf(w, "  changes   %s\n", sum.Worktree)
 	}
 	fmt.Fprint(w, sum.DiffStat)
@@ -1217,13 +1218,51 @@ func finishRunDetail(w io.Writer, sum ensembleSummary, detail bool) error {
 	if sum.Tune != nil {
 		printLeftOut(w, sum.Tune.LeftOut)
 	}
-	if sum.Outcome == loop.BaselineMismatch {
-		return &exitStatusError{code: 16}
+	switch sum.Outcome {
+	case loop.Approved:
+		return nil
+	case loop.StrictFailed, loop.StrictNotRun, loop.BaselineMismatch:
+		return &exitStatusError{code: outcomeExitStatus(sum.Outcome)}
 	}
-	if sum.Outcome != loop.Approved {
-		return errNotApproved
+	return errNotApproved
+}
+
+func outcomeExitStatus(outcome string) int {
+	switch outcome {
+	case loop.Approved:
+		return 0
+	case loop.StrictFailed:
+		return 5
+	case loop.StrictNotRun:
+		return 6
+	case loop.BaselineMismatch:
+		return 16
 	}
-	return nil
+	return 1
+}
+
+func printStrict(w io.Writer, s *loop.StrictResult) {
+	if s == nil {
+		return
+	}
+	switch {
+	case s.Status == "passed":
+		fmt.Fprintf(w, "  strict    passed: %s\n", s.Command)
+	case s.Status == "failed":
+		fmt.Fprintf(w, "  strict    failed (exit %d): %s\n", s.ExitCode, s.Command)
+	case s.Status == "not_reached":
+		fmt.Fprintf(w, "  strict    %s: %s\n", strings.TrimPrefix(s.Reason, "strict "), s.Command)
+	case s.Reason != "":
+		fmt.Fprintf(w, "  strict    not run: %s\n", s.Reason)
+	default:
+		fmt.Fprintf(w, "  strict    not run: %s exited %d\n", s.Ready, s.ExitCode)
+	}
+	if s.Reason != "" && (s.Status == "passed" || s.Status == "failed") {
+		fmt.Fprintf(w, "  strict    %s\n", s.Reason)
+	}
+	if len(s.Changed) > 0 {
+		fmt.Fprintf(w, "  strict    this run changed %s after it started: read the change before trusting the line above\n", strings.Join(s.Changed, ", "))
+	}
 }
 
 func printHeadMoved(w io.Writer, sum ensembleSummary) {

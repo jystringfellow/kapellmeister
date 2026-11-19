@@ -48,7 +48,7 @@ installing the base chair profiles below.
 ```sh
 km init [-worktree DIR] [-dry-run] [-json] [-verify CMD] [-check CMD] [-no-run] [-timeout D]  # write config and an unfinished verify script
 km tune verify [-worktree DIR] [-require SUITE]... [-known-failure LABEL]... [-time-bounded] [-detach] [-timeout D] [-budget D] [-verify-timeout D] [-json] [-again] [-guide]  # write and prove verify
-km prove [-worktree DIR] [-break PATCH]... [-timeout D] [-json]  # prove verify on clean copies and broken code
+km prove [-worktree DIR] [-level verify|strict] [-break PATCH]... [-timeout D] [-json]  # prove verify or strict on clean copies and broken code
 km run -repo ~/Code/app [-base BRANCH] -task-file task.md [-ensemble thorough] [-detach]  # one ensemble
 km audition -worktree DIR [-ensemble thorough]   # can this ensemble play? no real work
 km rehearse -worktree DIR -task-file task.md [-ensemble thorough]  # brief and leave standing
@@ -186,6 +186,9 @@ success or wait on it forever.
 | 1 | Finished without approval, or an error such as an unknown run |
 | 3 | Wait timed out; the run continues |
 | 4 | Unfinished; no result and the process is gone or liveness cannot be checked |
+| 5 | Finished with `strict_failed`: approved, then the strict level failed |
+| 6 | Finished with `strict_not_run`: approved, but strict did not run or did not finish (environment missing, broken probe, or interrupted) |
+| 16 | Finished with `baseline_mismatch`: `verify_known_failures` did not match the `known_failure` steps that ran before any chair played |
 
 `-json` prints `{"run_id":"…","state":"finished","exit_status":0,"reason":"","result":{…}}`.
 The state can also be `timeout` or `unfinished`; those omit `result` and explain why in `reason`.
@@ -934,6 +937,8 @@ check  = "scripts/check {args}"     # implementers use this for targeted, failur
 verify_required = ["unit", "integration"]  # suites verify must run, each a run step in scripts/verify; default none
 verify_timeout = "20m"              # limit for each verify run in km prove and km tune verify; saved by tune when it raises it
 verify_time_bounded = true          # allow tune to cut what does not fit two minutes; default false
+strict = "scripts/strict"           # optional third level: runs once after the gate (and tester) approve
+strict_ready = "scripts/strict-ready"  # optional probe run before strict; non-zero means "strict not run"
 verify_known_failures = ["legacy export"]  # labels of known_failure steps: verify passes while they fail, and every summary names them
 
 [[test.excluded]]                   # a suite left out of verify; written by km tune verify, not by hand or by a chair
@@ -1162,7 +1167,8 @@ one verify per proved round, plus up to three for each suite it excludes.
 
 The `[test] verify_*` keys, `verify_known_failures` included, and `[[test.excluded]]` are new. A km built before them rejects
 a config that contains any of them as an unknown key, for every command including `km run`, so
-update km on every machine and CI job that reads the repository's config before committing them.
+update km on every machine and CI job that reads the repository's config before committing them. The same
+holds for `strict` and `strict_ready`.
 
 The writer keeps the bounded-output wrapper and writes at least two break patches outside the
 checkout: one breaks covered source code and one breaks a test expectation. Work takes place in
@@ -1221,7 +1227,7 @@ The skill carries no copy of the procedure.
 ### Proving verify
 
 ```sh
-km prove [-worktree DIR] [-break PATCH]... [-timeout D] [-json]
+km prove [-worktree DIR] [-level verify|strict] [-break PATCH]... [-timeout D] [-json]
 ```
 
 Prove runs verify twice, each time in a fresh clean scratch copy of the checkout's HEAD plus
@@ -1237,7 +1243,7 @@ completion, failure, timeout or a handled interrupt.
 
 Before either clean run, prove checks every `-break PATCH` in a fresh copy. It then requires
 verify to fail in each patched copy. A patch that does not apply, is empty or unreadable, or changes `.kapellmeister/` or
-`scripts/verify` is refused. A timeout never counts as a successful break. Proved means two
+`scripts/verify`, or the script `[test] strict` or `[test] strict_ready` points at, is refused. A timeout never counts as a successful break. Proved means two
 clean passes and at least one break patch, with every patch making verify fail. Without a patch,
 it reports "passes, not proved" and asks for `-break PATCH`.
 
@@ -1300,21 +1306,88 @@ that raised it, and the JSON carries `timeout_ms` and `break_timeout_ms`.
 | 0 | Proved: two clean passes and every break patch made verify fail |
 | 1 | Command, Git or filesystem error, or interrupted |
 | 3 | A verify run timed out |
-| 10 | Refused: unfinished stub, verify not configured, invalid checkout, bad/setup-touching patch, or a verify that assigns `KAPELLMEISTER_VERIFY_SKIP` |
+| 10 | Refused: unfinished stub, verify or strict not configured, invalid checkout, bad/setup-touching patch, a verify that assigns `KAPELLMEISTER_VERIFY_SKIP`, or a broken `strict_ready` probe |
 | 11 | Passes twice, not proved: no break patch supplied |
 | 12 | Verify failed or was flaky on clean copies |
 | 13 | A break patch left verify passing |
 | 14 | A required suite's step did not run in a clean run |
 | 15 | A required suite has no break patch that makes verify fail in its step |
 | 16 | `verify_known_failures` does not match the `known_failure` steps that ran, or a listed step passed in both clean runs; `km run` exits 16 for the same mismatch before any chair plays |
+| 17 | `-level strict` only: the `strict_ready` probe failed, so strict was not run |
 | 18 | Only in a `km tune verify` round: the run without network did not pass (`needs_network` or `no_network_*`) |
 
-`-timeout D` is a positive limit per verify run; it defaults to `[test] verify_timeout`, then `10m`, and a timeout names the limit that applied (the longer break timeout when a break run timed out) and both ways to raise it. Output names each clean run and
+`-level` chooses the command to prove: `verify` (the default) or `strict`. `-timeout D` is a positive limit per verify run; it defaults to `[test] verify_timeout`, then `10m`, and a timeout names the limit that applied (the longer break timeout when a break run timed out) and both ways to raise it. Output names each clean run and
 patch, reports exit codes and durations, and bounds verify output to 40 lines of 300 characters.
 `-json` carries the same facts in `worktree`, `command`, `status`, `exit_status`, `reason`, `runs`
 and `breaks`, including failures and skipped patches, with each run's `steps` (label and
 `duration_ms`) and the `failed_step` of a failed run or break. Prove needs Git and the verify command's
 tools; it starts no agents or CAO sessions and makes no network requests of its own.
+
+### Three levels: check, verify, strict
+
+`[test]` names up to three levels, each a flat key, and each does one job:
+
+| Level | Key | When km runs it | What it is for |
+|---|---|---|---|
+| check | `check` | implementers run it during a step | fast, targeted, failures only |
+| verify | `verify` | before planning and after every round | mirrors CI; proved by `km prove` |
+| strict | `strict` | once, after the gate (and the tester, if seated) approve | what is too slow or needs an environment verify cannot have |
+
+Strict is optional and has no hook-file fallback: without `[test] strict` nothing runs and no
+summary mentions it. With it, `km run` and `km play` run the command once in the run's worktree
+after approval. It is not retried and no round follows it.
+
+- **Passed:** the outcome stays `approved` and the summary says `strict    passed: COMMAND`.
+- **Failed:** the outcome is `strict_failed` and the exit status is 5. The summary says
+  `strict    failed (exit N): COMMAND`; the last 400 lines of output are in `strict.txt` in the
+  run directory.
+- **Not run:** when `[test] strict_ready` is set, km runs that probe first. A non-zero exit means
+  the environment strict needs is missing: the outcome is `strict_not_run`, the exit status is 6,
+  the probe's output is printed, and strict does not run. This is never reported as a pass.
+- **Broken probe:** a probe whose script is missing or not executable is not a missing
+  environment. The outcome is still `strict_not_run`, and the summary says
+  `strict    not run: the strict_ready probe is broken: scripts/strict-ready does not exist`.
+- **Did not finish:** when the run is interrupted during strict or its probe, the outcome is
+  `strict_not_run` and the summary says `strict    not run: strict did not finish: interrupted by
+  SIGINT`, not a plain failure.
+- **Not reached:** when the gate approves and the tester is interrupted or times out, the outcome
+  stays `untested` and the summary adds `strict    not reached: the tester did not finish`. A
+  failed run and one that used up its rounds say nothing about strict.
+
+In every case but a pass the approved change is left in the worktree, as after any run; the
+gate's approval stands and strict still has to pass before the change is trusted at that level.
+The JSON summary carries `strict` (`status` of `passed`, `failed`, `not_run` or `not_reached`,
+`command`, `ready`, `exit_code`, `duration_ms`, `reply`, `reason`, `changed`). `km wait` exits
+with the same 5 and 6, and with 16 for `baseline_mismatch`, also with `-json`.
+
+km records the script `[test] strict` and `[test] strict_ready` point at when the run starts:
+the first word of the command, when it is a path inside the worktree such as `scripts/strict`.
+If the run changed, created or removed one of them before strict ran, the summary adds
+`strict    this run changed scripts/strict after it started: read the change before trusting the
+line above`, and `changed` in the JSON names it. Strict still runs and its status stands; the line
+is there because a chair can otherwise make strict pass by rewriting it. A command that is not a
+path, such as `make strict`, is not tracked this way.
+
+`strict_ready` without `strict` is a config error. So is a `verify`, `check`, `strict` or
+`strict_ready` that holds only spaces or comments: the config is refused when it loads, because
+such a command exits 0 and would read as a pass. Leave the key out instead.
+
+A `known_failure` step in the strict command is held to the same list as verify: when strict
+runs one whose label is not in `[test] verify_known_failures`, strict fails with exit 16 and names
+it. A listed label that strict does not run is not a mismatch, since verify runs it.
+
+Strict has no time limit of its own in a run.
+
+`km prove -level strict` proves the strict command the way `km prove` proves verify: two clean
+copies, then every break patch must make it fail. The scripts `[test] strict` and
+`[test] strict_ready` point at are copied into the clean copies with the config and
+`scripts/verify`, so they may be uncommitted, and a break patch may not touch them. With no
+`[test] strict`, a path named `scripts/strict` means nothing to km. A probe whose script is
+missing or not executable is refused as a broken probe (exit 10). Otherwise the probe runs first
+in its own clean copy; when it fails the result is `strict_not_run` (exit 17), never `proved`.
+The output says `strict failed, as required` for each break, and the JSON carries `level`.
+`[test] verify_required` applies to the verify level only. `km tune strict` does not exist yet;
+write `scripts/strict` by hand and prove it.
 
 ### Tiers
 
@@ -1380,7 +1453,8 @@ in the selected ensemble to turn escalation off for that run. `true` or an omitt
 
 `km run` and `km play` exit 0 only for an `approved` outcome. Every other outcome, including `untested`
 (approved but testing did not finish), a failed, interrupted or rounds-exhausted run, exits 1 after
-printing the outcome and diff-stat. SIGINT, SIGTERM and SIGHUP cancel steps and allow cleanup; a run
+printing the outcome and diff-stat. Two outcomes have their own status: `strict_failed` exits 5 and
+`strict_not_run` exits 6. SIGINT, SIGTERM and SIGHUP cancel steps and allow cleanup; a run
 ended by a signal names it, such as `interrupted by SIGINT`, in the output, `result.json` and
 telemetry. A second signal while km is cleaning up ends it at once. `km audition`, `rehearse` and
 `reseat` name the signal in their error line. Cancellation from another cause keeps its usual wording. Missing or unknown subcommands

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"github.com/jystringfellow/kapellmeister/internal/loop"
 	"io"
 	"io/fs"
 	"os"
@@ -48,9 +49,9 @@ type setupFile struct {
 	exists bool
 }
 
-func readSetup(root string) (map[string]setupFile, error) {
+func readSetup(root string, scripts ...string) (map[string]setupFile, error) {
 	setup := map[string]setupFile{}
-	for _, name := range []string{".kapellmeister/config.toml", "scripts/verify"} {
+	for _, name := range append([]string{".kapellmeister/config.toml", "scripts/verify"}, scripts...) {
 		path := filepath.Join(root, name)
 		info, err := os.Lstat(path)
 		if os.IsNotExist(err) {
@@ -87,7 +88,11 @@ func cleanCopy(ctx context.Context, root, head, scratch, name string, setup map[
 }
 
 func OverlaySetup(src, dst string) error {
-	setup, err := readSetup(src)
+	test, err := loop.ResolveTest(src)
+	if err != nil {
+		return err
+	}
+	setup, err := readSetup(src, loop.StrictScripts(test)...)
 	if err != nil {
 		return err
 	}
@@ -128,9 +133,9 @@ type fileState struct {
 	Link string
 }
 
-func setupSnapshot(root string) (map[string]fileState, error) {
+func setupSnapshot(root string, scripts ...string) (map[string]fileState, error) {
 	state := map[string]fileState{}
-	for _, name := range []string{".kapellmeister", "scripts/verify"} {
+	for _, name := range append([]string{".kapellmeister", "scripts/verify"}, scripts...) {
 		err := filepath.WalkDir(filepath.Join(root, name), func(path string, entry fs.DirEntry, err error) error {
 			if os.IsNotExist(err) {
 				return nil
@@ -166,7 +171,7 @@ func setupSnapshot(root string) (map[string]fileState, error) {
 				return err
 			}
 			state[rel] = value
-			if name == "scripts/verify" {
+			if name != ".kapellmeister" {
 				parent, err := os.Lstat(filepath.Join(root, "scripts"))
 				if err != nil {
 					return err
