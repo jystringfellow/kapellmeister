@@ -26,7 +26,7 @@ func proveAt(args []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("prove", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	worktree := flags.String("worktree", ".", "checkout whose verify to prove")
-	timeout := flags.Duration("timeout", 0, "timeout for each verify run (default [test] verify_timeout, then 10m)")
+	timeout := flags.Duration("timeout", 0, "timeout for each run of the command (default [test] verify_timeout, then 10m; at -level strict, [test] strict_timeout first)")
 	level := flags.String("level", prove.LevelVerify, "level to prove: verify ([test] verify) or strict ([test] strict)")
 	asJSON := flags.Bool("json", false, "print runs, patches and verdict as JSON")
 	var patches breakFlags
@@ -51,7 +51,11 @@ func proveAt(args []string, stdout, stderr io.Writer) error {
 		if slices.ContainsFunc(result.Breaks, func(b prove.BreakResult) bool { return b.Status == "timeout" }) {
 			limit = fmt.Sprintf("%s, the break timeout", time.Duration(result.BreakTimeoutMS)*time.Millisecond)
 		}
-		result.Reason += fmt.Sprintf(" at %s; pass -timeout D, or set [test] verify_timeout, to give verify longer", limit)
+		key := "verify"
+		if result.Level == prove.LevelStrict {
+			key = "strict"
+		}
+		result.Reason += fmt.Sprintf(" at %s; pass -timeout D, or set [test] %s_timeout, to give %s longer", limit, key, key)
 	}
 	if *asJSON {
 		if err := json.NewEncoder(stdout).Encode(result); err != nil {

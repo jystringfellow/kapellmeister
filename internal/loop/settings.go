@@ -36,9 +36,17 @@ type TestConfig struct {
 	VerifyTimeout     string   `toml:"verify_timeout"`
 	Strict            string   `toml:"strict"`
 	StrictReady       string   `toml:"strict_ready"`
+	StrictTimeout     string   `toml:"strict_timeout"`
 
 	VerifyKnownFailures []string    `toml:"verify_known_failures"`
 	Excluded            []Exclusion `toml:"excluded"`
+}
+
+func (t TestConfig) StrictLimit(fallback time.Duration) time.Duration {
+	if parsed, err := time.ParseDuration(t.StrictTimeout); err == nil && parsed > 0 {
+		return parsed
+	}
+	return fallback
 }
 
 func (t TestConfig) Timeout(fallback time.Duration) time.Duration {
@@ -404,6 +412,14 @@ func decodeConfig(data []byte, name string) (loadedConfig, error) {
 	}
 	if cfg.Test.StrictReady != "" && cfg.Test.Strict == "" {
 		return cfg, fmt.Errorf("%s: test.strict_ready: needs test.strict, the command the probe is for", name)
+	}
+	if value := cfg.Test.StrictTimeout; value != "" {
+		if parsed, err := time.ParseDuration(value); err != nil || parsed <= 0 {
+			return cfg, fmt.Errorf("%s: test.strict_timeout: %q is not a duration above 0 such as \"45m\"", name, value)
+		}
+		if cfg.Test.Strict == "" {
+			return cfg, fmt.Errorf("%s: test.strict_timeout: needs test.strict, the command the limit is for", name)
+		}
 	}
 	if err := ValidSuites(cfg.Test.VerifyKnownFailures); err != nil {
 		return cfg, fmt.Errorf("%s: test.verify_known_failures: %w", name, err)
