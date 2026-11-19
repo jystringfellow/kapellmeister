@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strings"
 	"syscall"
 	"time"
 
@@ -68,6 +69,15 @@ func printProof(out io.Writer, r prove.Result) {
 	printProofDetail(out, r, true)
 }
 
+func printKnownFailures(out io.Writer, indent string, failing, passing []string) {
+	if len(failing) > 0 {
+		fmt.Fprintf(out, "%sknown failures (verify passes while these fail): %s\n", indent, strings.Join(failing, ", "))
+	}
+	for _, label := range passing {
+		fmt.Fprintf(out, "%sknown failure %q now passes: remove it from [test] verify_known_failures and make it a run step\n", indent, label)
+	}
+}
+
 func printProofDetail(out io.Writer, r prove.Result, detail bool) {
 	for _, run := range r.Runs {
 		fmt.Fprintf(out, "%s: %s (exit %d) in %s\n", run.Name, run.Status, run.ExitCode, time.Duration(run.DurationMS)*time.Millisecond)
@@ -80,6 +90,10 @@ func printProofDetail(out io.Writer, r prove.Result, detail bool) {
 	}
 	if r.BreakTimeoutMS > r.TimeoutMS {
 		fmt.Fprintf(out, "break timeout raised from %s to %s: twice the slowest clean run\n", time.Duration(r.TimeoutMS)*time.Millisecond, time.Duration(r.BreakTimeoutMS)*time.Millisecond)
+	}
+	printKnownFailures(out, "", r.KnownFailures, nil)
+	for _, label := range r.KnownFailuresFlaky {
+		fmt.Fprintf(out, "known failure %q is flaky: it failed in one clean run and passed in the other\n", label)
 	}
 	for _, b := range r.Breaks {
 		fmt.Fprintf(out, "break %s: %s", b.Patch, b.Status)

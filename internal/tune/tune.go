@@ -7,7 +7,7 @@ import (
 )
 
 const VerifyProcedure = `1. Read what the repository already says about passing: CI workflow files, a Makefile or task runner, the README's test instructions, km init's hints.
-2. Write the command into scripts/verify, keeping the bounded-output wrapper. This verify mirrors CI and may take as long as CI: run every suite CI requires and report the measured time. Speed is the job of check, so leave nothing out to save time. Leave a test out only for an observed reason: it failed or hung in a run made during this tune (say which run and what it printed); or it needs something the clean copy cannot have (network, a service, a credential, another machine). A test that looks timing-dependent is not a reason. Each omission says which of those reasons applies, with its evidence, what was left out and how to run it by hand: a flaky verify is worse than a narrower one. Every verify runs on a clean copy: dependency installation counts, so use the lockfile and the package manager's cache. Give every suite CI runs its own run step, including one you think needs network: after the proof km runs the verify on a clean copy without network, records each step that fails only there in [[test.excluded]] with its evidence, and asks you to remove that step. Never write or change [[test.excluded]] yourself.
+2. Write the command into scripts/verify, keeping the bounded-output wrapper. This verify mirrors CI and may take as long as CI: run every suite CI requires and report the measured time. Speed is the job of check, so leave nothing out to save time. Leave a test out only for an observed reason: it failed or hung in a run made during this tune (say which run and what it printed); or it needs something the clean copy cannot have (network, a service, a credential, another machine). A test that looks timing-dependent is not a reason. A test that already fails on the default branch before any change is not left out either: give it its own step known_failure 'LABEL' 'COMMAND', which lets verify pass while it fails. Never write or change [test] verify_known_failures yourself: only the caller sets that list, and km reports an unlisted step to them as your proposal. Each omission says which of those reasons applies, with its evidence, what was left out and how to run it by hand: a flaky verify is worse than a narrower one. Every verify runs on a clean copy: dependency installation counts, so use the lockfile and the package manager's cache. Give every suite CI runs its own run step, including one you think needs network: after the proof km runs the verify on a clean copy without network, records each step that fails only there in [[test.excluded]] with its evidence, and asks you to remove that step. Never write or change [[test.excluded]] yourself.
 3. Write at least two break patches outside the checkout: one that breaks source code a test covers, one that breaks a test's expectation.
 ` + provesByHand
 
@@ -20,8 +20,10 @@ const noTimeReason = "; or it needs something the clean copy cannot have (networ
 const timeReason = "; it needs something the clean copy cannot have (network, a service, a credential, another machine); or the suite does not fit the time target and this is the part cut (say the measured time). "
 
 type Requirements struct {
-	Suites      []string
-	TimeBounded bool
+	Suites        []string
+	TimeBounded   bool
+	KnownFailures []string
+	KnownByFlag   []string
 }
 
 func Require(config, flags []string, timeBounded bool) Requirements {
@@ -49,6 +51,9 @@ func (r Requirements) Procedure() string {
 	if r.TimeBounded {
 		text = strings.Replace(strings.Replace(text, mirrorsCI, timeTarget, 1), noTimeReason, timeReason, 1)
 	}
+	if len(r.KnownFailures) > 0 {
+		text = strings.Replace(text, "\n3. ", " The caller accepts these known failures: "+strings.Join(r.KnownFailures, ", ")+". Give each its own known_failure step labelled exactly with its name, and keep [test] verify_known_failures listing exactly these.\n3. ", 1)
+	}
 	if len(r.Suites) > 0 {
 		text = strings.Replace(text, "\n3. ", " Required suites: "+strings.Join(r.Suites, ", ")+". Give each its own `run` step labelled exactly with its name and list them in [test] verify_required. Never leave a required suite out or narrow it, for time or any other reason: km raises the verify timeout for a slow one, and when one cannot pass on a clean copy, say so in your reply instead of narrowing it. Every required suite needs a break patch that makes verify fail in that suite's step, so write one per required suite that its step is the first to catch.\n3. ", 1)
 	}
@@ -61,6 +66,7 @@ func (r Requirements) ReviewRules() string {
 		rules = "This verify is time-bounded: aim for about two minutes on a clean copy and never more than five. A suite that does not fit that target may be cut, with the measured time as its evidence; ask for changes when the whole suite would fit the target.\n"
 	}
 	rules += "After the proof km runs the verify on a clean copy without network and records each step that fails only there in [[test.excluded]]. Ask for changes when a suite is left out for needing network without such an entry, or when a listed suite is still a step.\n"
+	rules += "Only the caller sets [test] verify_known_failures: ask for changes when the writer's config adds or removes an entry. A known_failure step whose label is not listed is a proposal km reports to the caller.\n"
 	if len(r.Suites) > 0 {
 		rules += "Required suites: " + strings.Join(r.Suites, ", ") + ". Ask for changes when one is narrowed or its run step does not run it; no reason permits leaving one out.\n"
 	}

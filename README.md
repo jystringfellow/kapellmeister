@@ -47,7 +47,7 @@ installing the base chair profiles below.
 
 ```sh
 km init [-worktree DIR] [-dry-run] [-json] [-verify CMD] [-check CMD] [-no-run] [-timeout D]  # write config and an unfinished verify script
-km tune verify [-worktree DIR] [-require SUITE]... [-time-bounded] [-detach] [-timeout D] [-budget D] [-verify-timeout D] [-json] [-again] [-guide]  # write and prove verify
+km tune verify [-worktree DIR] [-require SUITE]... [-known-failure LABEL]... [-time-bounded] [-detach] [-timeout D] [-budget D] [-verify-timeout D] [-json] [-again] [-guide]  # write and prove verify
 km prove [-worktree DIR] [-break PATCH]... [-timeout D] [-json]  # prove verify on clean copies and broken code
 km run -repo ~/Code/app [-base BRANCH] -task-file task.md [-ensemble thorough] [-detach]  # one ensemble
 km audition -worktree DIR [-ensemble thorough]   # can this ensemble play? no real work
@@ -934,6 +934,7 @@ check  = "scripts/check {args}"     # implementers use this for targeted, failur
 verify_required = ["unit", "integration"]  # suites verify must run, each a run step in scripts/verify; default none
 verify_timeout = "20m"              # limit for each verify run in km prove and km tune verify; saved by tune when it raises it
 verify_time_bounded = true          # allow tune to cut what does not fit two minutes; default false
+verify_known_failures = ["legacy export"]  # labels of known_failure steps: verify passes while they fail, and every summary names them
 
 [[test.excluded]]                   # a suite left out of verify; written by km tune verify, not by hand or by a chair
 suite    = "e2e"
@@ -999,7 +1000,7 @@ same file decisions, hints, verify result and next steps as one object, includin
 
 ```sh
 km init
-km tune verify [-worktree DIR] [-require SUITE]... [-time-bounded] [-detach] [-timeout D] [-budget D] [-verify-timeout D] [-json] [-again]
+km tune verify [-worktree DIR] [-require SUITE]... [-known-failure LABEL]... [-time-bounded] [-detach] [-timeout D] [-budget D] [-verify-timeout D] [-json] [-again]
 km tune verify -guide
 ```
 
@@ -1159,7 +1160,7 @@ exit 7: could not resolve host; run it by hand: make e2e`, and `excluded` in the
 they start (`excluded` in `km prove -json`), so an exclusion is never silent. The extra run costs
 one verify per proved round, plus up to three for each suite it excludes.
 
-The three `[test] verify_*` keys and `[[test.excluded]]` are new. A km built before them rejects
+The `[test] verify_*` keys, `verify_known_failures` included, and `[[test.excluded]]` are new. A km built before them rejects
 a config that contains any of them as an unknown key, for every command including `km run`, so
 update km on every machine and CI job that reads the repository's config before committing them.
 
@@ -1253,6 +1254,43 @@ which step failed, the wrapper writes the failing label to the steps file's name
 added; a wrapper without that line is told so. Prove also times each step from the wrapper's
 record and reports the durations.
 
+**Known failures.** A test that already fails on the default branch is neither dropped nor
+allowed to fail verify. Give it its own step with the wrapper's second function,
+`known_failure 'legacy export' 'make test-legacy-export'`, and list the label in
+`[test] verify_known_failures = ["legacy export"]`. The step runs the command, never stops
+verify, prints the last 40 lines of its output when it fails, and records whether it failed or
+passed in the steps file's name with `.known` added. Matching is by step: the whole command is
+the known failure, and any non-zero exit counts as failing, whatever the cause. km does not look
+at which test inside the step failed, so keep such a step to the one test or file that is known
+to fail.
+
+`km prove`, the tune summary and the final summary of `km run` name the baseline every time:
+`known failures (verify passes while these fail): legacy export`, and `known_failures` in the
+JSON. A label recorded both failed and passed in one verify counts as failing.
+
+**Only a person sets the baseline.** The list comes from an entry already in the config or from
+`km tune verify -known-failure LABEL` (repeatable; it adds to the list). A chair cannot set it:
+
+- A tune round whose config adds, changes or removes an entry is refused.
+- The writer may propose one by giving the test a `known_failure` step without listing it. The
+  tune then stops with the outcome `baseline_needs_caller` and prints the flag that accepts it:
+  `run the tune again with -known-failure 'legacy export' to accept it, or have the test fixed`.
+- In `km run`, the list is read when the run starts. A `known_failure` step whose label is not in
+  that list fails the round's verify (exit 16 in the verify record) and is named, so a chair
+  cannot hide a failing test behind a new step.
+
+km checks the list against what ran, in `km prove` and in `km run`:
+
+| Case | `km prove` | `km run` |
+|---|---|---|
+| A listed label whose `known_failure` step did not run, including a wrapper written before `known_failure` | `baseline_mismatch`, exit 16 | before any chair plays: outcome `baseline_mismatch`, exit 16, `its step did not run`; in a later round: that round's verify fails |
+| A `known_failure` step whose label is not listed | `baseline_mismatch`, exit 16 | the same two cases as above |
+| A listed step that passes in both clean runs | `baseline_mismatch`, exit 16, naming the entry to remove; a tune stops for the caller | the summary says `known failure "legacy export" now passes: remove it from [test] verify_known_failures and make it a run step` (`known_failures_passing` in the JSON) |
+| A listed step that fails in one clean run and passes in the other | proved, counted as failing, and named `known failure "legacy export" is flaky` (`known_failures_flaky` in the JSON) | n/a |
+
+A label cannot be in both `verify_known_failures` and `verify_required`. A break patch that only
+a known-failure step would catch survives, because that step never fails verify.
+
 Each break run is given the verify timeout or twice the slowest clean run, whichever is longer,
 so a verify that passes near its limit does not time out on its breaks. The output says when
 that raised it, and the JSON carries `timeout_ms` and `break_timeout_ms`.
@@ -1268,6 +1306,7 @@ that raised it, and the JSON carries `timeout_ms` and `break_timeout_ms`.
 | 13 | A break patch left verify passing |
 | 14 | A required suite's step did not run in a clean run |
 | 15 | A required suite has no break patch that makes verify fail in its step |
+| 16 | `verify_known_failures` does not match the `known_failure` steps that ran, or a listed step passed in both clean runs; `km run` exits 16 for the same mismatch before any chair plays |
 | 18 | Only in a `km tune verify` round: the run without network did not pass (`needs_network` or `no_network_*`) |
 
 `-timeout D` is a positive limit per verify run; it defaults to `[test] verify_timeout`, then `10m`, and a timeout names the limit that applied (the longer break timeout when a break run timed out) and both ways to raise it. Output names each clean run and

@@ -129,3 +129,13 @@ func TestRequiredSuitesAreRunStepsThatAreNeverLeftOutOrNarrowedEvenWhenVerifyIsT
 		t.Fatal(why)
 	}
 }
+
+func TestTheProcedureTellsTheWriterToRecordATestThatAlreadyFailsAsANamedKnownFailure(t *testing.T) {
+	for _, text := range []string{VerifyProcedure, timeBounded} {
+		for _, want := range []string{"already fails on the default branch", "known_failure 'LABEL' 'COMMAND'", "lets verify pass while it fails", "Never write or change [test] verify_known_failures yourself", "only the caller sets that list"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("missing %q", want)
+			}
+		}
+	}
+}

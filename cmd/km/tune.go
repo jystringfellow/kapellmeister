@@ -109,6 +109,8 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 	caoURL := fs.String("cao", "", "CAO URL (default environment, then configuration)")
 	launchPath := fs.String("detached-launch", "", "internal detached tune hand-off")
 	var require breakFlags
+	var acceptKnown breakFlags
+	fs.Var(&acceptKnown, "known-failure", "label of a known_failure step the caller accepts as failing (repeatable; adds to [test] verify_known_failures); a chair cannot set this list")
 	fs.Var(&require, "require", "suite verify must run, named as its run step in scripts/verify (repeatable; adds to [test] verify_required)")
 	timeBounded := fs.Bool("time-bounded", false, "aim verify at two minutes and allow cutting what does not fit (also [test] verify_time_bounded); by default nothing is left out for time")
 	roles := chairFlags(fs, "implementer", "reviewer")
@@ -193,6 +195,20 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 		return err
 	}
 	required := tune.Require(test.VerifyRequired, require, test.VerifyTimeBounded || *timeBounded)
+	required.KnownFailures = tune.Require(test.VerifyKnownFailures, acceptKnown, false).Suites
+	for _, label := range acceptKnown {
+		if !slices.Contains(test.VerifyKnownFailures, label) {
+			required.KnownByFlag = append(required.KnownByFlag, label)
+		}
+	}
+	if err := loop.ValidSuites(required.KnownFailures); err != nil {
+		return fmt.Errorf("-known-failure: %w", err)
+	}
+	for _, label := range required.KnownFailures {
+		if slices.Contains(required.Suites, label) {
+			return fmt.Errorf("-known-failure: %q is also required: a required suite cannot be expected to fail", label)
+		}
+	}
 	callerLimit := flagsSet(fs)["verify-timeout"] || test.VerifyTimeout != ""
 	if *verifyTimeout == 0 {
 		*verifyTimeout = test.Timeout(defaultTuneVerifyTimeout)
@@ -443,7 +459,7 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 				}
 			}
 			var result prove.Result
-			needsCaller := false
+			needsCaller, callerOutcome := false, ""
 			switch {
 			case resolveErr != nil:
 				result = prove.Result{Worktree: wt, Status: "refused", ExitStatus: 10, Reason: resolveErr.Error()}
@@ -483,6 +499,24 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 					}
 					savedTimeout = verifyTimeout.String()
 					result = runTuneProof(ctx, prove.Options{Worktree: wt, Breaks: recordPatches, Timeout: verifyTimeout})
+				}
+				if result.Status == "baseline_mismatch" {
+					if proposed := result.KnownFailuresUnlisted; len(proposed) > 0 {
+						flags := make([]string, len(proposed))
+						for i, label := range proposed {
+							flags[i] = "-known-failure '" + label + "'"
+						}
+						result.Reason += fmt.Sprintf("; the writer proposes a known failure the caller has not accepted: %s; a chair cannot set the baseline: run the tune again with %s to accept it, or have the test fixed", strings.Join(proposed, ", "), strings.Join(flags, " "))
+						needsCaller, callerOutcome = true, loop.BaselineNeedsCaller
+					}
+					for _, label := range result.KnownFailuresPassing {
+						how := fmt.Sprintf("remove %q from [test] verify_known_failures in the checkout, then run the tune again", label)
+						if slices.Contains(required.KnownByFlag, label) {
+							how = fmt.Sprintf("run the tune again without -known-failure '%s'", label)
+						}
+						result.Reason += "; only the caller removes an entry: " + how
+						needsCaller, callerOutcome = true, loop.BaselineNeedsCaller
+					}
 				}
 				if result.Status == "proved" {
 					limit := verifyTimeout
@@ -553,7 +587,7 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 			if result.Status == "proved" {
 				proved = &tuneProved{round: round, setup: current, summary: *summary, patches: patchDigests}
 			}
-			return loop.TuneProof{Proved: result.Status == "proved", Path: proofPath, Status: result.Status, Reason: result.Reason, NeedsCaller: needsCaller}, nil
+			return loop.TuneProof{Proved: result.Status == "proved", Path: proofPath, Status: result.Status, Reason: result.Reason, NeedsCaller: needsCaller, Outcome: callerOutcome}, nil
 		},
 		Keep: func(reply loop.TuneReply, round int) (bool, string, string, error) {
 			if proved == nil {
@@ -646,6 +680,17 @@ func unrecordedRequirement(required tune.Requirements, written loop.TestConfig) 
 	}
 	if !required.TimeBounded && written.VerifyTimeBounded {
 		return "[test] verify_time_bounded must not be set: only the caller allows a time-bounded verify, with -time-bounded"
+	}
+	const baseline = "[test] verify_known_failures must not be changed by the tune: only the caller sets the baseline, with -known-failure LABEL or an entry already in the config; the writer "
+	for _, label := range written.VerifyKnownFailures {
+		if !slices.Contains(required.KnownFailures, label) {
+			return fmt.Sprintf("%sadded %q: to propose it, keep its known_failure step and leave the list alone", baseline, label)
+		}
+	}
+	for _, label := range required.KnownFailures {
+		if !slices.Contains(written.VerifyKnownFailures, label) {
+			return fmt.Sprintf("%sremoved %q: list it and give it its own known_failure step", baseline, label)
+		}
 	}
 	return ""
 }

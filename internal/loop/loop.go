@@ -124,6 +124,8 @@ type VerifyResult struct {
 	ExitCode int
 	Output   string
 	Attempts int
+	Known    []KnownFailure
+	Mismatch string
 }
 
 type Verifier func(ctx context.Context, dir string) (VerifyResult, error)
@@ -147,6 +149,7 @@ type Config struct {
 	BudgetStarted  time.Time
 	StepTimeout    time.Duration
 	VerifyCommand  string
+	KnownFailures  []string
 	CheckCommand   string
 	ReplyGrace     time.Duration
 	SkipBaseline   bool
@@ -194,13 +197,15 @@ type Record struct {
 }
 
 const (
-	Approved        = "approved"
-	Untested        = "untested"
-	RoundsExhausted = "rounds_exhausted"
-	BudgetExhausted = "budget_exhausted"
-	VerifyLimit     = "verify_limit"
-	Failed          = "failed"
-	VerdictFailed   = "FAILED"
+	Approved            = "approved"
+	Untested            = "untested"
+	RoundsExhausted     = "rounds_exhausted"
+	BudgetExhausted     = "budget_exhausted"
+	VerifyLimit         = "verify_limit"
+	BaselineMismatch    = "baseline_mismatch"
+	BaselineNeedsCaller = "baseline_needs_caller"
+	Failed              = "failed"
+	VerdictFailed       = "FAILED"
 )
 
 type Restore struct {
@@ -232,6 +237,9 @@ type Result struct {
 	RunDir        string         `json:"run_dir"`
 
 	MeasurementsNotRun []string `json:"measurements_not_run,omitempty"`
+
+	KnownFailures        []string `json:"known_failures,omitempty"`
+	KnownFailuresPassing []string `json:"known_failures_passing,omitempty"`
 }
 
 type ActiveStep struct {
@@ -248,6 +256,7 @@ type Engine struct {
 	keepSnapshot    bool
 	restores        []Restore
 	verifyRetried   []VerifyRetry
+	knownFailures   []KnownFailure
 	Meter           UsageMeter
 	usage           Usage
 	gateRound       int
@@ -278,7 +287,12 @@ func RunDirRel(runID string) string {
 
 func (e *Engine) Run(ctx context.Context) (res Result, err error) {
 	defer e.cleanupSnapshot()
-	e.restores, e.verifyRetried = nil, nil
+	e.restores, e.verifyRetried, e.knownFailures = nil, nil, nil
+	defer func() {
+		if res.Outcome != BaselineMismatch {
+			res.KnownFailures, res.KnownFailuresPassing = knownFailureBaseline(e.Config.KnownFailures, e.knownFailures)
+		}
+	}()
 	defer func() { res.Restores, res.VerifyRetried = e.restores, e.verifyRetried }()
 	e.mu.Lock()
 	e.usage = Usage{}
@@ -324,6 +338,11 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 		baseline, err := e.runVerify(ctx, 0, baselinePath)
 		if err != nil {
 			return e.fail(res, err), nil
+		}
+		if baseline.Mismatch != "" {
+			res.Outcome, res.Reason = BaselineMismatch, baseline.Mismatch
+			e.progress("  %s", res.Reason)
+			return res, nil
 		}
 		if baseline.ExitCode != 0 {
 			return e.fail(res, fmt.Errorf("verify already fails before any change (exit %d); see %s\n%s", baseline.ExitCode, baselinePath, tail(strings.TrimRight(baseline.Output, "\n"), 20))), nil
@@ -1028,6 +1047,12 @@ func (e *Engine) runVerify(ctx context.Context, round int, path string) (VerifyR
 	e.progress("→ %s %s", label("verify", round), e.Config.VerifyCommand)
 	start := time.Now()
 	v, err := e.Verify(ctx, e.Config.Worktree)
+	if err == nil && v.ExitCode == 0 {
+		if v.Mismatch = KnownFailureMismatch(e.Config.KnownFailures, v.Known); v.Mismatch != "" {
+			v.ExitCode = 16
+			v.Output = strings.TrimRight(v.Output, "\n") + "\nverify refused: " + v.Mismatch + "\n"
+		}
+	}
 	code := v.ExitCode
 	rec := Record{RunID: e.Config.RunID, Round: round, Step: verifyStepName(round), DurationMS: time.Since(start).Milliseconds(), ExitCode: &code, Attempts: v.Attempts, Reply: path}
 	if err != nil {
@@ -1040,6 +1065,9 @@ func (e *Engine) runVerify(ctx context.Context, round int, path string) (VerifyR
 	e.progress("  exit %d in %s%s", code, secs(rec.DurationMS), attemptsNote(v.Attempts))
 	if code == 0 && v.Attempts > 1 {
 		e.verifyRetried = append(e.verifyRetried, VerifyRetry{Round: round, Attempts: v.Attempts})
+	}
+	if code == 0 {
+		e.knownFailures = v.Known
 	}
 	return v, os.WriteFile(filepath.Join(e.Config.Worktree, path), []byte(tail(v.Output, 400)), 0o644)
 }
@@ -1213,15 +1241,27 @@ func CommandVerifier(command string) Verifier {
 	return func(ctx context.Context, dir string) (VerifyResult, error) {
 		cmd := exec.CommandContext(ctx, "sh", "-c", "unset "+verifySkipEnv+"\n"+command)
 		cmd.Dir = dir
+		var known func() []KnownFailure
+		if record, recordErr := os.MkdirTemp("", "km-verify-steps-"); recordErr == nil {
+			defer os.RemoveAll(record)
+			steps := filepath.Join(record, "steps")
+			cmd.Env = append(os.Environ(), VerifyStepsEnv+"="+steps)
+			known = func() []KnownFailure { return ReadKnownFailures(steps) }
+		}
 		out, err := cmd.CombinedOutput()
 		if ctx.Err() != nil {
 			return VerifyResult{Output: string(out)}, ctx.Err()
 		}
+		result := VerifyResult{Output: string(out)}
+		if known != nil {
+			result.Known = known()
+		}
 		var exit *exec.ExitError
 		if errors.As(err, &exit) {
-			return VerifyResult{ExitCode: exit.ExitCode(), Output: string(out)}, nil
+			result.ExitCode = exit.ExitCode()
+			return result, nil
 		}
-		return VerifyResult{Output: string(out)}, err
+		return result, err
 	}
 }
 

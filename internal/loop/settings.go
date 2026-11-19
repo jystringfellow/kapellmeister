@@ -35,7 +35,8 @@ type TestConfig struct {
 	VerifyTimeBounded bool     `toml:"verify_time_bounded"`
 	VerifyTimeout     string   `toml:"verify_timeout"`
 
-	Excluded []Exclusion `toml:"excluded"`
+	VerifyKnownFailures []string    `toml:"verify_known_failures"`
+	Excluded            []Exclusion `toml:"excluded"`
 }
 
 func (t TestConfig) Timeout(fallback time.Duration) time.Duration {
@@ -393,6 +394,14 @@ func decodeConfig(data []byte, name string) (loadedConfig, error) {
 	}
 	if err := ValidSuites(cfg.Test.VerifyRequired); err != nil {
 		return cfg, fmt.Errorf("%s: test.verify_required: %w", name, err)
+	}
+	if err := ValidSuites(cfg.Test.VerifyKnownFailures); err != nil {
+		return cfg, fmt.Errorf("%s: test.verify_known_failures: %w", name, err)
+	}
+	for _, label := range cfg.Test.VerifyKnownFailures {
+		if slices.Contains(cfg.Test.VerifyRequired, label) {
+			return cfg, fmt.Errorf("%s: test.verify_known_failures: %q is also in verify_required: a required suite cannot be expected to fail", name, label)
+		}
 	}
 	if err := ValidExclusions(cfg.Test.Excluded); err != nil {
 		return cfg, fmt.Errorf("%s: test.excluded: %w", name, err)
