@@ -197,6 +197,7 @@ const (
 	Untested        = "untested"
 	RoundsExhausted = "rounds_exhausted"
 	BudgetExhausted = "budget_exhausted"
+	VerifyLimit     = "verify_limit"
 	Failed          = "failed"
 	VerdictFailed   = "FAILED"
 )
@@ -228,6 +229,8 @@ type Result struct {
 	Reason        string         `json:"reason,omitempty"`
 	Worktree      string         `json:"worktree"`
 	RunDir        string         `json:"run_dir"`
+
+	MeasurementsNotRun []string `json:"measurements_not_run,omitempty"`
 }
 
 type ActiveStep struct {
@@ -247,6 +250,8 @@ type Engine struct {
 	Meter           UsageMeter
 	usage           Usage
 	gateRound       int
+	measurements    []string
+	measured        int
 	Watcher         Watcher
 	watch           watchState
 	Config          Config
@@ -288,7 +293,9 @@ func (e *Engine) Run(ctx context.Context) (res Result, err error) {
 	stopWatcher := e.startWatcher(ctx)
 	defer stopWatcher()
 	e.gateRound = 0
+	e.measurements, e.measured = nil, 0
 	res, err = e.play(ctx)
+	e.reportUnrunMeasurements(&res)
 	if res.Outcome == Failed {
 		res.Reason = cancellationReason(ctx, res.failure)
 	}
@@ -399,17 +406,18 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 		if err != nil {
 			return e.fail(res, err), nil
 		}
-		var files, failed, verdicts []string
+		var files, handed, failed, verdicts []string
 		for _, review := range reviews {
-			if _, err := os.Stat(filepath.Join(cfg.Worktree, review.Path)); err == nil {
+			if required, ok := e.readReview(round, review.Path); ok {
 				files = append(files, review.Path)
+				handed = append(handed, required)
 			}
 			if review.Err != nil {
 				failed = append(failed, fmt.Sprintf("%s (%s)", review.Name, review.Chair))
 			}
 			verdicts = append(verdicts, review.Verdict)
 		}
-		feedback = append(append([]string{}, files...), verifyPath)
+		feedback = append(handed, verifyPath)
 		feedbackGate, feedbackTest = "", ""
 		if !gateRuns(cfg.GateWhen, verify.ExitCode == 0, verdicts) {
 			misses++
@@ -441,7 +449,7 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 				return e.fail(res, err), nil
 			}
 			testPath := e.relf("test-%d.md", round)
-			verdict, err := e.testRound(ctx, round, plan, summary, verify, verifyPath, testPath)
+			verdict, err := e.testRound(ctx, round, plan, summary, verify, verifyPath, testPath, e.measurements)
 			if err != nil {
 				var interrupted *testInterruptedError
 				if errors.As(err, &interrupted) {
@@ -465,6 +473,7 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 				}
 				return e.fail(res, err), nil
 			}
+			e.measured = len(e.measurements)
 			if verdict == "APPROVE" {
 				res.Outcome = Approved
 				return res, nil
@@ -510,11 +519,11 @@ func (e *Engine) testerTimeout() time.Duration {
 	return e.Config.StepTimeout
 }
 
-func (e *Engine) testRound(ctx context.Context, round int, plan, summary string, verify VerifyResult, verifyPath, path string) (string, error) {
+func (e *Engine) testRound(ctx context.Context, round int, plan, summary string, verify VerifyResult, verifyPath, path string, measurements []string) (string, error) {
 	defer e.reportLeftRunning(round)
 	errs, err := e.readOnlySteps(ctx, []Step{{
 		Name: "test", Round: round, Chair: *e.Config.Chairs.Tester,
-		Prompt:    testPrompt(e.Config.Task, plan, e.rel("test-plan.md"), summary, e.Config.VerifyCommand, verify, verifyPath, e.Config.ScratchDir, path, e.testerTimeout(), os.Getpid(), e.lessonsFor("test", *e.Config.Chairs.Tester), e.Config.CAOURL, e.Config.StateDir),
+		Prompt:    testPrompt(e.Config.Task, plan, e.rel("test-plan.md"), summary, e.Config.VerifyCommand, verify, verifyPath, e.Config.ScratchDir, path, e.testerTimeout(), os.Getpid(), e.lessonsFor("test", *e.Config.Chairs.Tester), e.Config.CAOURL, e.Config.StateDir, measurements),
 		ReplyPath: path,
 	}})
 	if err != nil {

@@ -505,7 +505,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		_, err = fmt.Fprintf(stdout, "run       %s\npid       %d\nworktree  %s\noutput    %s\n", h.RunID, h.PID, h.Worktree, h.Output)
 		return err
 	}
-	if err := preflight(ctx, client, wt, s.PreflightTimeout, defaultChairs(&policy, chairs)...); err != nil {
+	if err := preflight(ctx, client, wt, s.PreflightTimeout, s.PreflightRetryWait, defaultChairs(&policy, chairs)...); err != nil {
 		return err
 	}
 	podiumChair, _ := policy.Chair("classify", chairs.Classifier, "", 0)
@@ -589,7 +589,7 @@ func preflightCommand(args []string) error {
 			chairs[i], _ = pinned.At(chair, *tier)
 		}
 	}
-	return preflight(ctx, client, wt, s.PreflightTimeout, chairs...)
+	return preflight(ctx, client, wt, s.PreflightTimeout, s.PreflightRetryWait, chairs...)
 }
 
 func configCommand(args []string) error {
@@ -608,8 +608,8 @@ func configCommand(args []string) error {
 		return err
 	}
 	printSources(os.Stdout, s)
-	fmt.Printf("cao    %s\nstate  %s\nrun    rounds %d, verify retries %d, step timeout %s, reply grace %s, preflight %s, blocker poll %s, lessons %s, learned budget %d bytes, trust folder %s\n",
-		s.CAOURL, loop.StateDir(), s.Rounds, s.VerifyRetries, s.Timeout, s.ReplyGrace, s.PreflightTimeout, s.BlockerPoll, lessonsSetting(s), s.LearnedBudget, map[bool]string{true: "on", false: "off"}[s.TrustFolder])
+	fmt.Printf("cao    %s\nstate  %s\nrun    rounds %d, verify retries %d, step timeout %s, reply grace %s, preflight %s, preflight retry wait %s, blocker poll %s, lessons %s, learned budget %d bytes, trust folder %s\n",
+		s.CAOURL, loop.StateDir(), s.Rounds, s.VerifyRetries, s.Timeout, s.ReplyGrace, s.PreflightTimeout, s.PreflightRetryWait, s.BlockerPoll, lessonsSetting(s), s.LearnedBudget, map[bool]string{true: "on", false: "off"}[s.TrustFolder])
 	if len(s.ReportDirs) > 0 {
 		fmt.Printf("report dirs %s (in addition to %s)\n", plain(strings.Join(s.ReportDirs, ", ")), plain(defaultRunsDir()))
 	}
@@ -859,13 +859,13 @@ func sortedKeys[V any](m map[string]V) []string {
 	return keys
 }
 
-func preflight(ctx context.Context, client *cao.Client, worktree string, timeout time.Duration, chairs ...loop.Chair) error {
+func preflight(ctx context.Context, client *cao.Client, worktree string, timeout, retryWait time.Duration, chairs ...loop.Chair) error {
 	if timeout == 0 {
 		return nil
 	}
 	unique := loop.UniqueChairs(chairs...)
 	fmt.Printf("→ preflight %d chair(s)\n", len(unique))
-	results, err := loop.Preflight(ctx, loop.CAOStepper{Client: client}, worktree, unique, timeout)
+	results, err := loop.PreflightRetryingAfter(ctx, loop.CAOStepper{Client: client}, worktree, unique, timeout, retryWait)
 	unseated := 0
 	for _, r := range results {
 		unseated += r.Unseated
@@ -1251,6 +1251,12 @@ func printOutcome(w io.Writer, s ensembleSummary) {
 		line += ": " + s.Reason
 	}
 	fmt.Fprintln(w, "\n"+line)
+	if len(s.MeasurementsNotRun) > 0 {
+		fmt.Fprintln(w, "measurements not run:")
+		for _, request := range s.MeasurementsNotRun {
+			fmt.Fprintln(w, "  - "+plain(request))
+		}
+	}
 }
 
 func taskText(task, file string) (string, error) {
@@ -1339,6 +1345,9 @@ func copyDir(src, dst string) error {
 }
 
 func timeoutRetryNote(r loop.PreflightResult, timeout time.Duration) string {
+	if r.RetryWaitMS > 0 {
+		return fmt.Sprintf("; first attempt failed (%s), retried after waiting %s", r.RetryWaitError, time.Duration(r.RetryWaitMS)*time.Millisecond)
+	}
 	if !r.TimeoutRetried {
 		return ""
 	}
