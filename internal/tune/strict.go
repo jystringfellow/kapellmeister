@@ -2,6 +2,7 @@ package tune
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -14,11 +15,13 @@ type Strict struct {
 	Timeout     time.Duration
 }
 
-func (s Strict) NetworkSuites() []string {
+var ProbeReasons = []string{"network", "service", "credential", "machine"}
+
+func (s Strict) NeedProbe() []string {
 	var suites []string
 	for _, entry := range s.Excluded {
-		if entry.Reason == "network" {
-			suites = append(suites, entry.Suite)
+		if slices.Contains(ProbeReasons, entry.Reason) {
+			suites = append(suites, fmt.Sprintf("%q: %s", entry.Suite, entry.Reason))
 		}
 	}
 	return suites
@@ -39,8 +42,8 @@ func (s Strict) Procedure() string {
 		text.WriteString(" This verify is time-bounded, so it was allowed to cut what did not fit its time target: find what CI runs that scripts/verify does not, and give it a step.")
 	}
 	text.WriteString(" Leave a test out of both only when no machine a developer has can run it; say which and why, with a by-hand command.")
-	if network := s.NetworkSuites(); len(network) > 0 {
-		fmt.Fprintf(&text, " km has decided this strict needs a readiness probe, because it holds a suite excluded for network (%s): write scripts/strict-ready, an executable script that exits 0 when the network those suites need can be reached, and otherwise prints what is missing and exits non-zero. It finishes in seconds and tests nothing else. Set strict_ready = \"scripts/strict-ready\" in [test].", strings.Join(network, ", "))
+	if needing := s.NeedProbe(); len(needing) > 0 {
+		fmt.Fprintf(&text, " km has decided this strict needs a readiness probe, because it holds a suite that needs something a machine may lack (%s): write scripts/strict-ready, an executable script that exits 0 when what those suites need is there (the network can be reached, the service answers, the credential is set), and otherwise prints what is missing and exits non-zero. It finishes in seconds and tests nothing else. Set strict_ready = \"scripts/strict-ready\" in [test].", strings.Join(needing, ", "))
 	} else {
 		text.WriteString(" Do not write a strict_ready probe: km decides when one is needed, and this strict does not need one.")
 	}
@@ -54,8 +57,8 @@ func (s Strict) Procedure() string {
 
 func (s Strict) ReviewBrief() string {
 	brief := "Read scripts/strict and scripts/verify against CI workflows, the Makefile or task runner and README test instructions.\nVerify and strict together must run everything CI runs: ask for changes when a suite CI runs is in neither, or when a suite in [[test.excluded]] has no run step of its own in scripts/strict. Time is not a reason to leave anything out of strict. Check that each test left out of both has a reason and a by-hand command. Check that the source and test patches exercise what a strict step runs.\n"
-	if len(s.NetworkSuites()) > 0 {
-		brief += "km decided this strict needs a readiness probe: ask for changes when scripts/strict-ready tests anything but whether the network those suites need can be reached.\n"
+	if len(s.NeedProbe()) > 0 {
+		brief += "km decided this strict needs a readiness probe: ask for changes when scripts/strict-ready tests anything but whether what those suites need is there.\n"
 	}
 	return brief
 }

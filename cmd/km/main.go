@@ -30,7 +30,7 @@ import (
 const usage = `usage:
   km init [-worktree DIR] [-dry-run] [-json] [-verify CMD] [-check CMD] [-no-run] [-timeout D]   write config and an unfinished verify, or wrap -verify CMD
   km tune verify [-worktree DIR] [-require SUITE]... [-known-failure LABEL]... [-time-bounded] [-detach] [-timeout D] [-json] [-again] [-guide]   write and prove verify
-  km tune strict [-worktree DIR] [-strict-timeout D] [-detach] [-timeout D] [-json] [-again] [-guide]   write and prove strict: what verify had to leave out
+  km tune strict [-worktree DIR] [-strict-timeout D] [-budget D] [-detach] [-timeout D] [-json] [-again] [-guide]   write and prove strict: what verify had to leave out
   km prove [-worktree DIR] [-level verify|strict] [-break PATCH]... [-timeout D] [-json]   prove verify or strict on clean copies and broken code
   km run -repo DIR [-base BRANCH] (-task TEXT | -task-file FILE) [-ensemble NAME] [-detach] [flags]   one ensemble
   km audition -worktree DIR [-ensemble NAME] [-keep]       boot the ensemble, cue every chair once, tear down

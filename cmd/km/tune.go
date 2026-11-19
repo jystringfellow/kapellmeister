@@ -80,6 +80,7 @@ type tuneSummary struct {
 	TimeoutRaised *tuneRaise          `json:"timeout_raised,omitempty"`
 	Excluded      []loop.Exclusion    `json:"excluded,omitempty"`
 	NoNetwork     string              `json:"no_network_method,omitempty"`
+	StrictMissing []string            `json:"strict_missing,omitempty"`
 	prove.Result
 }
 
@@ -618,6 +619,17 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 					}
 				}
 			}
+			summary.StrictMissing = nil
+			if name := loop.ScriptPath(written.Strict); writtenErr == nil && name != "" {
+				if strict, err := os.ReadFile(filepath.Join(wt, name)); err == nil {
+					labels := tune.StepLabels(string(strict))
+					for _, entry := range savedExcluded {
+						if !slices.Contains(labels, entry.Suite) {
+							summary.StrictMissing = append(summary.StrictMissing, entry.Suite)
+						}
+					}
+				}
+			}
 			current, err := readTuneSetup(wt)
 			if err != nil {
 				return loop.TuneProof{}, err
@@ -959,6 +971,9 @@ func printTune(w io.Writer, s ensembleSummary, detail bool) {
 	}
 	if t.NoNetwork != "" {
 		fmt.Fprintf(w, "  network cut by: %s\n", t.NoNetwork)
+	}
+	if len(t.StrictMissing) > 0 {
+		fmt.Fprintf(w, "  strict does not run excluded suite %s: run km tune strict -again so that verify and strict together still run what CI runs\n", strings.Join(t.StrictMissing, ", "))
 	}
 	if raised := t.TimeoutRaised; raised != nil {
 		to := time.Duration(raised.ToMS) * time.Millisecond

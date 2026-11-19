@@ -66,9 +66,16 @@ func rehearseCommand(args []string) error {
 	if verifyCmd == "" {
 		fmt.Println("no verify command resolved; baseline skipped")
 	} else {
-		result, err := loop.Retrying(loop.CommandVerifier(verifyCmd), s.VerifyRetries)(ctx, wt)
+		tested, err := loop.ResolveTest(wt)
+		if err != nil {
+			return err
+		}
+		result, err := loop.Retrying(loop.CommandVerifierWithin(verifyCmd, tested.Timeout(s.Timeout)), s.VerifyRetries)(ctx, wt)
 		if err != nil {
 			return fmt.Errorf("baseline verify: %w", err)
+		}
+		if result.TimedOut {
+			return fmt.Errorf("baseline verify did not finish within %s, so km stopped it: make verify faster or raise [test] verify_timeout", result.Limit)
 		}
 		if result.ExitCode != 0 {
 			lines := strings.Split(strings.TrimSpace(result.Output), "\n")
