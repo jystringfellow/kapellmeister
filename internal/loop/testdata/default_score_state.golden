@@ -1,0 +1,39 @@
+files:
+  gate-1.md
+  gate-1.verdict
+  gate-2.md
+  implement-1.md
+  implement-2.md
+  plan.md
+  review-1-1.md
+  review-1-2.md
+  review-2-1.md
+  review-2-2.md
+  test-2.md
+  test-plan.md
+  verify-0.txt
+  verify-1.txt
+  verify-2.txt
+records, sorted:
+  round 0 plan                                              .kapellmeister/runs/r1/plan.md
+  round 0 test-plan                                         .kapellmeister/runs/r1/test-plan.md
+  round 0 verify-baseline                                   .kapellmeister/runs/r1/verify-0.txt
+  round 1 classify-gate                                     .kapellmeister/runs/r1/gate-1.verdict
+  round 1 gate                                              .kapellmeister/runs/r1/gate-1.md
+  round 1 implement                                         .kapellmeister/runs/r1/implement-1.md
+  round 1 review           reviewer-1                       .kapellmeister/runs/r1/review-1-1.md
+  round 1 review           reviewer-2                       .kapellmeister/runs/r1/review-1-2.md
+  round 1 verdict-gate                  CHANGES             .kapellmeister/runs/r1/gate-1.md
+  round 1 verdict-review   reviewer-1   CHANGES  reply      .kapellmeister/runs/r1/review-1-1.md
+  round 1 verdict-review   reviewer-2   APPROVE  reply      .kapellmeister/runs/r1/review-1-2.md
+  round 1 verify                                            .kapellmeister/runs/r1/verify-1.txt
+  round 2 gate                                              .kapellmeister/runs/r1/gate-2.md
+  round 2 implement                                         .kapellmeister/runs/r1/implement-2.md
+  round 2 review           reviewer-1                       .kapellmeister/runs/r1/review-2-1.md
+  round 2 review           reviewer-2                       .kapellmeister/runs/r1/review-2-2.md
+  round 2 test                                              .kapellmeister/runs/r1/test-2.md
+  round 2 verdict-gate                  APPROVE  reply      .kapellmeister/runs/r1/gate-2.md
+  round 2 verdict-review   reviewer-1   APPROVE  reply      .kapellmeister/runs/r1/review-2-1.md
+  round 2 verdict-review   reviewer-2   APPROVE  reply      .kapellmeister/runs/r1/review-2-2.md
+  round 2 verdict-test                  APPROVE  reply      .kapellmeister/runs/r1/test-2.md
+  round 2 verify                                            .kapellmeister/runs/r1/verify-2.txt
