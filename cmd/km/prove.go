@@ -95,7 +95,11 @@ func printProofDetail(out io.Writer, r prove.Result, detail bool) {
 			continue
 		}
 		if b.Status == "breaks" {
-			fmt.Fprintln(out, "verify failed, as required")
+			level := r.Level
+			if level == "" {
+				level = prove.LevelVerify
+			}
+			fmt.Fprintf(out, "%s failed, as required\n", level)
 		}
 		if b.Reason != "" {
 			fmt.Fprintln(out, b.Reason)

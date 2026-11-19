@@ -187,7 +187,7 @@ success or wait on it forever.
 | 3 | Wait timed out; the run continues |
 | 4 | Unfinished; no result and the process is gone or liveness cannot be checked |
 | 5 | Finished with `strict_failed`: approved, then the strict level failed |
-| 6 | Finished with `strict_not_run`: approved, but the strict level's environment was missing |
+| 6 | Finished with `strict_not_run`: approved, but strict did not run or did not finish (environment missing, broken probe, or interrupted) |
 
 `-json` prints `{"run_id":"…","state":"finished","exit_status":0,"reason":"","result":{…}}`.
 The state can also be `timeout` or `unfinished`; those omit `result` and explain why in `reason`.
@@ -1241,7 +1241,7 @@ completion, failure, timeout or a handled interrupt.
 
 Before either clean run, prove checks every `-break PATCH` in a fresh copy. It then requires
 verify to fail in each patched copy. A patch that does not apply, is empty or unreadable, or changes `.kapellmeister/` or
-`scripts/verify` or `scripts/strict` is refused. A timeout never counts as a successful break. Proved means two
+`scripts/verify`, or the script `[test] strict` or `[test] strict_ready` points at, is refused. A timeout never counts as a successful break. Proved means two
 clean passes and at least one break patch, with every patch making verify fail. Without a patch,
 it reports "passes, not proved" and asks for `-break PATCH`.
 
@@ -1267,7 +1267,7 @@ that raised it, and the JSON carries `timeout_ms` and `break_timeout_ms`.
 | 0 | Proved: two clean passes and every break patch made verify fail |
 | 1 | Command, Git or filesystem error, or interrupted |
 | 3 | A verify run timed out |
-| 10 | Refused: unfinished stub, verify not configured, invalid checkout, bad/setup-touching patch, or a verify that assigns `KAPELLMEISTER_VERIFY_SKIP` |
+| 10 | Refused: unfinished stub, verify or strict not configured, invalid checkout, bad/setup-touching patch, a verify that assigns `KAPELLMEISTER_VERIFY_SKIP`, or a broken `strict_ready` probe |
 | 11 | Passes twice, not proved: no break patch supplied |
 | 12 | Verify failed or was flaky on clean copies |
 | 13 | A break patch left verify passing |
@@ -1304,19 +1304,46 @@ after approval. It is not retried and no round follows it.
 - **Not run:** when `[test] strict_ready` is set, km runs that probe first. A non-zero exit means
   the environment strict needs is missing: the outcome is `strict_not_run`, the exit status is 6,
   the probe's output is printed, and strict does not run. This is never reported as a pass.
+- **Broken probe:** a probe whose script is missing or not executable is not a missing
+  environment. The outcome is still `strict_not_run`, and the summary says
+  `strict    not run: the strict_ready probe is broken: scripts/strict-ready does not exist`.
+- **Did not finish:** when the run is interrupted during strict or its probe, the outcome is
+  `strict_not_run` and the summary says `strict    not run: strict did not finish: interrupted by
+  SIGINT`, not a plain failure.
+- **Not reached:** when the gate approves and the tester is interrupted or times out, the outcome
+  stays `untested` and the summary adds `strict    not reached: the tester did not finish`. A
+  failed run and one that used up its rounds say nothing about strict.
 
-In both other cases the approved change is left in the worktree, as after any run; the gate's
-approval stands and strict still has to pass before the change is trusted at that level. The
-JSON summary carries `strict` (`status` of `passed`, `failed` or `not_run`, `command`, `ready`,
-`exit_code`, `duration_ms`, `reply`). `strict_ready` without `strict` is a config error.
-`km wait` exits with the same 5 and 6.
+In every case but a pass the approved change is left in the worktree, as after any run; the
+gate's approval stands and strict still has to pass before the change is trusted at that level.
+The JSON summary carries `strict` (`status` of `passed`, `failed`, `not_run` or `not_reached`,
+`command`, `ready`, `exit_code`, `duration_ms`, `reply`, `reason`, `changed`). `km wait` exits
+with the same 5 and 6.
+
+km records the script `[test] strict` and `[test] strict_ready` point at when the run starts:
+the first word of the command, when it is a path inside the worktree such as `scripts/strict`.
+If the run changed, created or removed one of them before strict ran, the summary adds
+`strict    this run changed scripts/strict after it started: read the change before trusting the
+line above`, and `changed` in the JSON names it. Strict still runs and its status stands; the line
+is there because a chair can otherwise make strict pass by rewriting it. A command that is not a
+path, such as `make strict`, is not tracked this way.
+
+`strict_ready` without `strict` is a config error. So is a `verify`, `check`, `strict` or
+`strict_ready` that holds only spaces or comments: the config is refused when it loads, because
+such a command exits 0 and would read as a pass. Leave the key out instead.
+
+Strict has no time limit of its own in a run.
 
 `km prove -level strict` proves the strict command the way `km prove` proves verify: two clean
-copies, then every break patch must make it fail. `scripts/strict` is copied into the clean copies
-with the config and `scripts/verify`, so it may be uncommitted, and a break patch may not touch
-it. The probe runs first in its own clean copy; when it fails the result is `strict_not_run`
-(exit 17), never `proved`. `[test] verify_required` applies to the verify level only.
-`km tune strict` does not exist yet; write `scripts/strict` by hand and prove it.
+copies, then every break patch must make it fail. The scripts `[test] strict` and
+`[test] strict_ready` point at are copied into the clean copies with the config and
+`scripts/verify`, so they may be uncommitted, and a break patch may not touch them. With no
+`[test] strict`, a path named `scripts/strict` means nothing to km. A probe whose script is
+missing or not executable is refused as a broken probe (exit 10). Otherwise the probe runs first
+in its own clean copy; when it fails the result is `strict_not_run` (exit 17), never `proved`.
+The output says `strict failed, as required` for each break, and the JSON carries `level`.
+`[test] verify_required` applies to the verify level only. `km tune strict` does not exist yet;
+write `scripts/strict` by hand and prove it.
 
 ### Tiers
 

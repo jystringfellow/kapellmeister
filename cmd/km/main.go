@@ -1242,13 +1242,23 @@ func printStrict(w io.Writer, s *loop.StrictResult) {
 	if s == nil {
 		return
 	}
-	switch s.Status {
-	case "passed":
+	switch {
+	case s.Status == "passed":
 		fmt.Fprintf(w, "  strict    passed: %s\n", s.Command)
-	case "failed":
+	case s.Status == "failed":
 		fmt.Fprintf(w, "  strict    failed (exit %d): %s\n", s.ExitCode, s.Command)
+	case s.Status == "not_reached":
+		fmt.Fprintf(w, "  strict    %s: %s\n", strings.TrimPrefix(s.Reason, "strict "), s.Command)
+	case s.Reason != "":
+		fmt.Fprintf(w, "  strict    not run: %s\n", s.Reason)
 	default:
 		fmt.Fprintf(w, "  strict    not run: %s exited %d\n", s.Ready, s.ExitCode)
+	}
+	if s.Reason != "" && (s.Status == "passed" || s.Status == "failed") {
+		fmt.Fprintf(w, "  strict    %s\n", s.Reason)
+	}
+	if len(s.Changed) > 0 {
+		fmt.Fprintf(w, "  strict    this run changed %s after it started: read the change before trusting the line above\n", strings.Join(s.Changed, ", "))
 	}
 }
 

@@ -182,3 +182,68 @@ func TestAStrictTimeoutNamesTheStrictLevel(t *testing.T) {
 		t.Fatal(report)
 	}
 }
+
+func strictLines(s loop.StrictResult) string {
+	var out bytes.Buffer
+	printStrict(&out, &s)
+	return out.String()
+}
+
+func TestTheSummaryNamesStrictWhenItDidNotFinishWasNotReachedOrItsScriptChanged(t *testing.T) {
+	for want, s := range map[string]loop.StrictResult{
+		"  strict    not run: strict did not finish: interrupted by SIGINT\n":                                                                                {Status: "not_run", Command: "scripts/strict", Reason: "strict did not finish: interrupted by SIGINT"},
+		"  strict    not run: the strict_ready probe is broken: scripts/strict-ready does not exist\n":                                                       {Status: "not_run", Command: "scripts/strict", Ready: "scripts/strict-ready", Reason: "the strict_ready probe is broken: scripts/strict-ready does not exist"},
+		"  strict    not reached: the tester did not finish: scripts/strict\n":                                                                               {Status: "not_reached", Command: "scripts/strict", Reason: "strict not reached: the tester did not finish"},
+		"  strict    failed (exit 7): scripts/strict\n  strict    strict's output could not be saved: no\n":                                                  {Status: "failed", ExitCode: 7, Command: "scripts/strict", Reason: "strict's output could not be saved: no"},
+		"  strict    passed: scripts/strict\n  strict    this run changed scripts/strict after it started: read the change before trusting the line above\n": {Status: "passed", Command: "scripts/strict", Changed: []string{"scripts/strict"}},
+	} {
+		if got := strictLines(s); got != want {
+			t.Errorf("got %q want %q", got, want)
+		}
+	}
+}
+
+func TestProveAtTheVerifyLevelIgnoresAPathNamedScriptsStrictWhenNoStrictIsConfigured(t *testing.T) {
+	root := suiteFixture(t)
+	proofWrite(t, root, initrepo.ScriptFile, suiteScript("fast"), 0755)
+	proofWrite(t, root, loop.ConfigFile, suiteConfig(""), 0644)
+	proofWrite(t, root, "scripts/strict/notes.txt", "a directory, not a level\n", 0644)
+	if report := proofJSON(t, root); report.ExitStatus == 10 || strings.Contains(report.Reason, "scripts/strict") {
+		t.Fatal(report)
+	}
+	proofWrite(t, root, loop.ConfigFile, suiteConfig("strict = 'scripts/strict'\n"), 0644)
+	if report := proofJSON(t, root, "-level", "strict"); report.ExitStatus != 10 || !strings.Contains(report.Reason, "setup file scripts/strict must be a regular file") {
+		t.Fatal(report)
+	}
+}
+
+func TestProveCopiesTheScriptTheStrictKeyPointsAtIntoItsCleanCopies(t *testing.T) {
+	root := strictProofFixture(t, "strict = './ci/slow --all'\n", "slow")
+	proofWrite(t, root, "ci/slow", suiteScript("slow"), 0755)
+	if report := proofJSON(t, root, "-level", "strict", "-break", suitePatch(t, "slow.patch", suiteSlowOnlyBreak)); report.Status != "proved" {
+		t.Fatal(report)
+	}
+}
+
+func TestProveAtTheStrictLevelNamesStrictInItsOutputAndItsJSON(t *testing.T) {
+	root := strictProofFixture(t, "strict = 'scripts/strict'\n", "slow")
+	slowOnly := suitePatch(t, "slow.patch", suiteSlowOnlyBreak)
+	code, out := proofCall(t, root, "-level", "strict", "-break", slowOnly)
+	if code != 0 || !strings.Contains(out, "\nstrict failed, as required\n") || strings.Contains(out, "verify failed, as required") {
+		t.Fatal(code, out)
+	}
+	if report := proofJSON(t, root, "-level", "strict", "-break", slowOnly); report.Level != "strict" {
+		t.Fatal(report)
+	}
+	if report := proofJSON(t, root); report.Level != "verify" {
+		t.Fatal(report)
+	}
+}
+
+func TestProveSaysTheProbeIsBrokenWhenItsScriptIsMissing(t *testing.T) {
+	root := strictProofFixture(t, "strict = 'scripts/strict'\nstrict_ready = 'scripts/strict-ready'\n", "slow")
+	report := proofJSON(t, root, "-level", "strict")
+	if report.ExitStatus != 10 || report.Status != "refused" || !strings.Contains(report.Reason, "the strict_ready probe is broken: scripts/strict-ready does not exist") {
+		t.Fatal(report)
+	}
+}

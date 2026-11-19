@@ -254,6 +254,7 @@ type Engine struct {
 	Meter           UsageMeter
 	usage           Usage
 	gateRound       int
+	strictBefore    map[string]string
 	measurements    []string
 	measured        int
 	Watcher         Watcher
@@ -298,9 +299,15 @@ func (e *Engine) Run(ctx context.Context) (res Result, err error) {
 	defer stopWatcher()
 	e.gateRound = 0
 	e.measurements, e.measured = nil, 0
+	e.strictBefore = e.strictScriptStates()
 	res, err = e.play(ctx)
-	if err == nil && res.Outcome == Approved && e.Config.StrictCommand != "" {
-		res = e.strict(ctx, res)
+	if err == nil && e.Config.StrictCommand != "" {
+		switch res.Outcome {
+		case Approved:
+			res = e.strict(ctx, res)
+		case Untested:
+			res = e.strictNotReached(res)
+		}
 	}
 	e.reportUnrunMeasurements(&res)
 	if res.Outcome == Failed {

@@ -396,6 +396,11 @@ func decodeConfig(data []byte, name string) (loadedConfig, error) {
 	if err := ValidSuites(cfg.Test.VerifyRequired); err != nil {
 		return cfg, fmt.Errorf("%s: test.verify_required: %w", name, err)
 	}
+	for key, command := range map[string]string{"verify": cfg.Test.Verify, "check": cfg.Test.Check, "strict": cfg.Test.Strict, "strict_ready": cfg.Test.StrictReady} {
+		if emptyCommand(command) {
+			return cfg, fmt.Errorf("%s: test.%s: the command is empty: write a command or remove the key", name, key)
+		}
+	}
 	if cfg.Test.StrictReady != "" && cfg.Test.Strict == "" {
 		return cfg, fmt.Errorf("%s: test.strict_ready: needs test.strict, the command the probe is for", name)
 	}

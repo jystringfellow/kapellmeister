@@ -18,7 +18,6 @@ import (
 const (
 	LevelVerify = "verify"
 	LevelStrict = "strict"
-	StrictFile  = "scripts/strict"
 )
 
 type Options struct {
@@ -64,6 +63,7 @@ type BreakResult struct {
 
 type Result struct {
 	Worktree   string        `json:"worktree"`
+	Level      string        `json:"level,omitempty"`
 	Command    string        `json:"command"`
 	Status     string        `json:"status"`
 	ExitStatus int           `json:"exit_status"`
@@ -134,14 +134,15 @@ func Prove(ctx context.Context, options Options) (result Result) {
 	if level == LevelStrict {
 		command = levels.Strict
 	}
-	result.Command = command
+	result.Command, result.Level = command, level
+	scripts := loop.StrictScripts(levels)
 	if command == "" && level == LevelStrict {
 		return refuse("strict is not configured: set [test] strict")
 	}
 	if command == "" {
 		return refuse("verify is not configured")
 	}
-	setup, err := readSetup(root)
+	setup, err := readSetup(root, scripts...)
 	if err != nil {
 		return refuse(err.Error())
 	}
@@ -220,7 +221,7 @@ func Prove(ctx context.Context, options Options) (result Result) {
 		if err != nil {
 			return fail(err)
 		}
-		before, err := setupSnapshot(dir)
+		before, err := setupSnapshot(dir, scripts...)
 		if err != nil {
 			return fail(err)
 		}
@@ -233,12 +234,12 @@ func Prove(ctx context.Context, options Options) (result Result) {
 		if applyErr != nil {
 			reason = fmt.Sprintf("break %s: patch did not apply: %s", patch, applyErr)
 		} else {
-			after, err := setupSnapshot(dir)
+			after, err := setupSnapshot(dir, scripts...)
 			if err != nil {
 				return fail(err)
 			}
 			if !reflect.DeepEqual(before, after) {
-				reason = fmt.Sprintf("break %s: patch touches setup files (.kapellmeister/, scripts/verify or scripts/strict)", patch)
+				reason = fmt.Sprintf("break %s: patch touches setup files (%s)", patch, setupNames(scripts))
 			}
 		}
 		if reason != "" {
@@ -248,6 +249,9 @@ func Prove(ctx context.Context, options Options) (result Result) {
 		breakDirs[i] = dir
 	}
 	if level == LevelStrict && test.StrictReady != "" {
+		if fault := loop.ProbeFault(root, test.StrictReady); fault != "" {
+			return refuse("the strict_ready probe is broken: " + fault + "; fix [test] strict_ready")
+		}
 		dir, err := cleanCopy(ctx, root, head, scratch, "ready", setup)
 		if err != nil {
 			return fail(err)
@@ -412,4 +416,12 @@ func removeScratch(root string) error {
 		return nil
 	})
 	return os.RemoveAll(root)
+}
+
+func setupNames(scripts []string) string {
+	names := append([]string{".kapellmeister/", "scripts/verify"}, scripts...)
+	if len(names) == 2 {
+		return names[0] + " or " + names[1]
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " or " + names[len(names)-1]
 }
