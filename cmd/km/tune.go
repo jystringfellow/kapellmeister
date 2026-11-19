@@ -237,7 +237,7 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 			return err
 		}
 	}
-	if err := tuneSeat(ctx, client, root, s.PreflightTimeout, progress, writingChair, readingChair); err != nil {
+	if err := tuneSeat(ctx, client, root, s.PreflightTimeout, s.PreflightRetryWait, progress, writingChair, readingChair); err != nil {
 		return err
 	}
 	wt, err := addWorktree(root, head, s.WorktreeDir)
@@ -601,13 +601,13 @@ func tunePreflight(ctx context.Context, client *cao.Client, chairs loop.Chairs) 
 	return nil
 }
 
-func tuneSeat(ctx context.Context, client *cao.Client, root string, timeout time.Duration, out io.Writer, chairs ...loop.Chair) error {
+func tuneSeat(ctx context.Context, client *cao.Client, root string, timeout, retryWait time.Duration, out io.Writer, chairs ...loop.Chair) error {
 	if timeout == 0 {
 		return nil
 	}
 	for _, chair := range loop.UniqueChairs(chairs...) {
 		fmt.Fprintf(out, "→ preflight %s\n", chair)
-		results, err := loop.Preflight(ctx, loop.CAOStepper{Client: client}, root, []loop.Chair{chair}, timeout)
+		results, err := loop.PreflightRetryingAfter(ctx, loop.CAOStepper{Client: client}, root, []loop.Chair{chair}, timeout, retryWait)
 		if err != nil {
 			return err
 		}

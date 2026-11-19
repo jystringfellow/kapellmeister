@@ -333,7 +333,13 @@ names, including user-defined ones. With neither available agents nor `-agents`,
 configure them before contacting CAO. Checks run concurrently once their chairs are seated. Session-creation
 5xx errors and a 400 saying the requested session was not found get up to three retries, after
 1, 2 and 4 seconds plus up to half as much again at random, under distinct names ending in `r`, `r2` and `r3`. The `ok` or `BLOCKED` line
-reports `seat retried N time(s) after <first error>`. Other failures keep one immediate retry;
+reports `seat retried N time(s) after <first error>`. Other failures keep one retry on a fresh
+chair. When the check itself failed fast, in under a quarter of `preflight_timeout`, with no
+blocker on screen, km waits `[run] preflight_retry_wait` (default `20s`) before that retry: a
+provider that refuses with "still loading, try again" refuses again a second later. The line then
+reports `first attempt failed (<error>), retried after waiting 20s`, and the JSON result carries
+`retry_wait_ms` and `retry_wait_error`. Set the key to `0s` for an immediate retry, or longer
+when a provider needs more time. A slower failure and a failed seat call are retried at once;
 a preflight check timeout gets one fresh chair and one retry. km reports whether that second
 attempt passed or failed. Two timeouts can take two full `preflight_timeout`s plus CAO's readiness
 margins and seating time. Seat call timeouts, including an expired launch context, and permission
@@ -664,6 +670,7 @@ dirs = ["~/kept-sandboxes"]
 timeout = "60m"                     # each agent step
 reply_grace = "15m"
 preflight_timeout = "4m"
+preflight_retry_wait = "20s"        # wait before retrying a check that failed fast; "0s" retries at once
 blocker_poll = "20s"
 lessons = true                     # off by default; proposals need human review
 worktree_dir = "~/Code/worktrees"   # optional; defaults to the system temp directory
