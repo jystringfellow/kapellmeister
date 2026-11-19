@@ -28,6 +28,15 @@ import (
 )
 
 const defaultTuneVerifyTimeout = 5 * time.Minute
+const tuneChairAllowance = 10 * time.Minute
+const tuneDerivedBudgetCeiling = 8 * time.Hour
+
+func tuneBudget(limit time.Duration, required tune.Requirements) (breaks int, whole, budget time.Duration) {
+	breaks = max(2, len(required.Suites))
+	whole = time.Duration(2+breaks) * limit
+	return breaks, whole, whole + tuneChairAllowance
+}
+
 const tuneSummaryWidth = 80
 
 var tuneClock = time.Now
@@ -178,8 +187,20 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 		return err
 	}
 	required := tune.Require(test.VerifyRequired, require, test.VerifyTimeBounded || *timeBounded)
+	callerLimit := flagsSet(fs)["verify-timeout"] || test.VerifyTimeout != ""
 	if *verifyTimeout == 0 {
 		*verifyTimeout = test.Timeout(defaultTuneVerifyTimeout)
+	}
+	breaks, whole, derived := tuneBudget(*verifyTimeout, required)
+	sized := fmt.Sprintf("-budget %s holds a whole proof at the %s verify timeout: two clean runs and %d break runs can take %s, plus %s for the chairs", *budget, *verifyTimeout, breaks, whole, tuneChairAllowance)
+	switch {
+	case !flagsSet(fs)["budget"] && derived > tuneDerivedBudgetCeiling:
+		return fmt.Errorf("a whole proof at the %s verify timeout needs a budget of %s, more than the %s km sets by itself: pass -budget to allow it, or -verify-timeout for a shorter limit", *verifyTimeout, derived, tuneDerivedBudgetCeiling)
+	case !flagsSet(fs)["budget"]:
+		*budget = max(*budget, derived)
+		sized = fmt.Sprintf("budget %s: a whole proof at the %s verify timeout is two clean runs and %d break runs (%s), plus %s for the chairs; pass -budget to set it yourself", *budget, *verifyTimeout, breaks, whole, tuneChairAllowance)
+	case *budget < derived:
+		sized = fmt.Sprintf("-budget %s does not hold a whole proof at the %s verify timeout: two clean runs and %d break runs can take %s, plus %s for the chairs; -budget %s would", *budget, *verifyTimeout, breaks, whole, tuneChairAllowance, derived)
 	}
 	s, err := loop.LoadSettings(loop.Home(), root)
 	if err != nil {
@@ -205,6 +226,7 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 	if *asJSON {
 		progress = stderr
 	}
+	fmt.Fprintln(progress, sized)
 	client := newClient(s.CAOURL, s, progress)
 	if err := tunePreflight(ctx, client, chairs); err != nil {
 		return err
@@ -237,7 +259,7 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 			return err
 		}
 	}
-	if err := tuneSeat(ctx, client, root, s.PreflightTimeout, progress, writingChair, readingChair); err != nil {
+	if err := tuneSeat(ctx, client, root, s.PreflightTimeout, s.PreflightRetryWait, progress, writingChair, readingChair); err != nil {
 		return err
 	}
 	wt, err := addWorktree(root, head, s.WorktreeDir)
@@ -275,7 +297,7 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 		fmt.Fprintf(&hintText, "%v\n", h)
 	}
 	task := tune.Task(wt, hintText.String(), command, patches, required)
-	hooks, summary, err := tuneHooks(root, wt, head, runID, runDir, patches, setup, progress, *verifyTimeout, started.Add(*budget), required)
+	hooks, summary, err := tuneHooks(root, wt, head, runID, runDir, patches, setup, progress, *verifyTimeout, callerLimit, started.Add(*budget), required)
 	if err != nil {
 		return err
 	}
@@ -312,7 +334,7 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 	return finishRunDetail(stdout, sum, false)
 }
 
-func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]tuneFile, progress io.Writer, verifyTimeout time.Duration, deadline time.Time, required tune.Requirements) (*loop.TuneHooks, *tuneSummary, error) {
+func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]tuneFile, progress io.Writer, verifyTimeout time.Duration, callerLimit bool, deadline time.Time, required tune.Requirements) (*loop.TuneHooks, *tuneSummary, error) {
 	baseline, err := tuneTree(wt)
 	if err != nil {
 		return nil, nil, err
@@ -395,6 +417,7 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 				}
 			}
 			var result prove.Result
+			needsCaller := false
 			switch {
 			case resolveErr != nil:
 				result = prove.Result{Worktree: wt, Status: "refused", ExitStatus: 10, Reason: resolveErr.Error()}
@@ -412,8 +435,15 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 				}
 				result = runTuneProof(ctx, prove.Options{Worktree: wt, Breaks: recordPatches, Timeout: verifyTimeout})
 				for why := required.KeepsSlowTests(); why != "" && cleanRunTimedOut(result); {
-					if left, whole := deadline.Sub(tuneClock()), time.Duration(2+len(recordPatches))*2*verifyTimeout; whole > left {
-						result.Reason += fmt.Sprintf("; %s, but the timeout is not raised to %s: a proof at that limit can take %s (two clean runs and %d break runs) and %s of the budget is left: raise -budget and -verify-timeout to give verify the time it needs", why, 2*verifyTimeout, whole, len(recordPatches), max(left, 0).Round(time.Second))
+					if !callerLimit {
+						result.Reason += fmt.Sprintf("; %s, and %s is only the default limit: pass -verify-timeout with the time one verify run needs, and km sizes the budget from it and saves the limit", why, verifyTimeout)
+						needsCaller = true
+						break
+					}
+					_, _, derived := tuneBudget(2*verifyTimeout, required)
+					if left, whole := max(deadline.Sub(tuneClock()), 0).Round(time.Second), time.Duration(2+len(recordPatches))*2*verifyTimeout; whole > left {
+						result.Reason += fmt.Sprintf("; %s, but the timeout is not raised to %s: a proof at that limit can take %s (two clean runs and %d break runs) and %s of the budget is left: pass -verify-timeout %s, which sizes the budget at %s, and pass -budget for more", why, 2*verifyTimeout, whole, len(recordPatches), left, 2*verifyTimeout, derived)
+						needsCaller = true
 						break
 					}
 					fmt.Fprintf(progress, "verify timed out at %s; %s, so the timeout is raised to %s and saved as [test] verify_timeout\n", verifyTimeout, why, 2*verifyTimeout)
@@ -449,7 +479,7 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 			if result.Status == "proved" {
 				proved = &tuneProved{round: round, setup: current, summary: *summary, patches: patchDigests}
 			}
-			return loop.TuneProof{Proved: result.Status == "proved", Path: proofPath, Status: result.Status, Reason: result.Reason}, nil
+			return loop.TuneProof{Proved: result.Status == "proved", Path: proofPath, Status: result.Status, Reason: result.Reason, NeedsCaller: needsCaller}, nil
 		},
 		Keep: func(reply loop.TuneReply, round int) (bool, string, string, error) {
 			if proved == nil {
@@ -601,13 +631,13 @@ func tunePreflight(ctx context.Context, client *cao.Client, chairs loop.Chairs) 
 	return nil
 }
 
-func tuneSeat(ctx context.Context, client *cao.Client, root string, timeout time.Duration, out io.Writer, chairs ...loop.Chair) error {
+func tuneSeat(ctx context.Context, client *cao.Client, root string, timeout, retryWait time.Duration, out io.Writer, chairs ...loop.Chair) error {
 	if timeout == 0 {
 		return nil
 	}
 	for _, chair := range loop.UniqueChairs(chairs...) {
 		fmt.Fprintf(out, "→ preflight %s\n", chair)
-		results, err := loop.Preflight(ctx, loop.CAOStepper{Client: client}, root, []loop.Chair{chair}, timeout)
+		results, err := loop.PreflightRetryingAfter(ctx, loop.CAOStepper{Client: client}, root, []loop.Chair{chair}, timeout, retryWait)
 		if err != nil {
 			return err
 		}

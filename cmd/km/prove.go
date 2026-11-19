@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"syscall"
 	"time"
 
@@ -44,6 +45,13 @@ func proveAt(args []string, stdout, stderr io.Writer) error {
 	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	result := prove.Prove(ctx, prove.Options{Level: *level, Worktree: *worktree, Breaks: patches, Timeout: *timeout})
+	if result.Status == "timeout" {
+		limit := fmt.Sprint(time.Duration(result.TimeoutMS) * time.Millisecond)
+		if slices.ContainsFunc(result.Breaks, func(b prove.BreakResult) bool { return b.Status == "timeout" }) {
+			limit = fmt.Sprintf("%s, the break timeout", time.Duration(result.BreakTimeoutMS)*time.Millisecond)
+		}
+		result.Reason += fmt.Sprintf(" at %s; pass -timeout D, or set [test] verify_timeout, to give verify longer", limit)
+	}
 	if *asJSON {
 		if err := json.NewEncoder(stdout).Encode(result); err != nil {
 			return err
