@@ -85,7 +85,7 @@ func TestTuneReportsASecondAttemptThatPasses(t *testing.T) {
 	}))
 	defer srv.Close()
 	var out strings.Builder
-	if err := tuneSeat(context.Background(), cao.NewClient(srv.URL), dir, time.Second, &out, loop.Chair{Provider: "codex"}); err != nil || !strings.Contains(out.String(), "second attempt passed") {
+	if err := tuneSeat(context.Background(), cao.NewClient(srv.URL), dir, time.Second, 0, &out, loop.Chair{Provider: "codex"}); err != nil || !strings.Contains(out.String(), "second attempt passed") {
 		t.Fatal(out.String(), err)
 	}
 }

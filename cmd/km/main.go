@@ -29,7 +29,7 @@ import (
 
 const usage = `usage:
   km init [-worktree DIR] [-dry-run] [-json] [-verify CMD] [-check CMD] [-no-run] [-timeout D]   write config and an unfinished verify, or wrap -verify CMD
-  km tune verify [-worktree DIR] [-require SUITE]... [-time-bounded] [-detach] [-timeout D] [-json] [-again] [-guide]   write and prove verify
+  km tune verify [-worktree DIR] [-require SUITE]... [-known-failure LABEL]... [-time-bounded] [-detach] [-timeout D] [-json] [-again] [-guide]   write and prove verify
   km prove [-worktree DIR] [-break PATCH]... [-timeout D] [-json]   prove verify on clean copies and broken code
   km run -repo DIR [-base BRANCH] (-task TEXT | -task-file FILE) [-ensemble NAME] [-detach] [flags]   one ensemble
   km audition -worktree DIR [-ensemble NAME] [-keep]       boot the ensemble, cue every chair once, tear down
@@ -355,6 +355,9 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		if err := json.Unmarshal(data, &launch); err != nil {
 			return err
 		}
+		if err := loop.ValidRunID(launch.RunID); err != nil {
+			return fmt.Errorf("detached launch %s: %w", *detachedLaunch, err)
+		}
 		text = launch.Task
 	} else {
 		text, err = taskText(*c.task, *c.taskFile)
@@ -445,6 +448,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 	if err != nil {
 		return err
 	}
+	printExcluded(stdout, wt)
 	policy := s.Policy
 	runID := newRunID()
 	if *detachedLaunch != "" {
@@ -457,10 +461,19 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 			return err
 		}
 	}
+	if err := loop.LowDisk(s.MinFreeMB, wt, loop.StateDir()); err != nil {
+		return err
+	}
 	scratch, err := prepareScratch(loop.StateDir(), runID)
 	if err != nil {
 		return err
 	}
+	handedOff, approved := false, false
+	defer func() {
+		if !handedOff {
+			settleScratch(stderr, loop.StateDir(), runID, approved)
+		}
+	}()
 	if ctx == nil {
 		var stop context.CancelFunc
 		ctx, stop = loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
@@ -501,6 +514,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		if err != nil {
 			return err
 		}
+		handedOff = true
 		if handle != nil {
 			*handle = h
 			return nil
@@ -508,7 +522,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		_, err = fmt.Fprintf(stdout, "run       %s\npid       %d\nworktree  %s\noutput    %s\n", h.RunID, h.PID, h.Worktree, h.Output)
 		return err
 	}
-	if err := preflight(ctx, client, wt, s.PreflightTimeout, defaultChairs(&policy, chairs)...); err != nil {
+	if err := preflight(ctx, client, wt, s.PreflightTimeout, s.PreflightRetryWait, defaultChairs(&policy, chairs)...); err != nil {
 		return err
 	}
 	podiumChair, _ := policy.Chair("classify", chairs.Classifier, "", 0)
@@ -526,7 +540,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 	sum, err := runEnsemble(ctx, ensembleRun{
 		RunID: runID, StateDir: runDir, Ensemble: *ensemble, BaseBranch: baseBranch, Meter: loop.NewLogMeter(),
 		Config: loop.Config{
-			ScratchDir: scratch, CAOURL: s.CAOURL, StateDir: loop.StateDir(), RunID: runID, Task: text, Worktree: wt, Chairs: seated, GateWhen: s.GateWhen,
+			ScratchDir: scratch, MinFreeMB: s.MinFreeMB, CAOURL: s.CAOURL, StateDir: loop.StateDir(), RunID: runID, Task: text, Worktree: wt, Chairs: seated, GateWhen: s.GateWhen,
 			Lessons: s.Lessons, LessonsTimeout: s.LessonsTimeout,
 			LearnedBudget: s.LearnedBudget, BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, KnownFailures: tested.VerifyKnownFailures, CheckCommand: checkCmd, Policy: &policy,
 		},
@@ -537,6 +551,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		return err
 	}
 	summarized = true
+	approved = sum.Outcome == loop.Approved
 	return finishRun(stdout, sum)
 }
 
@@ -592,7 +607,7 @@ func preflightCommand(args []string) error {
 			chairs[i], _ = pinned.At(chair, *tier)
 		}
 	}
-	return preflight(ctx, client, wt, s.PreflightTimeout, chairs...)
+	return preflight(ctx, client, wt, s.PreflightTimeout, s.PreflightRetryWait, chairs...)
 }
 
 func configCommand(args []string) error {
@@ -611,8 +626,8 @@ func configCommand(args []string) error {
 		return err
 	}
 	printSources(os.Stdout, s)
-	fmt.Printf("cao    %s\nstate  %s\nrun    rounds %d, verify retries %d, step timeout %s, reply grace %s, preflight %s, blocker poll %s, lessons %s, learned budget %d bytes, trust folder %s\n",
-		s.CAOURL, loop.StateDir(), s.Rounds, s.VerifyRetries, s.Timeout, s.ReplyGrace, s.PreflightTimeout, s.BlockerPoll, lessonsSetting(s), s.LearnedBudget, map[bool]string{true: "on", false: "off"}[s.TrustFolder])
+	fmt.Printf("cao    %s\nstate  %s\nrun    rounds %d, verify retries %d, step timeout %s, reply grace %s, preflight %s, preflight retry wait %s, blocker poll %s, lessons %s, learned budget %d bytes, trust folder %s\n",
+		s.CAOURL, loop.StateDir(), s.Rounds, s.VerifyRetries, s.Timeout, s.ReplyGrace, s.PreflightTimeout, s.PreflightRetryWait, s.BlockerPoll, lessonsSetting(s), s.LearnedBudget, map[bool]string{true: "on", false: "off"}[s.TrustFolder])
 	if len(s.ReportDirs) > 0 {
 		fmt.Printf("report dirs %s (in addition to %s)\n", plain(strings.Join(s.ReportDirs, ", ")), plain(defaultRunsDir()))
 	}
@@ -862,13 +877,13 @@ func sortedKeys[V any](m map[string]V) []string {
 	return keys
 }
 
-func preflight(ctx context.Context, client *cao.Client, worktree string, timeout time.Duration, chairs ...loop.Chair) error {
+func preflight(ctx context.Context, client *cao.Client, worktree string, timeout, retryWait time.Duration, chairs ...loop.Chair) error {
 	if timeout == 0 {
 		return nil
 	}
 	unique := loop.UniqueChairs(chairs...)
 	fmt.Printf("→ preflight %d chair(s)\n", len(unique))
-	results, err := loop.Preflight(ctx, loop.CAOStepper{Client: client}, worktree, unique, timeout)
+	results, err := loop.PreflightRetryingAfter(ctx, loop.CAOStepper{Client: client}, worktree, unique, timeout, retryWait)
 	unseated := 0
 	for _, r := range results {
 		unseated += r.Unseated
@@ -1202,6 +1217,9 @@ func finishRunDetail(w io.Writer, sum ensembleSummary, detail bool) error {
 	if sum.Tune != nil {
 		printLeftOut(w, sum.Tune.LeftOut)
 	}
+	if sum.Outcome == loop.BaselineMismatch {
+		return &exitStatusError{code: 16}
+	}
 	if sum.Outcome != loop.Approved {
 		return errNotApproved
 	}
@@ -1229,8 +1247,25 @@ func gitOutput(worktree string, args ...string) (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
+func settleScratch(stderr io.Writer, stateDir, runID string, approved bool) {
+	scratch, err := loop.ScratchDir(stateDir, runID)
+	if err != nil {
+		fmt.Fprintln(stderr, "km: removing scratch:", err)
+		return
+	}
+	if !approved {
+		if err := os.Remove(scratch); err != nil && !errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(stderr, "km: scratch was kept at %s\n", scratch)
+		}
+		return
+	}
+	if err := loop.RemoveScratch(stateDir, runID); err != nil {
+		fmt.Fprintln(stderr, "km: removing scratch:", err)
+	}
+}
+
 func prepareScratch(stateDir, runID string) (string, error) {
-	scratch, err := filepath.Abs(filepath.Join(stateDir, "scratch", runID))
+	scratch, err := loop.ScratchDir(stateDir, runID)
 	if err != nil {
 		return "", err
 	}
@@ -1255,6 +1290,12 @@ func printOutcome(w io.Writer, s ensembleSummary) {
 		line += ": " + s.Reason
 	}
 	fmt.Fprintln(w, "\n"+line)
+	if len(s.MeasurementsNotRun) > 0 {
+		fmt.Fprintln(w, "measurements not run:")
+		for _, request := range s.MeasurementsNotRun {
+			fmt.Fprintln(w, "  - "+plain(request))
+		}
+	}
 }
 
 func taskText(task, file string) (string, error) {
@@ -1343,6 +1384,9 @@ func copyDir(src, dst string) error {
 }
 
 func timeoutRetryNote(r loop.PreflightResult, timeout time.Duration) string {
+	if r.RetryWaitMS > 0 {
+		return fmt.Sprintf("; first attempt failed (%s), retried after waiting %s", r.RetryWaitError, time.Duration(r.RetryWaitMS)*time.Millisecond)
+	}
 	if !r.TimeoutRetried {
 		return ""
 	}

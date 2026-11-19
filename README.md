@@ -47,7 +47,7 @@ installing the base chair profiles below.
 
 ```sh
 km init [-worktree DIR] [-dry-run] [-json] [-verify CMD] [-check CMD] [-no-run] [-timeout D]  # write config and an unfinished verify script
-km tune verify [-worktree DIR] [-require SUITE]... [-time-bounded] [-detach] [-timeout D] [-budget D] [-verify-timeout D] [-json] [-again] [-guide]  # write and prove verify
+km tune verify [-worktree DIR] [-require SUITE]... [-known-failure LABEL]... [-time-bounded] [-detach] [-timeout D] [-budget D] [-verify-timeout D] [-json] [-again] [-guide]  # write and prove verify
 km prove [-worktree DIR] [-break PATCH]... [-timeout D] [-json]  # prove verify on clean copies and broken code
 km run -repo ~/Code/app [-base BRANCH] -task-file task.md [-ensemble thorough] [-detach]  # one ensemble
 km audition -worktree DIR [-ensemble thorough]   # can this ensemble play? no real work
@@ -333,7 +333,13 @@ names, including user-defined ones. With neither available agents nor `-agents`,
 configure them before contacting CAO. Checks run concurrently once their chairs are seated. Session-creation
 5xx errors and a 400 saying the requested session was not found get up to three retries, after
 1, 2 and 4 seconds plus up to half as much again at random, under distinct names ending in `r`, `r2` and `r3`. The `ok` or `BLOCKED` line
-reports `seat retried N time(s) after <first error>`. Other failures keep one immediate retry;
+reports `seat retried N time(s) after <first error>`. Other failures keep one retry on a fresh
+chair. When the check itself failed fast, in under a quarter of `preflight_timeout`, with no
+blocker on screen, km waits `[run] preflight_retry_wait` (default `20s`) before that retry: a
+provider that refuses with "still loading, try again" refuses again a second later. The line then
+reports `first attempt failed (<error>), retried after waiting 20s`, and the JSON result carries
+`retry_wait_ms` and `retry_wait_error`. Set the key to `0s` for an immediate retry, or longer
+when a provider needs more time. A slower failure and a failed seat call are retried at once;
 a preflight check timeout gets one fresh chair and one retry. km reports whether that second
 attempt passed or failed. Two timeouts can take two full `preflight_timeout`s plus CAO's readiness
 margins and seating time. Seat call timeouts, including an expired launch context, and permission
@@ -588,6 +594,17 @@ for `[tiers]`, because only you know what your accounts can run. `[cao]`, `[chai
 `[ensembles]`, `[report]`, `[run] worktree_dir` and `[run] trust_folder` are machine-only
 (see [Trusting the folder](#trusting-the-folder)); `[test]` and `[run] base` are repository-only.
 Putting one in the wrong file is an error.
+
+`[run] min_free_mb` (default `1024`, either file, the repository's value wins) is the free space,
+in MiB, that `km run`, `km play` and `km tune verify` require on the filesystems holding the
+worktree and the state directory. They check before seating any chair and again before each
+round. A run below it stops with, for example,
+`low disk: /path has 10 MB free and this run needs 1024 MB ([run] min_free_mb); free some space or lower the setting`
+rather than failing in a later step; mid-run this is the failed run's reason. Free space that
+cannot be measured never stops a run. The default applies to existing configs, so a run that
+worked before on a machine with less than 1024 MiB free now stops at the start with that message;
+set `min_free_mb = 0` under `[run]` in either config file to turn the check off, or a smaller
+number to lower it.
 `$CAO_API_BASE_URL` overrides `[cao] url`. State lives in `~/.kapellmeister/state` (`$KAPELLMEISTER_STATE_DIR`).
 User-only `[report] dirs` adds search directories to `<state>/runs` for bare report, status and
 wait commands and their MCP tools. `[report.prices."<model>"]` supplies input/output
@@ -664,6 +681,8 @@ dirs = ["~/kept-sandboxes"]
 timeout = "60m"                     # each agent step
 reply_grace = "15m"
 preflight_timeout = "4m"
+min_free_mb = 1024                  # free disk a run needs, in MiB; 0 turns the check off
+preflight_retry_wait = "20s"        # wait before retrying a check that failed fast; "0s" retries at once
 blocker_poll = "20s"
 lessons = true                     # off by default; proposals need human review
 worktree_dir = "~/Code/worktrees"   # optional; defaults to the system temp directory
@@ -719,6 +738,29 @@ the change and leave them free to run tests. The implementer is told km will run
 only when a verify command is configured. The gate file lists nits without sending them back for
 another round.
 
+A request only for more measurements, benchmarks or repeated runs, naming no code or test change,
+is not a required change: reviewers are told it is no reason for `CHANGES`, and the gate that it
+never blocks. A reviewer writes each such request as a list item (`- `, `* `, `+ ` or `1. `)
+under the heading `Measurements for the tester:`, ending the list with a blank line. km also
+accepts the heading without its colon, a blank line between the heading and the list, and a
+request on the heading's own line. The section ends at the first blank line after an item and at
+any line that is not a list item, such as another heading; that line and everything after it
+stay in the implementer's copy, so a required change written straight after the section is not
+lost. `none`, on the heading's line or as the first item, ends the section at once. km reads the
+items from every review of the run, drops repeats, and passes only them to the test step; the
+tester sees nothing else of a review. A heading with no requests under it is printed and recorded
+as a `measurements-empty` step naming the review file; `none` under the heading is not reported.
+
+The implementer is not handed these requests. When a review has the section, km writes a copy
+without it beside the review (`required-N.md` for `review-N.md`) and names the copy in the next
+implement prompt; the review file stays whole, and the gate reads the whole review.
+
+Requests that no finished test step was given are reported whatever the outcome: without a tester
+km prints `measurements not run: no tester is seated:` with the requests, and with one, when the
+run ends first, `measurements not run: the run ended before a test step ran them:`. km records
+the same line as a `measurements-not-run` step, lists the requests in the result's
+`measurements_not_run`, and prints them under the outcome line of the final summary.
+
 Each successful review is classified as soon as it lands, while other reviewers may still be
 running. km waits for every review and classification before deciding whether to run the gate.
 Review and gate prompts ask for `APPROVE` or `CHANGES` alone on the reply file's last line.
@@ -743,6 +785,8 @@ or `CHANGES` last line is taken as is; otherwise the classifier reads the report
 APPROVE yields an `approved` outcome. Any other verdict sends the test report back as the leading
 feedback, with instructions to add a regression test reproducing each failure and fix the code, following
 the repository's development rules. Later rounds reuse the same test plan.
+The test prompt lists the measurements reviewers asked for, to run after the plan's scenarios as
+time allows; one that could not be run is reported as not run and is not by itself a failure.
 A test-step timeout or a SIGINT/SIGTERM during the test step after gate approval ends `untested`:
 the change was approved but testing did not finish. A signal names the signal and says the tester
 did not finish and the gate's approval stands unverified, in both the output and the run record. The outcome names the partial report if it exists and preserves the worktree and its
@@ -766,7 +810,15 @@ test step, including failure, timeout or interruption, km reports each distinct 
 km never signals these processes. It silently skips non-regular `pids` files (including FIFOs) and
 files larger than 1 MiB. The concurrent test-plan step
 relies on its prompt to forbid file changes because implementation is editing at the same time.
-km creates the scratch directory and writes nothing into it. What a tester needs to set up belongs
+km creates the scratch directory and, in `km run` and `km play`, writes nothing into it. After a
+test step that ends in `APPROVE` and its left-running report, km removes everything in scratch
+except `pids`. After a test step that ends in `CHANGES`, times out or fails, scratch stays as it
+is, because the implementer is then asked to reproduce the failures from it. When a run ends
+approved, km removes the directory. When it ends any other way and scratch holds anything or cannot be read, km
+keeps it and says where: `km: scratch was kept at <state dir>/scratch/<run id>`; remove it by
+hand when it is no longer needed. `km tune verify` treats its scratch the same way; its break
+patches are also in the run record. Read-only directories, such as a copied module cache, are
+removed too. A removal that fails is reported as a warning and does not change the outcome. What a tester needs to set up belongs
 in the repository's instruction files and lessons: isolated environments, tools to avoid and how
 to start a second conductor are knowledge about that repository. See the [worked example](#checked-in-lessons)
 in this repository's `AGENTS.md`, "Exercising km live", `scripts/nested-km-env` and
@@ -884,6 +936,13 @@ verify_timeout = "20m"              # limit for each verify run in km prove and 
 verify_time_bounded = true          # allow tune to cut what does not fit two minutes; default false
 verify_known_failures = ["legacy export"]  # labels of known_failure steps: verify passes while they fail, and every summary names them
 
+[[test.excluded]]                   # a suite left out of verify; written by km tune verify, not by hand or by a chair
+suite    = "e2e"
+reason   = "network"
+method   = "network namespace"      # how km cut the network: or "sandbox profile", or "proxy variables (best effort)"
+evidence = "exit 7: could not resolve host"
+run      = "make e2e"               # how to run it by hand
+
 [tiers.claude_code]                 # override any provider's tier model or effort
 large = { model = "claude-fable-5-1" }
 
@@ -931,7 +990,9 @@ verify is kept, and init explains the setting to add by hand. `-verify` override
 for that invocation when existing setup is kept; `-check CMD` adds a focused command using
 `{args}` only to a new config. Init never commits or changes Git state.
 
-`-no-run` writes files without running verify, `-timeout D` changes the default `10m` limit,
+`-no-run` writes files without running verify, `-timeout D` sets the limit for that run (default
+`[test] verify_timeout`, then `10m`; a timeout names both; a saved limit above `8h` is refused
+unless `-timeout` is given, because it comes from committed config),
 and `-dry-run` prints exact contents without writing or running anything. `-json` reports the
 same file decisions, hints, verify result and next steps as one object, including on failure.
 
@@ -939,7 +1000,7 @@ same file decisions, hints, verify result and next steps as one object, includin
 
 ```sh
 km init
-km tune verify [-worktree DIR] [-require SUITE]... [-time-bounded] [-detach] [-timeout D] [-budget D] [-verify-timeout D] [-json] [-again]
+km tune verify [-worktree DIR] [-require SUITE]... [-known-failure LABEL]... [-time-bounded] [-detach] [-timeout D] [-budget D] [-verify-timeout D] [-json] [-again]
 km tune verify -guide
 ```
 
@@ -986,15 +1047,47 @@ is commented out or never reached does not count; km publishes nothing without i
 `-time-bounded` given by flag must be written into `[test]` by the tune, so later tunes and
 `km prove` keep them; km refuses a round that leaves them out of the config.
 
-A clean verify run that times out during the proof is not a reason to narrow. km doubles the
-verify timeout, says so (`verify timed out at 5m0s; a verify is never narrowed for time, so the
-timeout is raised to 10m0s and saved as [test] verify_timeout`), writes the new limit into the
-tuned config and proves again, until verify finishes or a whole proof at the next limit no longer
-fits in what is left of `-budget`. A whole proof is two clean runs and one run per break patch,
-each counted at the limit, so with two break patches the default `30m` budget does not hold a
-raise from `5m` to `10m` (40 minutes); km then stops, says how long the proof can take and how
-much budget is left, and names `-budget` and `-verify-timeout` as what to raise. `km prove` and
-later tunes read the saved limit. A break patch that times out does not raise it.
+**Slow verifies.** One number sizes a tune: the limit for one verify run, from `-verify-timeout`,
+then the saved `[test] verify_timeout`, then `5m`. A whole proof is two clean runs, one run
+per break patch and one run without network, each counted at that limit. Before seating any chair, tune prints the budget and
+how it was worked out, counting two break patches or one per required suite if that is more, and
+`10m` for the chairs:
+
+```
+budget 3h55m0s: a whole proof at the 45m0s verify timeout is two clean runs, 2 break runs and one run without network (3h45m0s), plus 10m0s for the chairs; pass -budget to set it yourself
+```
+
+Without `-budget`, the budget is that sum, and never less than `30m` (`35m` at the default
+limit). The sum counts one run without network; each suite that turns out to need network adds
+up to three more, which the budget does not count. A detached tune prints the
+line from the command you ran as well as in its output file. km does not set a budget above `8h`
+by itself, because the limit can come from the repository's committed config: above that, tune
+stops before seating any chair and asks for an explicit `-budget` or a shorter `-verify-timeout`.
+An explicit `-budget` is kept as given; tune says up front whether a whole proof fits it and, if
+not, the value that would.
+
+A first tune on a slow repository with default flags stops after one clean-run timeout. It does
+not double the `5m` default and does not go back to the writer, who cannot fix a limit: the run
+ends with the outcome `verify_limit` and names the flag, `pass -verify-timeout with the time one
+verify run needs`. Run it again with that flag. km saves a limit longer than `10m` as `[test]
+verify_timeout`, and that saved value is what lets later runs scale without flags: later tunes
+size their budget from it, and `km prove` and `km init` use it as their limit.
+
+A clean verify run that times out during the proof is not a reason to narrow. When the caller
+gave the limit, by flag or saved key, km doubles it, says so (`verify timed out at 20m0s; a
+verify is never narrowed for time, so the timeout is raised to 40m0s and saved as [test]
+verify_timeout`), writes the new limit into the tuned config and proves again, until verify
+finishes or a whole proof at the next limit no longer fits in what is left of the budget.
+Doubling needs an explicit, larger `-budget`: the budget km derives holds one proof at the
+starting limit and has no room for a second at twice that. When a raise does not fit, the run
+ends with the outcome `verify_limit` without another writer step, says how long the proof can
+take and how much budget is left, and names the `-verify-timeout` to pass and the budget km
+would derive from it. A break patch that times out does not raise the limit.
+
+Inside a tune the writer runs `scripts/verify` once and does not run `km prove`: km runs the
+proof after the writer's step, outside the agent step's `[run] timeout`, and sends the result
+back when it is not proved. `km tune verify -guide`, for writing a verify by hand, still ends
+with `km prove`.
 
 Only the caller and km set `verify_timeout`. A round whose config adds or changes it is refused,
 because the proof ran at km's limit, not the written one. When the limit a tune proves at is
@@ -1005,9 +1098,71 @@ as [test] verify_timeout`, and the JSON summary carries `required`, `time_bounde
 the timeout: a timeout fails the proof. `km tune verify -guide` with `-require` or `-time-bounded`
 prints the procedure for those requirements.
 
-The `[test] verify_*` keys, `verify_known_failures` included, are new. A km built before them
-rejects a config that contains any of them as an unknown key, for every command including `km run`, so update km on every
-machine and CI job that reads the repository's config before committing them.
+**Which suites belong in verify.** A suite belongs in verify when it passes on a clean copy
+without network. km decides this by test, not by a chair's opinion. After a round's proof passes,
+km runs the same verify once more on a clean copy with the network cut. A step that fails there
+is not recorded on that one failure. km runs it again without network and then once with
+network, and records it only when it fails, fails and passes. It then writes the step into the
+tuned config as a `[[test.excluded]]` entry with the reason `network`, the method used, the
+evidence (the step's exit status and the last line it printed) and the step's command to run by
+hand. The round is not proved, and the writer is told to remove that step. The writer is asked to
+give every suite CI runs its own step and leave this decision to km.
+
+Anything else is not an exclusion, and nothing is recorded for it:
+
+| Round status | What happened without network |
+|---|---|
+| `needs_network` | One or more steps failed twice without network and passed with it; each is now in `[[test.excluded]]` and must leave `scripts/verify` |
+| `no_network_flaky` | A step failed once and passed when run again without network |
+| `no_network_failure` | A step failed twice without network and failed again with it |
+| `no_network_timeout` | The run hit its limit and km could not tell which step was running |
+| `no_network_unknown` | Verify failed and its wrapper did not record which step failed |
+| `no_network_error` | km could not make the clean copy or run verify |
+
+All of these carry exit status `18` in the round's proof record and the JSON summary, and the
+round is not proved.
+
+Only the network off the machine is cut. Loopback (`127.0.0.1`, `::1`) and Unix sockets stay
+open, so a suite that starts its own local server and talks to it stays in verify. On macOS the
+machine's own addresses count as local too.
+
+The run without network gets the verify timeout or twice the slowest clean run of the proof,
+whichever is longer. A step that does not finish in that time is treated as a failing step, since
+a step waiting on network retries looks like that: km names it from the step order of the proof,
+confirms it the same way (again without network, then with it) and records it with the evidence
+`did not finish within D`.
+
+km cuts the network with the strongest method the machine offers and records which one it used:
+`network namespace` on Linux (`unshare --net`, with `lo` brought up), `sandbox profile` on macOS
+(`sandbox-exec`), and otherwise `proxy variables (best effort)`, which points the proxy variables
+at a closed local port and so only stops programs that honour them. Linux falls back to proxy
+variables when the machine does not allow unprivileged user namespaces or has neither `ip` nor
+`ifconfig`; that is common inside containers, so check the method before trusting an empty list.
+The tune summary always names it (`network cut by: sandbox profile`, and `no_network_method` in
+the JSON), whether or not anything was excluded.
+
+All failing steps are found in one pass: the `run` wrapper skips the steps named in the file
+`KAPELLMEISTER_VERIFY_SKIP` points at, and km adds each confirmed step to that file and runs
+again. Only that run names steps there. `km init`, `km run`, `km play` and `km rehearse` unset
+the variable before running verify, and `km prove` points it at an empty file, so no step is
+skipped anywhere else and a step cannot tell the run without network from a proof run by it.
+`km prove` refuses a `[test] verify` command or a `scripts/verify` that assigns the variable
+itself. A wrapper written before this has no skip line; km then finds one step per round and
+says the result is partial.
+
+Only km writes `[[test.excluded]]`, and only the caller removes an entry. A round whose config
+adds, changes or drops an entry is refused, and so is a verify that still has a step for an
+excluded suite. A required suite is never excluded: when one fails without network the round is
+refused with `a required suite cannot be excluded: make it pass without network, or stop
+requiring it`. The tune summary lists each entry (`excluded: e2e (network; network namespace):
+exit 7: could not resolve host; run it by hand: make e2e`, and `excluded` in the JSON), and
+`km run`, `km play`, `km rehearse` and `km prove` print `verify excludes ...` for each one before
+they start (`excluded` in `km prove -json`), so an exclusion is never silent. The extra run costs
+one verify per proved round, plus up to three for each suite it excludes.
+
+The `[test] verify_*` keys, `verify_known_failures` included, and `[[test.excluded]]` are new. A km built before them rejects
+a config that contains any of them as an unknown key, for every command including `km run`, so
+update km on every machine and CI job that reads the repository's config before committing them.
 
 The writer keeps the bounded-output wrapper and writes at least two break patches outside the
 checkout: one breaks covered source code and one breaks a test expectation. Work takes place in
@@ -1026,7 +1181,8 @@ must match too, so a renamed required step is proved again. The run records both
 texts, their SHA-256 digests and the compared inputs; the summary says why the proof was kept.
 
 Tune uses `[run] rounds` and `[run] timeout`; `-timeout D` changes each agent step's limit.
-`-budget D` defaults to `30m` and stops the run between steps, never during a proof. A running
+`-budget D` defaults to a whole proof at the verify timeout plus `10m`, at least `30m`, and stops
+the run between steps, never during a proof. A running
 agent step finishes under its own timeout. `-verify-timeout D` limits each clean or
 break verification inside tune and defaults to `[test] verify_timeout`, then `5m`; direct
 `km prove` defaults to `[test] verify_timeout`, then `10m`.
@@ -1036,6 +1192,8 @@ fail, are flaky or exhaust rounds, the last proved setup is copied back with app
 and the reason the later revision was not adopted. Budget exhaustion has the distinct
 `budget_exhausted` outcome and exit status 1; it copies back the last proved setup if one exists,
 and otherwise leaves the checkout untouched. Its temporary worktree is kept for inspection.
+A verify limit only the caller can raise has the `verify_limit` outcome, with the same exit
+status and the same handling of an earlier proved setup.
 Interrupts and chair failures remain failed and publish nothing. Copy-back refuses changed checkout
 setup or a moved HEAD. Nothing is staged or committed. The summary
 shows the chosen command, omissions and reasons, both clean durations and one line per break
@@ -1100,19 +1258,38 @@ record and reports the durations.
 allowed to fail verify. Give it its own step with the wrapper's second function,
 `known_failure 'legacy export' 'make test-legacy-export'`, and list the label in
 `[test] verify_known_failures = ["legacy export"]`. The step runs the command, never stops
-verify, and records whether it failed or passed in the steps file's name with `.known` added.
+verify, prints the last 40 lines of its output when it fails, and records whether it failed or
+passed in the steps file's name with `.known` added. Matching is by step: the whole command is
+the known failure, and any non-zero exit counts as failing, whatever the cause. km does not look
+at which test inside the step failed, so keep such a step to the one test or file that is known
+to fail.
+
 `km prove`, the tune summary and the final summary of `km run` name the baseline every time:
 `known failures (verify passes while these fail): legacy export`, and `known_failures` in the
-JSON. When such a step passes, they say `known failure "legacy export" now passes: remove it
-from [test] verify_known_failures and make it a run step` (`known_failures_passing` in the
-JSON); verify still passes, so the entry is removed on purpose and not forgotten. In a proof a
-known failure counts as passing only when it passed in both clean runs.
+JSON. A label recorded both failed and passed in one verify counts as failing.
 
-km checks the list against what ran. A listed label with no `known_failure` step in a clean run,
-or a `known_failure` step whose label is not listed, is refused as `baseline_mismatch`. A label
-cannot be in both `verify_known_failures` and `verify_required`. A break patch that only a
-known-failure step would catch survives, because that step never fails verify. `km run` reads
-the outcomes from the wrapper but does not refuse a mismatch; prove does.
+**Only a person sets the baseline.** The list comes from an entry already in the config or from
+`km tune verify -known-failure LABEL` (repeatable; it adds to the list). A chair cannot set it:
+
+- A tune round whose config adds, changes or removes an entry is refused.
+- The writer may propose one by giving the test a `known_failure` step without listing it. The
+  tune then stops with the outcome `baseline_needs_caller` and prints the flag that accepts it:
+  `run the tune again with -known-failure 'legacy export' to accept it, or have the test fixed`.
+- In `km run`, the list is read when the run starts. A `known_failure` step whose label is not in
+  that list fails the round's verify (exit 16 in the verify record) and is named, so a chair
+  cannot hide a failing test behind a new step.
+
+km checks the list against what ran, in `km prove` and in `km run`:
+
+| Case | `km prove` | `km run` |
+|---|---|---|
+| A listed label whose `known_failure` step did not run, including a wrapper written before `known_failure` | `baseline_mismatch`, exit 16 | before any chair plays: outcome `baseline_mismatch`, exit 16, `its step did not run`; in a later round: that round's verify fails |
+| A `known_failure` step whose label is not listed | `baseline_mismatch`, exit 16 | the same two cases as above |
+| A listed step that passes in both clean runs | `baseline_mismatch`, exit 16, naming the entry to remove; a tune stops for the caller | the summary says `known failure "legacy export" now passes: remove it from [test] verify_known_failures and make it a run step` (`known_failures_passing` in the JSON) |
+| A listed step that fails in one clean run and passes in the other | proved, counted as failing, and named `known failure "legacy export" is flaky` (`known_failures_flaky` in the JSON) | n/a |
+
+A label cannot be in both `verify_known_failures` and `verify_required`. A break patch that only
+a known-failure step would catch survives, because that step never fails verify.
 
 Each break run is given the verify timeout or twice the slowest clean run, whichever is longer,
 so a verify that passes near its limit does not time out on its breaks. The output says when
@@ -1123,15 +1300,16 @@ that raised it, and the JSON carries `timeout_ms` and `break_timeout_ms`.
 | 0 | Proved: two clean passes and every break patch made verify fail |
 | 1 | Command, Git or filesystem error, or interrupted |
 | 3 | A verify run timed out |
-| 10 | Refused: unfinished stub, verify not configured, invalid checkout, or bad/setup-touching patch |
+| 10 | Refused: unfinished stub, verify not configured, invalid checkout, bad/setup-touching patch, or a verify that assigns `KAPELLMEISTER_VERIFY_SKIP` |
 | 11 | Passes twice, not proved: no break patch supplied |
 | 12 | Verify failed or was flaky on clean copies |
 | 13 | A break patch left verify passing |
 | 14 | A required suite's step did not run in a clean run |
 | 15 | A required suite has no break patch that makes verify fail in its step |
-| 16 | `verify_known_failures` does not match the `known_failure` steps that ran |
+| 16 | `verify_known_failures` does not match the `known_failure` steps that ran, or a listed step passed in both clean runs; `km run` exits 16 for the same mismatch before any chair plays |
+| 18 | Only in a `km tune verify` round: the run without network did not pass (`needs_network` or `no_network_*`) |
 
-`-timeout D` is a positive limit per verify run; it defaults to `[test] verify_timeout`, then `10m`. Output names each clean run and
+`-timeout D` is a positive limit per verify run; it defaults to `[test] verify_timeout`, then `10m`, and a timeout names the limit that applied (the longer break timeout when a break run timed out) and both ways to raise it. Output names each clean run and
 patch, reports exit codes and durations, and bounds verify output to 40 lines of 300 characters.
 `-json` carries the same facts in `worktree`, `command`, `status`, `exit_status`, `reason`, `runs`
 and `breaks`, including failures and skipped patches, with each run's `steps` (label and
@@ -1258,8 +1436,10 @@ What a repository needs its ensemble to know is checked in to that repository.
 repository and ensemble. With no directory it reads `<state>/runs` plus any directories in the
 user config's `[report] dirs`. `km report ~/kept-sandboxes` searches across kept sandbox copies.
 Runs with restored work add a `restored: N` footer count, and runs that retried a read-only step
-add `retried: N`. JSON includes `restores` and `retries` counts per run and the numbers of
-runs with restores or retries in totals.
+add `retried: N`. Runs where verify passed only after a retry add `verify retried: N`, a separate
+count, so the report agrees with the `retried   verify[...]` line of a run's final summary.
+JSON includes `restores`, `retries` and `verify_retried` counts per run and the numbers of
+runs with each in totals.
 
 To add directories a bare `km report`, `km status` or `km wait` searches, add this to
 `~/.kapellmeister/config.toml` (`$KAPELLMEISTER_HOME` moves this file):
@@ -1614,9 +1794,10 @@ RUN                     STARTED              REPOSITORY             ENSEMBLE  RO
 
 Run records (`config.json`, `telemetry.jsonl`, `current.json`, `result.json` and `replies/`) live in
 `<state dir>/runs/<run id>/`. Tester scratch lives separately in `<state dir>/scratch/<run id>/`
-and is left in place after the run. Detached runs also keep `output.log` (complete stdout and
-stderr) and `launch.json` (the run id, worktree, base branch and task text passed to their run
-process). They publish `current.json` before preflight and record failures from that point.
+and is removed when the run ends approved; otherwise it is kept and the run says where. Detached
+runs also keep `output.log` (complete stdout and stderr) and `launch.json` (the run id, worktree,
+base branch and task text passed to their run process). A `launch.json` whose run id is empty or
+not a single path element is refused. They publish `current.json` before preflight and record failures from that point.
 Once `telemetry.jsonl` is created, `km run` and `km play`
 write a start record and leave `result.json` on normal completion, failure or interruption, including
 errors recording configuration, engine setup or the final git summary. Failures record their reason;

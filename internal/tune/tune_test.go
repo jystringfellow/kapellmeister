@@ -5,9 +5,13 @@ import (
 	"testing"
 )
 
-func TestTheTasksProcedureIsTheCarriedGuideText(t *testing.T) {
+func TestTheTasksProcedureIsTheCarriedGuideTextExceptThatKmRunsTheProof(t *testing.T) {
 	task := Task("checkout", "hints", "scripts/verify", "/breaks", Requirements{})
-	if strings.Count(task, VerifyProcedure) != 1 {
+	steps, proves, _ := strings.Cut(VerifyProcedure, "4. Run `km prove`")
+	if strings.Count(task, steps) != 1 || proves == "" || strings.Contains(task, "until it reports proved") {
+		t.Fatal(task)
+	}
+	if !strings.Contains(task, "4. Run scripts/verify once to see it pass. Do not run `km prove` yourself: km runs it with your patches after this step") {
 		t.Fatal(task)
 	}
 	for _, want := range []string{"1. Read", "CI workflow", "Makefile", "README", "2. Write", "bounded-output wrapper", "left out", "3. Write at least two", "outside the checkout", "source code a test covers", "test's expectation", "4. Run `km prove`", "until it reports proved"} {
@@ -128,7 +132,7 @@ func TestRequiredSuitesAreRunStepsThatAreNeverLeftOutOrNarrowedEvenWhenVerifyIsT
 
 func TestTheProcedureTellsTheWriterToRecordATestThatAlreadyFailsAsANamedKnownFailure(t *testing.T) {
 	for _, text := range []string{VerifyProcedure, timeBounded} {
-		for _, want := range []string{"already fails on the default branch", "known_failure 'LABEL' 'COMMAND'", "lets verify pass while it fails", "[test] verify_known_failures"} {
+		for _, want := range []string{"already fails on the default branch", "known_failure 'LABEL' 'COMMAND'", "lets verify pass while it fails", "Never write or change [test] verify_known_failures yourself", "only the caller sets that list"} {
 			if !strings.Contains(text, want) {
 				t.Errorf("missing %q", want)
 			}

@@ -28,10 +28,12 @@ type TuneReply struct {
 }
 
 type TuneProof struct {
-	Proved bool
-	Path   string
-	Status string
-	Reason string
+	Proved      bool
+	Path        string
+	Status      string
+	Reason      string
+	NeedsCaller bool
+	Outcome     string
 }
 
 type TuneHooks struct {
@@ -119,6 +121,9 @@ func (e *Engine) Tune(ctx context.Context, hooks TuneHooks) (res Result, err err
 		}
 		if budgetSpent() {
 			return budgetStop()
+		}
+		if err := e.lowDisk(); err != nil {
+			return e.fail(res, err), nil
 		}
 		res.Rounds = round
 		replyPath := e.relf("tune-%d.json", round)
@@ -220,6 +225,13 @@ func (e *Engine) Tune(ctx context.Context, hooks TuneHooks) (res Result, err err
 			lastReason += "; see " + proof.Path
 			feedback = proof.Path
 			e.progress("  %s", lastReason)
+			if proof.NeedsCaller {
+				outcome := VerifyLimit
+				if proof.Outcome != "" {
+					outcome = proof.Outcome
+				}
+				return finishWith(outcome, lastReason)
+			}
 			if budgetSpent() {
 				return budgetStop()
 			}

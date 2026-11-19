@@ -2,6 +2,7 @@ package initrepo
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -25,6 +26,7 @@ cd "$(dirname "$0")/.." || exit 1
 log=$(mktemp "${TMPDIR:-/tmp}/verify.XXXXXX") || exit 1
 
 run() {
+ if [ -n "${KAPELLMEISTER_VERIFY_SKIP:-}" ] && grep -qxF -e "$1" "$KAPELLMEISTER_VERIFY_SKIP" 2>/dev/null; then echo "verify skipped step: $1"; return 0; fi
  sh -c "$2" >"$log" 2>&1
  status=$?
  if [ -n "${KAPELLMEISTER_VERIFY_STEPS:-}" ]; then printf '%s\n' "$1" >>"$KAPELLMEISTER_VERIFY_STEPS"; fi
@@ -47,12 +49,22 @@ known_failure() {
   printf '%s\n' "$1" >>"$KAPELLMEISTER_VERIFY_STEPS"
   printf '%s %s\n' "$outcome" "$1" >>"$KAPELLMEISTER_VERIFY_STEPS.known"
  fi
- echo "known failure $outcome: $1"
+ if [ "$status" -eq 0 ]; then echo "known failure passed: $1"; return 0; fi
+ echo "known failure failed: $1 (exit $status)"
+ echo "--- last 40 lines of $1 ---"
+ tail -n 40 "$log" | cut -c1-300
 }
 
 `
 
 const StepsEnv = loop.VerifyStepsEnv
+const SkipEnv = "KAPELLMEISTER_VERIFY_SKIP"
+
+var setsSkip = regexp.MustCompile(SkipEnv + `:?=`)
+
+func SetsSkip(text string) bool {
+	return setsSkip.MatchString(text)
+}
 
 func RenderStub() string {
 	return scriptPrelude + StubMarker + `

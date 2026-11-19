@@ -1,12 +1,16 @@
 package main
 
 import (
+	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
+	"net"
+	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/jystringfellow/kapellmeister/internal/cao"
 	"github.com/jystringfellow/kapellmeister/internal/initrepo"
@@ -30,16 +34,92 @@ const suiteSourceBreak = "diff --git a/answer.sh b/answer.sh\n--- a/answer.sh\n+
 const suiteTestBreak = "diff --git a/suites/fast.sh b/suites/fast.sh\n--- a/suites/fast.sh\n+++ b/suites/fast.sh\n@@ -1,2 +1,2 @@\n . ./answer.sh\n-test \"$(answer)\" = 42\n+test \"$(answer)\" = 0\n"
 const suiteSlowOnlyBreak = "diff --git a/answer.sh b/answer.sh\n--- a/answer.sh\n+++ b/answer.sh\n@@ -2,2 +2,2 @@\n legacy() { echo 0; }\n-total() { echo 84; }\n+total() { echo 0; }\n"
 
+const suiteHelperEnv = "KM_SUITE_HELPER"
+
+func suiteHelper(mode string) int {
+	fail := func(format string, args ...any) int {
+		fmt.Fprintf(os.Stderr, format+"\n", args...)
+		return 7
+	}
+	needsNetwork := func() error {
+		for _, name := range []string{"http_proxy", "HTTP_PROXY"} {
+			proxy, err := url.Parse(os.Getenv(name))
+			if os.Getenv(name) == "" || err != nil {
+				continue
+			}
+			conn, err := net.DialTimeout("tcp", proxy.Host, time.Second)
+			if err != nil {
+				return fmt.Errorf("proxy %s: %w", proxy.Host, err)
+			}
+			conn.Close()
+		}
+		conn, err := net.DialTimeout("tcp", "192.0.2.1:9", 300*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			return nil
+		}
+		if errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.ENETUNREACH) {
+			return err
+		}
+		return nil
+	}
+	switch mode {
+	case "network":
+		if err := needsNetwork(); err != nil {
+			return fail("no route to a non-loopback address: %v", err)
+		}
+		return 0
+	case "hang":
+		if needsNetwork() != nil {
+			time.Sleep(time.Minute)
+		}
+		return 0
+	case "loopback":
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return fail("loopback listen: %v", err)
+		}
+		defer listener.Close()
+		go func() {
+			if conn, err := listener.Accept(); err == nil {
+				conn.Write([]byte("ok"))
+				conn.Close()
+			}
+		}()
+		conn, err := net.DialTimeout("tcp", listener.Addr().String(), 2*time.Second)
+		if err != nil {
+			return fail("loopback dial: %v", err)
+		}
+		defer conn.Close()
+		reply := make([]byte, 2)
+		if _, err := conn.Read(reply); err != nil || string(reply) != "ok" {
+			return fail("loopback read: %v", err)
+		}
+		return 0
+	}
+	return fail("unknown helper mode %q", mode)
+}
+
+func suiteHelperScript(mode string) string {
+	return suiteHelperEnv + "=" + mode + " \"$(cat suites/helper.path)\"\n"
+}
+
 func suiteFixture(t *testing.T) string {
 	t.Helper()
 	root := tuneFixture(t)
-	network := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { fmt.Fprintln(w, "ok") }))
-	t.Cleanup(network.Close)
+	helper, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
 	proofWrite(t, root, "answer.sh", "answer() { echo 42; }\nlegacy() { echo 0; }\ntotal() { echo 84; }\n", 0644)
 	proofWrite(t, root, "suites/fast.sh", ". ./answer.sh\ntest \"$(answer)\" = 42\n", 0644)
 	proofWrite(t, root, "suites/slow.sh", "sleep "+suiteSlowSleep+"\n. ./answer.sh\ntest \"$(answer)\" -eq 42 && test \"$(total)\" = 84\n", 0644)
-	proofWrite(t, root, "suites/network.url", network.URL+"\n", 0644)
-	proofWrite(t, root, "suites/network.sh", "curl -fsS --max-time 5 \"$(cat suites/network.url)\" >/dev/null\n", 0644)
+	proofWrite(t, root, "suites/helper.path", helper+"\n", 0644)
+	proofWrite(t, root, "suites/network.sh", suiteHelperScript("network"), 0644)
+	proofWrite(t, root, "suites/loopback.sh", suiteHelperScript("loopback"), 0644)
+	proofWrite(t, root, "suites/hang.sh", suiteHelperScript("hang"), 0644)
+	proofWrite(t, root, "suites/once.sh", "if test -e \"$SUITE_ONCE_STATE\"; then exit 0; fi\n: >\"$SUITE_ONCE_STATE\"\necho 'unrelated failure'\nexit 1\n", 0644)
+	proofWrite(t, root, "suites/broken.sh", "echo 'always fails'\nexit 3\n", 0644)
 	proofWrite(t, root, "suites/unit.sh", suiteUnit, 0644)
 	proofWrite(t, root, "suites/flaky.sh", "if test -e \"$SUITE_FLAKY_STATE\"; then exit 0; fi\n: >\"$SUITE_FLAKY_STATE\"\nexit 1\n", 0644)
 	var ci strings.Builder

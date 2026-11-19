@@ -125,6 +125,7 @@ type VerifyResult struct {
 	Output   string
 	Attempts int
 	Known    []KnownFailure
+	Mismatch string
 }
 
 type Verifier func(ctx context.Context, dir string) (VerifyResult, error)
@@ -136,6 +137,7 @@ type Config struct {
 	CAOURL         string
 	StateDir       string
 	ScratchDir     string
+	MinFreeMB      int
 	BlockerPoll    time.Duration
 	GateWhen       string
 	RunID          string
@@ -195,12 +197,15 @@ type Record struct {
 }
 
 const (
-	Approved        = "approved"
-	Untested        = "untested"
-	RoundsExhausted = "rounds_exhausted"
-	BudgetExhausted = "budget_exhausted"
-	Failed          = "failed"
-	VerdictFailed   = "FAILED"
+	Approved            = "approved"
+	Untested            = "untested"
+	RoundsExhausted     = "rounds_exhausted"
+	BudgetExhausted     = "budget_exhausted"
+	VerifyLimit         = "verify_limit"
+	BaselineMismatch    = "baseline_mismatch"
+	BaselineNeedsCaller = "baseline_needs_caller"
+	Failed              = "failed"
+	VerdictFailed       = "FAILED"
 )
 
 type Restore struct {
@@ -220,20 +225,21 @@ type VerifyRetry struct {
 type Result struct {
 	Restores      []Restore     `json:"restores,omitempty"`
 	VerifyRetried []VerifyRetry `json:"verify_retried,omitempty"`
+	failure       error
+	Usage         *Usage         `json:"usage,omitempty"`
+	Lessons       *LessonsReport `json:"lessons,omitempty"`
+	Proposed      []Lesson       `json:"-"`
+	RunID         string         `json:"run_id"`
+	Outcome       string         `json:"outcome"`
+	Rounds        int            `json:"rounds"`
+	Reason        string         `json:"reason,omitempty"`
+	Worktree      string         `json:"worktree"`
+	RunDir        string         `json:"run_dir"`
+
+	MeasurementsNotRun []string `json:"measurements_not_run,omitempty"`
 
 	KnownFailures        []string `json:"known_failures,omitempty"`
 	KnownFailuresPassing []string `json:"known_failures_passing,omitempty"`
-
-	failure  error
-	Usage    *Usage         `json:"usage,omitempty"`
-	Lessons  *LessonsReport `json:"lessons,omitempty"`
-	Proposed []Lesson       `json:"-"`
-	RunID    string         `json:"run_id"`
-	Outcome  string         `json:"outcome"`
-	Rounds   int            `json:"rounds"`
-	Reason   string         `json:"reason,omitempty"`
-	Worktree string         `json:"worktree"`
-	RunDir   string         `json:"run_dir"`
 }
 
 type ActiveStep struct {
@@ -254,6 +260,8 @@ type Engine struct {
 	Meter           UsageMeter
 	usage           Usage
 	gateRound       int
+	measurements    []string
+	measured        int
 	Watcher         Watcher
 	watch           watchState
 	Config          Config
@@ -281,7 +289,9 @@ func (e *Engine) Run(ctx context.Context) (res Result, err error) {
 	defer e.cleanupSnapshot()
 	e.restores, e.verifyRetried, e.knownFailures = nil, nil, nil
 	defer func() {
-		res.KnownFailures, res.KnownFailuresPassing = knownFailureBaseline(e.Config.KnownFailures, e.knownFailures)
+		if res.Outcome != BaselineMismatch {
+			res.KnownFailures, res.KnownFailuresPassing = knownFailureBaseline(e.Config.KnownFailures, e.knownFailures)
+		}
 	}()
 	defer func() { res.Restores, res.VerifyRetried = e.restores, e.verifyRetried }()
 	e.mu.Lock()
@@ -298,7 +308,9 @@ func (e *Engine) Run(ctx context.Context) (res Result, err error) {
 	stopWatcher := e.startWatcher(ctx)
 	defer stopWatcher()
 	e.gateRound = 0
+	e.measurements, e.measured = nil, 0
 	res, err = e.play(ctx)
+	e.reportUnrunMeasurements(&res)
 	if res.Outcome == Failed {
 		res.Reason = cancellationReason(ctx, res.failure)
 	}
@@ -326,6 +338,11 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 		baseline, err := e.runVerify(ctx, 0, baselinePath)
 		if err != nil {
 			return e.fail(res, err), nil
+		}
+		if baseline.Mismatch != "" {
+			res.Outcome, res.Reason = BaselineMismatch, baseline.Mismatch
+			e.progress("  %s", res.Reason)
+			return res, nil
 		}
 		if baseline.ExitCode != 0 {
 			return e.fail(res, fmt.Errorf("verify already fails before any change (exit %d); see %s\n%s", baseline.ExitCode, baselinePath, tail(strings.TrimRight(baseline.Output, "\n"), 20))), nil
@@ -377,6 +394,9 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 	var feedback []string
 	var feedbackGate, feedbackTest string
 	for round := 1; round <= cfg.MaxRounds; round++ {
+		if err := e.lowDisk(); err != nil {
+			return e.fail(res, err), nil
+		}
 		res.Rounds = round
 		summary := e.relf("implement-%d.md", round)
 		if chair, _ := e.resolve("implement", cfg.Chairs.Implementer); implementer != "" && chair != implementerChair {
@@ -409,17 +429,18 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 		if err != nil {
 			return e.fail(res, err), nil
 		}
-		var files, failed, verdicts []string
+		var files, handed, failed, verdicts []string
 		for _, review := range reviews {
-			if _, err := os.Stat(filepath.Join(cfg.Worktree, review.Path)); err == nil {
+			if required, ok := e.readReview(round, review.Path); ok {
 				files = append(files, review.Path)
+				handed = append(handed, required)
 			}
 			if review.Err != nil {
 				failed = append(failed, fmt.Sprintf("%s (%s)", review.Name, review.Chair))
 			}
 			verdicts = append(verdicts, review.Verdict)
 		}
-		feedback = append(append([]string{}, files...), verifyPath)
+		feedback = append(handed, verifyPath)
 		feedbackGate, feedbackTest = "", ""
 		if !gateRuns(cfg.GateWhen, verify.ExitCode == 0, verdicts) {
 			misses++
@@ -451,7 +472,7 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 				return e.fail(res, err), nil
 			}
 			testPath := e.relf("test-%d.md", round)
-			verdict, err := e.testRound(ctx, round, plan, summary, verify, verifyPath, testPath)
+			verdict, err := e.testRound(ctx, round, plan, summary, verify, verifyPath, testPath, e.measurements)
 			if err != nil {
 				var interrupted *testInterruptedError
 				if errors.As(err, &interrupted) {
@@ -475,6 +496,7 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 				}
 				return e.fail(res, err), nil
 			}
+			e.measured = len(e.measurements)
 			if verdict == "APPROVE" {
 				res.Outcome = Approved
 				return res, nil
@@ -520,11 +542,16 @@ func (e *Engine) testerTimeout() time.Duration {
 	return e.Config.StepTimeout
 }
 
-func (e *Engine) testRound(ctx context.Context, round int, plan, summary string, verify VerifyResult, verifyPath, path string) (string, error) {
-	defer e.reportLeftRunning(round)
+func (e *Engine) testRound(ctx context.Context, round int, plan, summary string, verify VerifyResult, verifyPath, path string, measurements []string) (verdict string, err error) {
+	defer func() {
+		e.reportLeftRunning(round)
+		if err == nil && verdict == "APPROVE" {
+			e.clearScratch()
+		}
+	}()
 	errs, err := e.readOnlySteps(ctx, []Step{{
 		Name: "test", Round: round, Chair: *e.Config.Chairs.Tester,
-		Prompt:    testPrompt(e.Config.Task, plan, e.rel("test-plan.md"), summary, e.Config.VerifyCommand, verify, verifyPath, e.Config.ScratchDir, path, e.testerTimeout(), os.Getpid(), e.lessonsFor("test", *e.Config.Chairs.Tester), e.Config.CAOURL, e.Config.StateDir),
+		Prompt:    testPrompt(e.Config.Task, plan, e.rel("test-plan.md"), summary, e.Config.VerifyCommand, verify, verifyPath, e.Config.ScratchDir, path, e.testerTimeout(), os.Getpid(), e.lessonsFor("test", *e.Config.Chairs.Tester), e.Config.CAOURL, e.Config.StateDir, measurements),
 		ReplyPath: path,
 	}})
 	if err != nil {
@@ -1020,6 +1047,12 @@ func (e *Engine) runVerify(ctx context.Context, round int, path string) (VerifyR
 	e.progress("→ %s %s", label("verify", round), e.Config.VerifyCommand)
 	start := time.Now()
 	v, err := e.Verify(ctx, e.Config.Worktree)
+	if err == nil && v.ExitCode == 0 {
+		if v.Mismatch = KnownFailureMismatch(e.Config.KnownFailures, v.Known); v.Mismatch != "" {
+			v.ExitCode = 16
+			v.Output = strings.TrimRight(v.Output, "\n") + "\nverify refused: " + v.Mismatch + "\n"
+		}
+	}
 	code := v.ExitCode
 	rec := Record{RunID: e.Config.RunID, Round: round, Step: verifyStepName(round), DurationMS: time.Since(start).Milliseconds(), ExitCode: &code, Attempts: v.Attempts, Reply: path}
 	if err != nil {
@@ -1202,9 +1235,11 @@ func Serialized(v Verifier, mu *sync.Mutex) Verifier {
 	}
 }
 
+const verifySkipEnv = "KAPELLMEISTER_VERIFY_SKIP"
+
 func CommandVerifier(command string) Verifier {
 	return func(ctx context.Context, dir string) (VerifyResult, error) {
-		cmd := exec.CommandContext(ctx, "sh", "-c", command)
+		cmd := exec.CommandContext(ctx, "sh", "-c", "unset "+verifySkipEnv+"\n"+command)
 		cmd.Dir = dir
 		var known func() []KnownFailure
 		if record, recordErr := os.MkdirTemp("", "km-verify-steps-"); recordErr == nil {

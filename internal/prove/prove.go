@@ -66,14 +66,16 @@ type Result struct {
 	Runs       []RunResult   `json:"runs"`
 	Breaks     []BreakResult `json:"breaks"`
 
-	Flaky    []FlakyStep `json:"flaky,omitempty"`
-	Unbroken []string    `json:"unbroken,omitempty"`
+	Excluded       []loop.Exclusion `json:"excluded,omitempty"`
+	Flaky          []FlakyStep      `json:"flaky,omitempty"`
+	Unbroken       []string         `json:"unbroken,omitempty"`
+	TimeoutMS      int64            `json:"timeout_ms,omitempty"`
+	BreakTimeoutMS int64            `json:"break_timeout_ms,omitempty"`
 
-	KnownFailures        []string `json:"known_failures,omitempty"`
-	KnownFailuresPassing []string `json:"known_failures_passing,omitempty"`
-
-	TimeoutMS      int64 `json:"timeout_ms,omitempty"`
-	BreakTimeoutMS int64 `json:"break_timeout_ms,omitempty"`
+	KnownFailures         []string `json:"known_failures,omitempty"`
+	KnownFailuresPassing  []string `json:"known_failures_passing,omitempty"`
+	KnownFailuresFlaky    []string `json:"known_failures_flaky,omitempty"`
+	KnownFailuresUnlisted []string `json:"known_failures_unlisted,omitempty"`
 }
 
 func Prove(ctx context.Context, options Options) (result Result) {
@@ -129,10 +131,14 @@ func Prove(ctx context.Context, options Options) (result Result) {
 	if strings.TrimPrefix(command, "./") == initrepo.ScriptFile && initrepo.IsStub(string(setup[initrepo.ScriptFile].body)) {
 		return refuse("verify is unfinished: scripts/verify is a stub; write the command, then run km prove")
 	}
+	if initrepo.SetsSkip(command) || initrepo.SetsSkip(string(setup[initrepo.ScriptFile].body)) {
+		return refuse(fmt.Sprintf("verify must not set %s: only km sets it, for its own run without network", initrepo.SkipEnv))
+	}
 	test, err := loop.ResolveTest(root)
 	if err != nil {
 		return refuse(err.Error())
 	}
+	result.Excluded = test.Excluded
 	timeout := options.Timeout
 	if timeout == 0 {
 		timeout = test.Timeout(DefaultTimeout)
@@ -176,13 +182,17 @@ func Prove(ctx context.Context, options Options) (result Result) {
 	knownIn := func(dir string) []loop.KnownFailure {
 		return loop.ReadKnownFailures(filepath.Join(scratch, filepath.Base(dir)+"-steps"))
 	}
+	skip := filepath.Join(scratch, "skip")
+	if err := os.WriteFile(skip, nil, 0600); err != nil {
+		return fail(err)
+	}
 	runVerify := func(dir string, limit time.Duration) (initrepo.VerifyResult, []Step, string, error) {
 		tmp := filepath.Join(scratch, filepath.Base(dir)+"-tmp")
 		if err := os.Mkdir(tmp, 0700); err != nil {
 			return initrepo.VerifyResult{}, nil, "", err
 		}
 		record := filepath.Join(scratch, filepath.Base(dir)+"-steps")
-		prefix := "unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_OBJECT_DIRECTORY\nTMPDIR=" + quote(tmp) + "\n" + initrepo.StepsEnv + "=" + quote(record) + "\nexport TMPDIR " + initrepo.StepsEnv + "\n"
+		prefix := "unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_OBJECT_DIRECTORY\nTMPDIR=" + quote(tmp) + "\n" + initrepo.StepsEnv + "=" + quote(record) + "\n" + initrepo.SkipEnv + "=" + quote(skip) + "\nexport TMPDIR " + initrepo.StepsEnv + " " + initrepo.SkipEnv + "\n"
 		stop, timed := make(chan struct{}), make(chan []Step)
 		go func() { timed <- timeSteps(record, stop) }()
 		run := initrepo.Run(ctx, dir, prefix+command, limit)
@@ -285,20 +295,35 @@ func Prove(ctx context.Context, options Options) (result Result) {
 			}
 		}
 		for _, known := range run.KnownFailures {
-			if !slices.Contains(test.VerifyKnownFailures, known.Label) {
-				return finish("baseline_mismatch", 16, fmt.Sprintf("scripts/verify has a known_failure step %q that [test] verify_known_failures does not list; list it there so the baseline is named, or make it a run step", known.Label))
+			if !slices.Contains(test.VerifyKnownFailures, known.Label) && !slices.Contains(result.KnownFailuresUnlisted, known.Label) {
+				result.KnownFailuresUnlisted = append(result.KnownFailuresUnlisted, known.Label)
 			}
 		}
+	}
+	if len(result.KnownFailuresUnlisted) > 0 {
+		return finish("baseline_mismatch", 16, fmt.Sprintf("scripts/verify has a known_failure step %q that [test] verify_known_failures does not list; list it there so the baseline is named, or make it a run step", result.KnownFailuresUnlisted[0]))
 	}
 	for _, label := range test.VerifyKnownFailures {
 		passes := func(run RunResult) bool {
 			return !slices.ContainsFunc(run.KnownFailures, func(known loop.KnownFailure) bool { return known.Label == label && !known.Passed })
 		}
-		if passes(result.Runs[0]) && passes(result.Runs[1]) {
+		first, second := passes(result.Runs[0]), passes(result.Runs[1])
+		switch {
+		case first && second:
 			result.KnownFailuresPassing = append(result.KnownFailuresPassing, label)
-		} else {
+		case first != second:
+			result.KnownFailuresFlaky = append(result.KnownFailuresFlaky, label)
+			result.KnownFailures = append(result.KnownFailures, label)
+		default:
 			result.KnownFailures = append(result.KnownFailures, label)
 		}
+	}
+	if len(result.KnownFailuresPassing) > 0 {
+		var reasons []string
+		for _, label := range result.KnownFailuresPassing {
+			reasons = append(reasons, fmt.Sprintf("known failure %q passed in both clean runs: remove %q from [test] verify_known_failures and make its step a run step", label, label))
+		}
+		return finish("baseline_mismatch", 16, strings.Join(reasons, "; "))
 	}
 	breakTimeout := timeout
 	if len(options.Breaks) > 0 {

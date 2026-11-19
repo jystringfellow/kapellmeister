@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -41,11 +42,21 @@ func proveAt(args []string, stdout, stderr io.Writer) error {
 	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	result := prove.Prove(ctx, prove.Options{Worktree: *worktree, Breaks: patches, Timeout: *timeout})
+	if result.Status == "timeout" {
+		limit := fmt.Sprint(time.Duration(result.TimeoutMS) * time.Millisecond)
+		if slices.ContainsFunc(result.Breaks, func(b prove.BreakResult) bool { return b.Status == "timeout" }) {
+			limit = fmt.Sprintf("%s, the break timeout", time.Duration(result.BreakTimeoutMS)*time.Millisecond)
+		}
+		result.Reason += fmt.Sprintf(" at %s; pass -timeout D, or set [test] verify_timeout, to give verify longer", limit)
+	}
 	if *asJSON {
 		if err := json.NewEncoder(stdout).Encode(result); err != nil {
 			return err
 		}
 	} else {
+		for _, entry := range result.Excluded {
+			fmt.Fprintf(stdout, "verify excludes %s\n", entry)
+		}
 		printProof(stdout, result)
 	}
 	if result.ExitStatus != 0 {
@@ -80,7 +91,10 @@ func printProofDetail(out io.Writer, r prove.Result, detail bool) {
 	if r.BreakTimeoutMS > r.TimeoutMS {
 		fmt.Fprintf(out, "break timeout raised from %s to %s: twice the slowest clean run\n", time.Duration(r.TimeoutMS)*time.Millisecond, time.Duration(r.BreakTimeoutMS)*time.Millisecond)
 	}
-	printKnownFailures(out, "", r.KnownFailures, r.KnownFailuresPassing)
+	printKnownFailures(out, "", r.KnownFailures, nil)
+	for _, label := range r.KnownFailuresFlaky {
+		fmt.Fprintf(out, "known failure %q is flaky: it failed in one clean run and passed in the other\n", label)
+	}
 	for _, b := range r.Breaks {
 		fmt.Fprintf(out, "break %s: %s", b.Patch, b.Status)
 		if b.ExitCode != nil && b.DurationMS != nil {

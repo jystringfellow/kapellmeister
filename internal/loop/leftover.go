@@ -19,7 +19,7 @@ func leftRunning(scratch string) []leftProcess {
 	if scratch == "" {
 		return nil
 	}
-	file, err := os.OpenFile(filepath.Join(scratch, "pids"), os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	file, err := os.OpenFile(filepath.Join(scratch, scratchPids), os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil
 	}
