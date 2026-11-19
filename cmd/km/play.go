@@ -104,11 +104,11 @@ func playCommand(args []string) error {
 		Config: loop.Config{
 			ScratchDir: scratch, MinFreeMB: s.MinFreeMB, CAOURL: s.CAOURL, StateDir: loop.StateDir(), RunID: runID, Task: text, Worktree: standing.Worktree, Chairs: chairs, GateWhen: firstNonEmpty(standing.GateWhen, s.GateWhen),
 			Lessons: s.Lessons, LessonsTimeout: s.LessonsTimeout,
-			LearnedBudget: s.LearnedBudget, BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, KnownFailures: tested.VerifyKnownFailures, CheckCommand: checkCmd, StrictCommand: tested.Strict, StrictReadyCommand: tested.StrictReady,
+			LearnedBudget: s.LearnedBudget, BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, KnownFailures: tested.VerifyKnownFailures, CheckCommand: checkCmd, StrictCommand: tested.Strict, StrictReadyCommand: tested.StrictReady, StrictTimeout: tested.StrictLimit(s.Timeout),
 		},
 		Watcher: loop.CAOWatcher{Client: client, Session: standing.Session},
 		Stepper: ensemble.NewOccupantStepper(loop.CAOStepper{Client: client, Session: standing.Session}, standing),
-		Verify:  loop.Retrying(loop.CommandVerifier(verifyCmd), s.VerifyRetries), Progress: os.Stdout,
+		Verify:  loop.Retrying(loop.CommandVerifierWithin(verifyCmd, tested.Timeout(s.Timeout)), s.VerifyRetries), Progress: os.Stdout,
 	})
 	if err != nil {
 		return err
