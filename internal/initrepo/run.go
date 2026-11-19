@@ -80,7 +80,7 @@ func Run(parent context.Context, root, command string, timeout time.Duration) Ve
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	result := VerifyResult{Command: command, Status: "passed"}
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	cmd := exec.CommandContext(ctx, "sh", "-c", "unset "+SkipEnv+"\n"+command)
 	cmd.Dir = root
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {

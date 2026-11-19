@@ -75,12 +75,18 @@ func playCommand(args []string) error {
 	if err != nil {
 		return err
 	}
+	printExcluded(os.Stdout, standing.Worktree)
 	runID := newRunID()
 	runDir := filepath.Join(loop.StateDir(), "runs", runID)
+	if err := loop.LowDisk(s.MinFreeMB, standing.Worktree, loop.StateDir()); err != nil {
+		return err
+	}
 	scratch, err := prepareScratch(loop.StateDir(), runID)
 	if err != nil {
 		return err
 	}
+	approved := false
+	defer func() { settleScratch(os.Stderr, loop.StateDir(), runID, approved) }()
 	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	client := newClient(s.CAOURL, s, os.Stdout)
@@ -96,7 +102,7 @@ func playCommand(args []string) error {
 	sum, err := runEnsemble(ctx, ensembleRun{
 		Command: "play", RunID: runID, StateDir: runDir, Ensemble: standing.Ensemble, Meter: loop.NewLogMeter(),
 		Config: loop.Config{
-			ScratchDir: scratch, CAOURL: s.CAOURL, StateDir: loop.StateDir(), RunID: runID, Task: text, Worktree: standing.Worktree, Chairs: chairs, GateWhen: firstNonEmpty(standing.GateWhen, s.GateWhen),
+			ScratchDir: scratch, MinFreeMB: s.MinFreeMB, CAOURL: s.CAOURL, StateDir: loop.StateDir(), RunID: runID, Task: text, Worktree: standing.Worktree, Chairs: chairs, GateWhen: firstNonEmpty(standing.GateWhen, s.GateWhen),
 			Lessons: s.Lessons, LessonsTimeout: s.LessonsTimeout,
 			LearnedBudget: s.LearnedBudget, BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, CheckCommand: checkCmd, StrictCommand: levels.Strict, StrictReadyCommand: levels.StrictReady,
 		},
@@ -107,6 +113,7 @@ func playCommand(args []string) error {
 	if err != nil {
 		return err
 	}
+	approved = sum.Outcome == loop.Approved
 	return finishRun(os.Stdout, sum)
 }
 

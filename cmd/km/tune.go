@@ -33,7 +33,7 @@ const tuneDerivedBudgetCeiling = 8 * time.Hour
 
 func tuneBudget(limit time.Duration, required tune.Requirements) (breaks int, whole, budget time.Duration) {
 	breaks = max(2, len(required.Suites))
-	whole = time.Duration(2+breaks) * limit
+	whole = time.Duration(3+breaks) * limit
 	return breaks, whole, whole + tuneChairAllowance
 }
 
@@ -41,6 +41,7 @@ const tuneSummaryWidth = 80
 
 var tuneClock = time.Now
 var runTuneProof = prove.Prove
+var runTuneOffline = prove.Offline
 
 const tuneSubjects = "subjects:\n  verify  write and prove this repository's verify"
 
@@ -77,6 +78,8 @@ type tuneSummary struct {
 	Required      []string            `json:"required,omitempty"`
 	TimeBounded   bool                `json:"time_bounded,omitempty"`
 	TimeoutRaised *tuneRaise          `json:"timeout_raised,omitempty"`
+	Excluded      []loop.Exclusion    `json:"excluded,omitempty"`
+	NoNetwork     string              `json:"no_network_method,omitempty"`
 	prove.Result
 }
 
@@ -144,6 +147,9 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 		if err := json.Unmarshal(data, &launch); err != nil {
 			return err
 		}
+		if err := loop.ValidRunID(launch.RunID); err != nil {
+			return fmt.Errorf("detached launch %s: %w", *launchPath, err)
+		}
 		*worktree = launch.Checkout
 	}
 	root, err := worktreeDir(*worktree)
@@ -192,15 +198,15 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 		*verifyTimeout = test.Timeout(defaultTuneVerifyTimeout)
 	}
 	breaks, whole, derived := tuneBudget(*verifyTimeout, required)
-	sized := fmt.Sprintf("-budget %s holds a whole proof at the %s verify timeout: two clean runs and %d break runs can take %s, plus %s for the chairs", *budget, *verifyTimeout, breaks, whole, tuneChairAllowance)
+	sized := fmt.Sprintf("-budget %s holds a whole proof at the %s verify timeout: two clean runs, %d break runs and one run without network can take %s, plus %s for the chairs", *budget, *verifyTimeout, breaks, whole, tuneChairAllowance)
 	switch {
 	case !flagsSet(fs)["budget"] && derived > tuneDerivedBudgetCeiling:
 		return fmt.Errorf("a whole proof at the %s verify timeout needs a budget of %s, more than the %s km sets by itself: pass -budget to allow it, or -verify-timeout for a shorter limit", *verifyTimeout, derived, tuneDerivedBudgetCeiling)
 	case !flagsSet(fs)["budget"]:
 		*budget = max(*budget, derived)
-		sized = fmt.Sprintf("budget %s: a whole proof at the %s verify timeout is two clean runs and %d break runs (%s), plus %s for the chairs; pass -budget to set it yourself", *budget, *verifyTimeout, breaks, whole, tuneChairAllowance)
+		sized = fmt.Sprintf("budget %s: a whole proof at the %s verify timeout is two clean runs, %d break runs and one run without network (%s), plus %s for the chairs; pass -budget to set it yourself", *budget, *verifyTimeout, breaks, whole, tuneChairAllowance)
 	case *budget < derived:
-		sized = fmt.Sprintf("-budget %s does not hold a whole proof at the %s verify timeout: two clean runs and %d break runs can take %s, plus %s for the chairs; -budget %s would", *budget, *verifyTimeout, breaks, whole, tuneChairAllowance, derived)
+		sized = fmt.Sprintf("-budget %s does not hold a whole proof at the %s verify timeout: two clean runs, %d break runs and one run without network can take %s, plus %s for the chairs; -budget %s would", *budget, *verifyTimeout, breaks, whole, tuneChairAllowance, derived)
 	}
 	s, err := loop.LoadSettings(loop.Home(), root)
 	if err != nil {
@@ -215,6 +221,9 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 	}
 	chairs, err := tuneChairs(s, roles)
 	if err != nil {
+		return err
+	}
+	if err := loop.LowDisk(s.MinFreeMB, root, s.WorktreeDir, loop.StateDir()); err != nil {
 		return err
 	}
 	if ctx == nil {
@@ -237,7 +246,7 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 	writingChair, _ := s.Policy.Chair("implement", chairs.Implementer, "", 0)
 	readingChair, _ := s.Policy.Chair("review", chairs.Reviewers[0], "", 0)
 	runID := newRunID()
-	if launch.RunID != "" {
+	if *launchPath != "" {
 		runID = launch.RunID
 	}
 	runDir, err := filepath.Abs(filepath.Join(loop.StateDir(), "runs", runID))
@@ -284,6 +293,8 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 	if err != nil {
 		return err
 	}
+	approved := false
+	defer func() { settleScratch(stderr, loop.StateDir(), runID, approved) }()
 	patches := filepath.Join(scratch, "breaks")
 	if err := os.MkdirAll(patches, 0755); err != nil {
 		return err
@@ -315,13 +326,14 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 	}()
 	sum, err := runEnsemble(ctx, ensembleRun{
 		Command: "tune verify", RunID: runID, StateDir: runDir, Meter: loop.NewLogMeter(), Tune: hooks, TuneSummary: summary, TuneCheckout: root,
-		Config:  loop.Config{RunID: runID, Task: task, Worktree: wt, Chairs: chairs, MaxRounds: s.Rounds, Budget: *budget, BudgetStarted: started, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, Policy: &s.Policy, CAOURL: s.CAOURL, StateDir: loop.StateDir(), ScratchDir: scratch, BlockerPoll: s.BlockerPoll},
+		Config:  loop.Config{RunID: runID, Task: task, Worktree: wt, Chairs: chairs, MaxRounds: s.Rounds, Budget: *budget, BudgetStarted: started, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, Policy: &s.Policy, CAOURL: s.CAOURL, StateDir: loop.StateDir(), ScratchDir: scratch, MinFreeMB: s.MinFreeMB, BlockerPoll: s.BlockerPoll},
 		Watcher: loop.CAOWatcher{Client: client, Session: podium.SessionName}, Stepper: loop.CAOStepper{Client: client, Session: podium.SessionName}, Progress: progress,
 	})
 	if err != nil {
 		return err
 	}
 	keep = sum.Outcome != loop.Approved
+	approved = !keep
 	if *asJSON {
 		if err := json.NewEncoder(stdout).Encode(sum); err != nil {
 			return err
@@ -342,6 +354,11 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 	summary := &tuneSummary{Required: required.Suites, TimeBounded: required.TimeBounded, LeftOut: []loop.TuneOmission{}, Breaks: []tuneBreak{}, Result: prove.Result{Worktree: wt, Status: "not_run", Reason: "no proof was run", Runs: []prove.RunResult{}, Breaks: []prove.BreakResult{}}}
 	var proved *tuneProved
 	currentRound := 0
+	var savedExcluded []loop.Exclusion
+	if saved, err := loop.ResolveTest(wt); err == nil {
+		savedExcluded = saved.Excluded
+	}
+	summary.Excluded = slices.Clone(savedExcluded)
 	savedTimeout := ""
 	if saved, err := loop.ResolveTest(wt); err == nil {
 		savedTimeout = saved.VerifyTimeout
@@ -380,13 +397,13 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 				return "", err
 			}
 			if config, err := os.ReadFile(filepath.Join(wt, loop.ConfigFile)); err == nil {
-				state[loop.ConfigFile] = fmt.Sprintf("%x", sha256.Sum256([]byte(loop.WithoutVerifyTimeout(string(config)))))
+				state[loop.ConfigFile] = fmt.Sprintf("%x", sha256.Sum256([]byte(loop.WithoutExcluded(loop.WithoutVerifyTimeout(string(config))))))
 			}
 			b, err := json.Marshal(state)
 			return string(b), err
 		},
 		Prove: func(ctx context.Context, reply loop.TuneReply, round int) (loop.TuneProof, error) {
-			summary.Command, summary.LeftOut = reply.Command, reply.LeftOut
+			summary.Command, summary.LeftOut, summary.NoNetwork = reply.Command, reply.LeftOut, ""
 			recordPatches := []string{}
 			patchDigests := []string{}
 			for i, patch := range reply.Patches {
@@ -416,6 +433,15 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 					unrecorded = fmt.Sprintf("[test] verify_timeout must stay %q: only the caller and km change it", savedTimeout)
 				}
 			}
+			script, _ := os.ReadFile(filepath.Join(wt, initrepo.ScriptFile))
+			if unrecorded == "" && writtenErr == nil && !slices.Equal(written.Excluded, savedExcluded) {
+				unrecorded = "[[test.excluded]] is written by km from its own run without network, not by the tune: leave it as it was"
+			}
+			for _, entry := range savedExcluded {
+				if unrecorded == "" && slices.Contains(tune.StepLabels(string(script)), entry.Suite) {
+					unrecorded = fmt.Sprintf("suite %q is excluded from verify (%s: %s): remove its step from scripts/verify; only the caller removes an entry from [[test.excluded]]", entry.Suite, entry.Reason, entry.Evidence)
+				}
+			}
 			var result prove.Result
 			needsCaller := false
 			switch {
@@ -441,8 +467,8 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 						break
 					}
 					_, _, derived := tuneBudget(2*verifyTimeout, required)
-					if left, whole := max(deadline.Sub(tuneClock()), 0).Round(time.Second), time.Duration(2+len(recordPatches))*2*verifyTimeout; whole > left {
-						result.Reason += fmt.Sprintf("; %s, but the timeout is not raised to %s: a proof at that limit can take %s (two clean runs and %d break runs) and %s of the budget is left: pass -verify-timeout %s, which sizes the budget at %s, and pass -budget for more", why, 2*verifyTimeout, whole, len(recordPatches), left, 2*verifyTimeout, derived)
+					if left, whole := max(deadline.Sub(tuneClock()), 0).Round(time.Second), time.Duration(3+len(recordPatches))*2*verifyTimeout; whole > left {
+						result.Reason += fmt.Sprintf("; %s, but the timeout is not raised to %s: a proof at that limit can take %s (two clean runs, %d break runs and one run without network) and %s of the budget is left: pass -verify-timeout %s, which sizes the budget at %s, and pass -budget for more", why, 2*verifyTimeout, whole, len(recordPatches), left, 2*verifyTimeout, derived)
 						needsCaller = true
 						break
 					}
@@ -457,6 +483,54 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 					}
 					savedTimeout = verifyTimeout.String()
 					result = runTuneProof(ctx, prove.Options{Worktree: wt, Breaks: recordPatches, Timeout: verifyTimeout})
+				}
+				if result.Status == "proved" {
+					limit := verifyTimeout
+					var labels []string
+					for i, run := range result.Runs {
+						limit = max(limit, 2*time.Duration(run.DurationMS)*time.Millisecond)
+						for _, step := range run.Steps {
+							if i == 0 {
+								labels = append(labels, step.Label)
+							}
+						}
+					}
+					offline := runTuneOffline(ctx, prove.OfflineOptions{Worktree: wt, Timeout: limit, Labels: labels})
+					summary.NoNetwork = offline.Method
+					commands := tune.StepCommands(string(script))
+					var reasons []string
+					added := false
+					for _, failed := range offline.Failed {
+						if slices.Contains(written.VerifyRequired, failed.Suite) {
+							reasons = append(reasons, fmt.Sprintf("required suite %q passes with network and fails on a clean copy without it (%s): %s; a required suite cannot be excluded: make it pass without network, or stop requiring it", failed.Suite, offline.Method, failed.Evidence))
+							continue
+						}
+						savedExcluded = append(savedExcluded, loop.Exclusion{Suite: failed.Suite, Reason: "network", Method: offline.Method, Evidence: failed.Evidence, Run: commands[failed.Suite]})
+						added = true
+						reasons = append(reasons, fmt.Sprintf("suite %q passes with network and fails on a clean copy without it (%s): %s; km recorded it in [[test.excluded]]: remove its step from scripts/verify", failed.Suite, offline.Method, failed.Evidence))
+					}
+					if added {
+						if err := loop.SetExcluded(wt, savedExcluded); err != nil {
+							return loop.TuneProof{}, err
+						}
+						summary.Excluded = slices.Clone(savedExcluded)
+					}
+					if offline.Partial {
+						reasons = append(reasons, fmt.Sprintf("the run wrapper in scripts/verify does not skip the steps named in the file $%s points at, as the wrapper km init writes does, so the steps after that one were not tried without network", initrepo.SkipEnv))
+					}
+					switch offline.Status {
+					case "passed":
+						fmt.Fprintf(progress, "verify passes on a clean copy without network (%s)\n", offline.Method)
+					case "failed":
+						result.Status, result.ExitStatus, result.Reason = "needs_network", 18, strings.Join(reasons, "; ")
+					default:
+						advice := map[string]string{
+							"flaky":   "; nothing was recorded for it: make the step reliable, or leave it out as flaky with this evidence",
+							"failure": "; nothing was recorded for it: it passed in the proof, so make the step reliable, or leave it out with this evidence",
+						}[offline.Status]
+						reasons = append(reasons, fmt.Sprintf("without network (%s): %s%s", offline.Method, offline.Reason, advice))
+						result.Status, result.ExitStatus, result.Reason = "no_network_"+offline.Status, 18, strings.Join(reasons, "; ")
+					}
 				}
 			}
 			current, err := readTuneSetup(wt)
@@ -780,6 +854,12 @@ func printTune(w io.Writer, s ensembleSummary, detail bool) {
 	}
 	if t.TimeBounded {
 		fmt.Fprintln(w, "  time-bounded: tests that do not fit the time target may be left out")
+	}
+	for _, entry := range t.Excluded {
+		fmt.Fprintf(w, "  excluded: %s\n", entry)
+	}
+	if t.NoNetwork != "" {
+		fmt.Fprintf(w, "  network cut by: %s\n", t.NoNetwork)
 	}
 	if raised := t.TimeoutRaised; raised != nil {
 		to := time.Duration(raised.ToMS) * time.Millisecond

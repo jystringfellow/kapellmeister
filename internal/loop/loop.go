@@ -137,6 +137,7 @@ type Config struct {
 	CAOURL             string
 	StateDir           string
 	ScratchDir         string
+	MinFreeMB          int
 	BlockerPoll        time.Duration
 	GateWhen           string
 	RunID              string
@@ -380,6 +381,9 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 	var feedback []string
 	var feedbackGate, feedbackTest string
 	for round := 1; round <= cfg.MaxRounds; round++ {
+		if err := e.lowDisk(); err != nil {
+			return e.fail(res, err), nil
+		}
 		res.Rounds = round
 		summary := e.relf("implement-%d.md", round)
 		if chair, _ := e.resolve("implement", cfg.Chairs.Implementer); implementer != "" && chair != implementerChair {
@@ -525,8 +529,13 @@ func (e *Engine) testerTimeout() time.Duration {
 	return e.Config.StepTimeout
 }
 
-func (e *Engine) testRound(ctx context.Context, round int, plan, summary string, verify VerifyResult, verifyPath, path string, measurements []string) (string, error) {
-	defer e.reportLeftRunning(round)
+func (e *Engine) testRound(ctx context.Context, round int, plan, summary string, verify VerifyResult, verifyPath, path string, measurements []string) (verdict string, err error) {
+	defer func() {
+		e.reportLeftRunning(round)
+		if err == nil && verdict == "APPROVE" {
+			e.clearScratch()
+		}
+	}()
 	errs, err := e.readOnlySteps(ctx, []Step{{
 		Name: "test", Round: round, Chair: *e.Config.Chairs.Tester,
 		Prompt:    testPrompt(e.Config.Task, plan, e.rel("test-plan.md"), summary, e.Config.VerifyCommand, verify, verifyPath, e.Config.ScratchDir, path, e.testerTimeout(), os.Getpid(), e.lessonsFor("test", *e.Config.Chairs.Tester), e.Config.CAOURL, e.Config.StateDir, measurements),
@@ -1204,9 +1213,11 @@ func Serialized(v Verifier, mu *sync.Mutex) Verifier {
 	}
 }
 
+const verifySkipEnv = "KAPELLMEISTER_VERIFY_SKIP"
+
 func CommandVerifier(command string) Verifier {
 	return func(ctx context.Context, dir string) (VerifyResult, error) {
-		cmd := exec.CommandContext(ctx, "sh", "-c", command)
+		cmd := exec.CommandContext(ctx, "sh", "-c", "unset "+verifySkipEnv+"\n"+command)
 		cmd.Dir = dir
 		out, err := cmd.CombinedOutput()
 		if ctx.Err() != nil {

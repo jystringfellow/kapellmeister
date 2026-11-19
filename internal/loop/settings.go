@@ -36,6 +36,8 @@ type TestConfig struct {
 	VerifyTimeout     string   `toml:"verify_timeout"`
 	Strict            string   `toml:"strict"`
 	StrictReady       string   `toml:"strict_ready"`
+
+	Excluded []Exclusion `toml:"excluded"`
 }
 
 func (t TestConfig) Timeout(fallback time.Duration) time.Duration {
@@ -73,6 +75,7 @@ type RunConfig struct {
 	ReplyGrace         string `toml:"reply_grace"`
 	PreflightTimeout   string `toml:"preflight_timeout"`
 	PreflightRetryWait string `toml:"preflight_retry_wait"`
+	MinFreeMB          *int   `toml:"min_free_mb"`
 }
 
 const (
@@ -182,6 +185,7 @@ type Settings struct {
 	ReplyGrace         time.Duration          `json:"reply_grace"`
 	PreflightTimeout   time.Duration          `json:"preflight_timeout"`
 	PreflightRetryWait time.Duration          `json:"preflight_retry_wait"`
+	MinFreeMB          int                    `json:"min_free_mb"`
 	Chairs             map[string]string      `json:"chairs"`
 	Agents             []string               `json:"agents"`
 	Ensembles          map[string]Ensemble    `json:"ensembles,omitempty"`
@@ -246,6 +250,7 @@ func DefaultSettings() Settings {
 		ReplyGrace:         15 * time.Minute,
 		PreflightTimeout:   4 * time.Minute,
 		PreflightRetryWait: 20 * time.Second,
+		MinFreeMB:          DefaultMinFreeMB,
 		Chairs:             map[string]string{},
 		Defined:            BuiltInAgents(),
 		Policy:             DefaultPolicy(),
@@ -394,6 +399,9 @@ func decodeConfig(data []byte, name string) (loadedConfig, error) {
 	if cfg.Test.StrictReady != "" && cfg.Test.Strict == "" {
 		return cfg, fmt.Errorf("%s: test.strict_ready: needs test.strict, the command the probe is for", name)
 	}
+	if err := ValidExclusions(cfg.Test.Excluded); err != nil {
+		return cfg, fmt.Errorf("%s: test.excluded: %w", name, err)
+	}
 	if value := cfg.Test.VerifyTimeout; value != "" {
 		if parsed, err := time.ParseDuration(value); err != nil || parsed <= 0 {
 			return cfg, fmt.Errorf("%s: test.verify_timeout: %q is not a duration above 0 such as \"20m\"", name, value)
@@ -524,6 +532,12 @@ func (s *Settings) applyRun(layer loadedConfig) error {
 			return fmt.Errorf("%s: run.verify_retries: must be 0 or more", layer.name)
 		}
 		s.VerifyRetries = *r.VerifyRetries
+	}
+	if r.MinFreeMB != nil {
+		if *r.MinFreeMB < 0 {
+			return fmt.Errorf("%s: run.min_free_mb: must be 0 (off) or more", layer.name)
+		}
+		s.MinFreeMB = *r.MinFreeMB
 	}
 	for _, d := range []struct {
 		key   string

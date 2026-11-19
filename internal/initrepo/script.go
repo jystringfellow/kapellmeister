@@ -2,6 +2,7 @@ package initrepo
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -23,6 +24,7 @@ cd "$(dirname "$0")/.." || exit 1
 log=$(mktemp "${TMPDIR:-/tmp}/verify.XXXXXX") || exit 1
 
 run() {
+ if [ -n "${KAPELLMEISTER_VERIFY_SKIP:-}" ] && grep -qxF -e "$1" "$KAPELLMEISTER_VERIFY_SKIP" 2>/dev/null; then echo "verify skipped step: $1"; return 0; fi
  sh -c "$2" >"$log" 2>&1
  status=$?
  if [ -n "${KAPELLMEISTER_VERIFY_STEPS:-}" ]; then printf '%s\n' "$1" >>"$KAPELLMEISTER_VERIFY_STEPS"; fi
@@ -39,6 +41,13 @@ run() {
 `
 
 const StepsEnv = "KAPELLMEISTER_VERIFY_STEPS"
+const SkipEnv = "KAPELLMEISTER_VERIFY_SKIP"
+
+var setsSkip = regexp.MustCompile(SkipEnv + `:?=`)
+
+func SetsSkip(text string) bool {
+	return setsSkip.MatchString(text)
+}
 
 func RenderStub() string {
 	return scriptPrelude + StubMarker + `

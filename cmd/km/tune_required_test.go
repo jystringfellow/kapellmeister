@@ -35,6 +35,7 @@ func TestTuneRefusesAVerifyThatLeavesOutARequiredSuiteAndPublishesNothing(t *tes
 func TestWithoutAnyFlagTuneRaisesTheVerifyTimeoutInsteadOfNarrowingAndSavesItForLaterProofs(t *testing.T) {
 	root := suiteFixture(t)
 	f := &tuneCAO{writer: suiteWriter("", "fast", "slow")}
+	offlinePasses(t)
 	code, out := tuneCall(t, "verify", "-worktree", root, "-cao", f.serve(t).URL, "-verify-timeout", "200ms", "-json")
 	var sum struct {
 		RunID string `json:"run_id"`
