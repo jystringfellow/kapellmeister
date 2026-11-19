@@ -329,3 +329,27 @@ func TestACommandThatIsOnlySpacesOrACommentIsRefusedWhenTheConfigLoads(t *testin
 		t.Fatal(test, err)
 	}
 }
+
+func TestStrictFailsWhenItRunsAKnownFailureStepTheListDoesNotName(t *testing.T) {
+	const record = `printf 'failed %s\n' LABEL >>"$KAPELLMEISTER_VERIFY_STEPS.known"`
+	e, _, _, _ := strictEngine(t, strings.ReplaceAll(record, "LABEL", "hidden"), "")
+	e.Config.KnownFailures = []string{"legacy"}
+	listed := func(context.Context, string) (VerifyResult, error) {
+		return VerifyResult{Known: []KnownFailure{{Label: "legacy"}, {Label: "other"}}}, nil
+	}
+	e.Verify = listed
+	e.Config.KnownFailures = []string{"legacy", "other"}
+	res := run(t, e)
+	if res.Outcome != StrictFailed || res.Strict == nil || res.Strict.Status != "failed" || res.Strict.ExitCode != 16 {
+		t.Fatalf("got %+v %+v", res, res.Strict)
+	}
+	if want := `known_failure step "hidden" is not listed in [test] verify_known_failures`; !strings.Contains(res.Reason, want) || !strings.Contains(res.Strict.Reason, want) {
+		t.Fatalf("%q %q", res.Reason, res.Strict.Reason)
+	}
+	e, _, _, _ = strictEngine(t, strings.ReplaceAll(record, "LABEL", "legacy"), "")
+	e.Verify = listed
+	e.Config.KnownFailures = []string{"legacy", "other"}
+	if res := run(t, e); res.Outcome != Approved || res.Strict.Status != "passed" {
+		t.Fatalf("got %+v %+v", res, res.Strict)
+	}
+}

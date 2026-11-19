@@ -176,8 +176,20 @@ func (e *Engine) strict(ctx context.Context, res Result) Result {
 	if err := settle("strict", v, err); err != nil {
 		return notRun("strict did not finish: " + cancellationReason(ctx, err))
 	}
+	if v.ExitCode == 0 {
+		var ran []string
+		for _, label := range cfg.KnownFailures {
+			if slices.ContainsFunc(v.Known, func(known KnownFailure) bool { return known.Label == label }) {
+				ran = append(ran, label)
+			}
+		}
+		if mismatch := KnownFailureMismatch(ran, v.Known); mismatch != "" {
+			v.ExitCode, strict.ExitCode = 16, 16
+			strict.Reason = mismatch
+		}
+	}
 	see := "see " + reply
-	if strict.Reply == "" {
+	if strict.Reason != "" {
 		see = strict.Reason
 	}
 	if v.ExitCode != 0 {

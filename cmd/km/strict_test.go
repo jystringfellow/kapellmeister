@@ -247,3 +247,16 @@ func TestProveSaysTheProbeIsBrokenWhenItsScriptIsMissing(t *testing.T) {
 		t.Fatal(report)
 	}
 }
+
+func TestWaitExitsSixteenForARunThatEndedOnABaselineMismatchAlsoAsJSON(t *testing.T) {
+	code, _, result := knownRun(t, suiteSteps("run 'fast' 'true'\n"), knownConfig)
+	if code != 16 || strictWaitStatus(t, result) != 16 {
+		t.Fatal(code, result)
+	}
+	var out, diag bytes.Buffer
+	err := waitCommand([]string{"-json", result["run_id"].(string), loop.StateDir()}, &out, &diag)
+	var status *exitStatusError
+	if !errors.As(err, &status) || status.code != 16 || !strings.Contains(out.String(), `"exit_status":16`) {
+		t.Fatal(err, out.String())
+	}
+}

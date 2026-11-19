@@ -37,6 +37,8 @@ type RunResult struct {
 	Output     string `json:"output"`
 	Steps      []Step `json:"steps,omitempty"`
 	FailedStep string `json:"failed_step,omitempty"`
+
+	KnownFailures []loop.KnownFailure `json:"known_failures,omitempty"`
 }
 
 type Step struct {
@@ -76,6 +78,11 @@ type Result struct {
 	Unbroken       []string         `json:"unbroken,omitempty"`
 	TimeoutMS      int64            `json:"timeout_ms,omitempty"`
 	BreakTimeoutMS int64            `json:"break_timeout_ms,omitempty"`
+
+	KnownFailures         []string `json:"known_failures,omitempty"`
+	KnownFailuresPassing  []string `json:"known_failures_passing,omitempty"`
+	KnownFailuresFlaky    []string `json:"known_failures_flaky,omitempty"`
+	KnownFailuresUnlisted []string `json:"known_failures_unlisted,omitempty"`
 }
 
 func Prove(ctx context.Context, options Options) (result Result) {
@@ -197,6 +204,9 @@ func Prove(ctx context.Context, options Options) (result Result) {
 		return refuse("scratch copies must live outside the checkout")
 	}
 	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'" }
+	knownIn := func(dir string) []loop.KnownFailure {
+		return loop.ReadKnownFailures(filepath.Join(scratch, filepath.Base(dir)+"-steps"))
+	}
 	skip := filepath.Join(scratch, "skip")
 	if err := os.WriteFile(skip, nil, 0600); err != nil {
 		return fail(err)
@@ -283,7 +293,7 @@ func Prove(ctx context.Context, options Options) (result Result) {
 		if err != nil {
 			return fail(err)
 		}
-		result.Runs = append(result.Runs, RunResult{Name: name, Status: run.Status, ExitCode: run.ExitCode, DurationMS: run.DurationMS, Output: run.Output, Steps: steps, FailedStep: failedStep})
+		result.Runs = append(result.Runs, RunResult{Name: name, Status: run.Status, ExitCode: run.ExitCode, DurationMS: run.DurationMS, Output: run.Output, Steps: steps, FailedStep: failedStep, KnownFailures: knownIn(dir)})
 		if ctx.Err() != nil {
 			return finish("interrupted", 1, "interrupted")
 		}
@@ -326,6 +336,43 @@ func Prove(ctx context.Context, options Options) (result Result) {
 			}
 			return finish("suite_not_run", 14, reason)
 		}
+	}
+	for _, run := range result.Runs {
+		for _, label := range test.VerifyKnownFailures {
+			if !slices.ContainsFunc(run.KnownFailures, func(known loop.KnownFailure) bool { return known.Label == label }) {
+				return finish("baseline_mismatch", 16, fmt.Sprintf("known failure %q is listed in [test] verify_known_failures but no known_failure step with that label ran in %s; give it its own step in scripts/verify: known_failure '%s' 'COMMAND', or remove it from the list; a scripts/verify written before km had known_failure must add that function from the wrapper km init writes", label, run.Name, label))
+			}
+		}
+		for _, known := range run.KnownFailures {
+			if !slices.Contains(test.VerifyKnownFailures, known.Label) && !slices.Contains(result.KnownFailuresUnlisted, known.Label) {
+				result.KnownFailuresUnlisted = append(result.KnownFailuresUnlisted, known.Label)
+			}
+		}
+	}
+	if len(result.KnownFailuresUnlisted) > 0 {
+		return finish("baseline_mismatch", 16, fmt.Sprintf("scripts/verify has a known_failure step %q that [test] verify_known_failures does not list; list it there so the baseline is named, or make it a run step", result.KnownFailuresUnlisted[0]))
+	}
+	for _, label := range test.VerifyKnownFailures {
+		passes := func(run RunResult) bool {
+			return !slices.ContainsFunc(run.KnownFailures, func(known loop.KnownFailure) bool { return known.Label == label && !known.Passed })
+		}
+		first, second := passes(result.Runs[0]), passes(result.Runs[1])
+		switch {
+		case first && second:
+			result.KnownFailuresPassing = append(result.KnownFailuresPassing, label)
+		case first != second:
+			result.KnownFailuresFlaky = append(result.KnownFailuresFlaky, label)
+			result.KnownFailures = append(result.KnownFailures, label)
+		default:
+			result.KnownFailures = append(result.KnownFailures, label)
+		}
+	}
+	if len(result.KnownFailuresPassing) > 0 {
+		var reasons []string
+		for _, label := range result.KnownFailuresPassing {
+			reasons = append(reasons, fmt.Sprintf("known failure %q passed in both clean runs: remove %q from [test] verify_known_failures and make its step a run step", label, label))
+		}
+		return finish("baseline_mismatch", 16, strings.Join(reasons, "; "))
 	}
 	breakTimeout := timeout
 	if len(options.Breaks) > 0 {

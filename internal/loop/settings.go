@@ -37,7 +37,8 @@ type TestConfig struct {
 	Strict            string   `toml:"strict"`
 	StrictReady       string   `toml:"strict_ready"`
 
-	Excluded []Exclusion `toml:"excluded"`
+	VerifyKnownFailures []string    `toml:"verify_known_failures"`
+	Excluded            []Exclusion `toml:"excluded"`
 }
 
 func (t TestConfig) Timeout(fallback time.Duration) time.Duration {
@@ -403,6 +404,14 @@ func decodeConfig(data []byte, name string) (loadedConfig, error) {
 	}
 	if cfg.Test.StrictReady != "" && cfg.Test.Strict == "" {
 		return cfg, fmt.Errorf("%s: test.strict_ready: needs test.strict, the command the probe is for", name)
+	}
+	if err := ValidSuites(cfg.Test.VerifyKnownFailures); err != nil {
+		return cfg, fmt.Errorf("%s: test.verify_known_failures: %w", name, err)
+	}
+	for _, label := range cfg.Test.VerifyKnownFailures {
+		if slices.Contains(cfg.Test.VerifyRequired, label) {
+			return cfg, fmt.Errorf("%s: test.verify_known_failures: %q is also in verify_required: a required suite cannot be expected to fail", name, label)
+		}
 	}
 	if err := ValidExclusions(cfg.Test.Excluded); err != nil {
 		return cfg, fmt.Errorf("%s: test.excluded: %w", name, err)

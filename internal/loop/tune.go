@@ -33,6 +33,7 @@ type TuneProof struct {
 	Status      string
 	Reason      string
 	NeedsCaller bool
+	Outcome     string
 }
 
 type TuneHooks struct {
@@ -225,7 +226,11 @@ func (e *Engine) Tune(ctx context.Context, hooks TuneHooks) (res Result, err err
 			feedback = proof.Path
 			e.progress("  %s", lastReason)
 			if proof.NeedsCaller {
-				return finishWith(VerifyLimit, lastReason)
+				outcome := VerifyLimit
+				if proof.Outcome != "" {
+					outcome = proof.Outcome
+				}
+				return finishWith(outcome, lastReason)
 			}
 			if budgetSpent() {
 				return budgetStop()

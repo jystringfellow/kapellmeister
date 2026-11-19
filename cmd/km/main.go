@@ -29,7 +29,7 @@ import (
 
 const usage = `usage:
   km init [-worktree DIR] [-dry-run] [-json] [-verify CMD] [-check CMD] [-no-run] [-timeout D]   write config and an unfinished verify, or wrap -verify CMD
-  km tune verify [-worktree DIR] [-require SUITE]... [-time-bounded] [-detach] [-timeout D] [-json] [-again] [-guide]   write and prove verify
+  km tune verify [-worktree DIR] [-require SUITE]... [-known-failure LABEL]... [-time-bounded] [-detach] [-timeout D] [-json] [-again] [-guide]   write and prove verify
   km prove [-worktree DIR] [-level verify|strict] [-break PATCH]... [-timeout D] [-json]   prove verify or strict on clean copies and broken code
   km run -repo DIR [-base BRANCH] (-task TEXT | -task-file FILE) [-ensemble NAME] [-detach] [flags]   one ensemble
   km audition -worktree DIR [-ensemble NAME] [-keep]       boot the ensemble, cue every chair once, tear down
@@ -444,7 +444,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 	if err != nil {
 		return err
 	}
-	levels, err := loop.ResolveTest(wt)
+	tested, err := loop.ResolveTest(wt)
 	if err != nil {
 		return err
 	}
@@ -542,7 +542,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		Config: loop.Config{
 			ScratchDir: scratch, MinFreeMB: s.MinFreeMB, CAOURL: s.CAOURL, StateDir: loop.StateDir(), RunID: runID, Task: text, Worktree: wt, Chairs: seated, GateWhen: s.GateWhen,
 			Lessons: s.Lessons, LessonsTimeout: s.LessonsTimeout,
-			LearnedBudget: s.LearnedBudget, BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, CheckCommand: checkCmd, StrictCommand: levels.Strict, StrictReadyCommand: levels.StrictReady, Policy: &policy,
+			LearnedBudget: s.LearnedBudget, BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, KnownFailures: tested.VerifyKnownFailures, CheckCommand: checkCmd, StrictCommand: tested.Strict, StrictReadyCommand: tested.StrictReady, Policy: &policy,
 		},
 		Watcher: loop.CAOWatcher{Client: client, Session: podium.SessionName},
 		Stepper: loop.CAOStepper{Client: client, Session: podium.SessionName}, Verify: loop.Retrying(loop.CommandVerifier(verifyCmd), s.VerifyRetries), Progress: stdout,
@@ -1199,6 +1199,7 @@ func finishRunDetail(w io.Writer, sum ensembleSummary, detail bool) error {
 		}
 		fmt.Fprintf(w, "  retried   %s passed only on attempt %d: an earlier attempt failed, so a test may be flaky\n", step, r.Attempts)
 	}
+	printKnownFailures(w, "  ", sum.KnownFailures, sum.KnownFailuresPassing)
 	if sum.Tune != nil {
 		printTune(w, sum, detail)
 		if sum.Outcome != loop.Approved {
@@ -1220,7 +1221,7 @@ func finishRunDetail(w io.Writer, sum ensembleSummary, detail bool) error {
 	switch sum.Outcome {
 	case loop.Approved:
 		return nil
-	case loop.StrictFailed, loop.StrictNotRun:
+	case loop.StrictFailed, loop.StrictNotRun, loop.BaselineMismatch:
 		return &exitStatusError{code: outcomeExitStatus(sum.Outcome)}
 	}
 	return errNotApproved
@@ -1234,6 +1235,8 @@ func outcomeExitStatus(outcome string) int {
 		return 5
 	case loop.StrictNotRun:
 		return 6
+	case loop.BaselineMismatch:
+		return 16
 	}
 	return 1
 }

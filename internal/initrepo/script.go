@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/jystringfellow/kapellmeister/internal/loop"
 )
 
 const StubMarker = ": km-unfinished-verify"
@@ -38,9 +40,24 @@ run() {
  fi
 }
 
+known_failure() {
+ sh -c "$2" >"$log" 2>&1
+ status=$?
+ outcome=failed
+ if [ "$status" -eq 0 ]; then outcome=passed; fi
+ if [ -n "${KAPELLMEISTER_VERIFY_STEPS:-}" ]; then
+  printf '%s\n' "$1" >>"$KAPELLMEISTER_VERIFY_STEPS"
+  printf '%s %s\n' "$outcome" "$1" >>"$KAPELLMEISTER_VERIFY_STEPS.known"
+ fi
+ if [ "$status" -eq 0 ]; then echo "known failure passed: $1"; return 0; fi
+ echo "known failure failed: $1 (exit $status)"
+ echo "--- last 40 lines of $1 ---"
+ tail -n 40 "$log" | cut -c1-300
+}
+
 `
 
-const StepsEnv = "KAPELLMEISTER_VERIFY_STEPS"
+const StepsEnv = loop.VerifyStepsEnv
 const SkipEnv = "KAPELLMEISTER_VERIFY_SKIP"
 
 var setsSkip = regexp.MustCompile(SkipEnv + `:?=`)
