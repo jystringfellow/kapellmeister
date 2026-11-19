@@ -58,19 +58,20 @@ func ValidSuites(names []string) error {
 }
 
 type RunConfig struct {
-	BaseBranch       string `toml:"base"`
-	WorktreeDir      string `toml:"worktree_dir"`
-	TrustFolder      *bool  `toml:"trust_folder"`
-	LearnedBudget    *int   `toml:"learned_budget"`
-	Lessons          *bool  `toml:"lessons"`
-	LessonsTimeout   string `toml:"lessons_timeout"`
-	BlockerPoll      string `toml:"blocker_poll"`
-	Rounds           *int   `toml:"rounds"`
-	VerifyRetries    *int   `toml:"verify_retries"`
-	Timeout          string `toml:"timeout"`
-	ReplyGrace       string `toml:"reply_grace"`
-	PreflightTimeout string `toml:"preflight_timeout"`
-	MinFreeMB        *int   `toml:"min_free_mb"`
+	BaseBranch         string `toml:"base"`
+	WorktreeDir        string `toml:"worktree_dir"`
+	TrustFolder        *bool  `toml:"trust_folder"`
+	LearnedBudget      *int   `toml:"learned_budget"`
+	Lessons            *bool  `toml:"lessons"`
+	LessonsTimeout     string `toml:"lessons_timeout"`
+	BlockerPoll        string `toml:"blocker_poll"`
+	Rounds             *int   `toml:"rounds"`
+	VerifyRetries      *int   `toml:"verify_retries"`
+	Timeout            string `toml:"timeout"`
+	ReplyGrace         string `toml:"reply_grace"`
+	PreflightTimeout   string `toml:"preflight_timeout"`
+	PreflightRetryWait string `toml:"preflight_retry_wait"`
+	MinFreeMB          *int   `toml:"min_free_mb"`
 }
 
 const (
@@ -161,29 +162,30 @@ type ReportPrice struct {
 }
 
 type Settings struct {
-	ReportPrices     map[string]ReportPrice `json:"report_prices,omitempty"`
-	ReportDirs       []string               `json:"report_dirs,omitempty"`
-	Defined          Agents                 `json:"-"`
-	BaseBranch       string                 `json:"base_branch"`
-	WorktreeDir      string                 `json:"worktree_dir"`
-	TrustFolder      bool                   `json:"trust_folder"`
-	LearnedBudget    int                    `json:"learned_budget"`
-	Lessons          bool                   `json:"lessons"`
-	LessonsTimeout   time.Duration          `json:"lessons_timeout"`
-	BlockerPoll      time.Duration          `json:"blocker_poll"`
-	GateWhen         string                 `json:"gate_when"`
-	Files            []string               `json:"files"`
-	CAOURL           string                 `json:"cao_url"`
-	Rounds           int                    `json:"rounds"`
-	VerifyRetries    int                    `json:"verify_retries"`
-	Timeout          time.Duration          `json:"timeout"`
-	ReplyGrace       time.Duration          `json:"reply_grace"`
-	PreflightTimeout time.Duration          `json:"preflight_timeout"`
-	MinFreeMB        int                    `json:"min_free_mb"`
-	Chairs           map[string]string      `json:"chairs"`
-	Agents           []string               `json:"agents"`
-	Ensembles        map[string]Ensemble    `json:"ensembles,omitempty"`
-	Policy           Policy                 `json:"policy"`
+	ReportPrices       map[string]ReportPrice `json:"report_prices,omitempty"`
+	ReportDirs         []string               `json:"report_dirs,omitempty"`
+	Defined            Agents                 `json:"-"`
+	BaseBranch         string                 `json:"base_branch"`
+	WorktreeDir        string                 `json:"worktree_dir"`
+	TrustFolder        bool                   `json:"trust_folder"`
+	LearnedBudget      int                    `json:"learned_budget"`
+	Lessons            bool                   `json:"lessons"`
+	LessonsTimeout     time.Duration          `json:"lessons_timeout"`
+	BlockerPoll        time.Duration          `json:"blocker_poll"`
+	GateWhen           string                 `json:"gate_when"`
+	Files              []string               `json:"files"`
+	CAOURL             string                 `json:"cao_url"`
+	Rounds             int                    `json:"rounds"`
+	VerifyRetries      int                    `json:"verify_retries"`
+	Timeout            time.Duration          `json:"timeout"`
+	ReplyGrace         time.Duration          `json:"reply_grace"`
+	PreflightTimeout   time.Duration          `json:"preflight_timeout"`
+	PreflightRetryWait time.Duration          `json:"preflight_retry_wait"`
+	MinFreeMB          int                    `json:"min_free_mb"`
+	Chairs             map[string]string      `json:"chairs"`
+	Agents             []string               `json:"agents"`
+	Ensembles          map[string]Ensemble    `json:"ensembles,omitempty"`
+	Policy             Policy                 `json:"policy"`
 }
 
 func (s Settings) WithEnsemble(name string) (Settings, error) {
@@ -232,21 +234,22 @@ func UserConfigPath(home string) string {
 
 func DefaultSettings() Settings {
 	return Settings{
-		LearnedBudget:    defaultLearnedBudget,
-		Lessons:          false,
-		LessonsTimeout:   DefaultLessonsTimeout,
-		BlockerPoll:      20 * time.Second,
-		GateWhen:         GateWhenAny,
-		CAOURL:           "http://127.0.0.1:9889",
-		Rounds:           3,
-		VerifyRetries:    1,
-		Timeout:          60 * time.Minute,
-		ReplyGrace:       15 * time.Minute,
-		PreflightTimeout: 4 * time.Minute,
-		MinFreeMB:        DefaultMinFreeMB,
-		Chairs:           map[string]string{},
-		Defined:          BuiltInAgents(),
-		Policy:           DefaultPolicy(),
+		LearnedBudget:      defaultLearnedBudget,
+		Lessons:            false,
+		LessonsTimeout:     DefaultLessonsTimeout,
+		BlockerPoll:        20 * time.Second,
+		GateWhen:           GateWhenAny,
+		CAOURL:             "http://127.0.0.1:9889",
+		Rounds:             3,
+		VerifyRetries:      1,
+		Timeout:            60 * time.Minute,
+		ReplyGrace:         15 * time.Minute,
+		PreflightTimeout:   4 * time.Minute,
+		PreflightRetryWait: 20 * time.Second,
+		MinFreeMB:          DefaultMinFreeMB,
+		Chairs:             map[string]string{},
+		Defined:            BuiltInAgents(),
+		Policy:             DefaultPolicy(),
 	}
 }
 
@@ -536,6 +539,7 @@ func (s *Settings) applyRun(layer loadedConfig) error {
 		{"timeout", r.Timeout, &s.Timeout},
 		{"reply_grace", r.ReplyGrace, &s.ReplyGrace},
 		{"preflight_timeout", r.PreflightTimeout, &s.PreflightTimeout},
+		{"preflight_retry_wait", r.PreflightRetryWait, &s.PreflightRetryWait},
 	} {
 		if d.value == "" {
 			continue

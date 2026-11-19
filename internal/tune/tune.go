@@ -9,7 +9,10 @@ import (
 const VerifyProcedure = `1. Read what the repository already says about passing: CI workflow files, a Makefile or task runner, the README's test instructions, km init's hints.
 2. Write the command into scripts/verify, keeping the bounded-output wrapper. This verify mirrors CI and may take as long as CI: run every suite CI requires and report the measured time. Speed is the job of check, so leave nothing out to save time. Leave a test out only for an observed reason: it failed or hung in a run made during this tune (say which run and what it printed); or it needs something the clean copy cannot have (network, a service, a credential, another machine). A test that looks timing-dependent is not a reason. Each omission says which of those reasons applies, with its evidence, what was left out and how to run it by hand: a flaky verify is worse than a narrower one. Every verify runs on a clean copy: dependency installation counts, so use the lockfile and the package manager's cache.
 3. Write at least two break patches outside the checkout: one that breaks source code a test covers, one that breaks a test's expectation.
-4. Run ` + "`km prove`" + ` with those patches until it reports proved. If it cannot be proved, say why.`
+` + provesByHand
+
+const provesByHand = "4. Run `km prove` with those patches until it reports proved. If it cannot be proved, say why."
+const kmProves = "4. Run scripts/verify once to see it pass. Do not run `km prove` yourself: km runs it with your patches after this step, where it has the time, and sends the result back when it is not proved. If verify cannot pass, say why."
 
 const mirrorsCI = "This verify mirrors CI and may take as long as CI: run every suite CI requires and report the measured time. Speed is the job of check, so leave nothing out to save time. "
 const timeTarget = "Aim for about two minutes on a clean copy and never more than five; report the measured time. When the whole suite fits that target, the verify runs the whole suite; narrow it only when it does not fit. When CI takes longer, choose the fast checks CI runs (format, lint, type check, build) plus unit tests for the code most often changed or a fast marked subset. Set verify_time_bounded = true in [test]. "
@@ -64,5 +67,5 @@ func (r Requirements) ReviewRules() string {
 }
 
 func Task(checkout, hints, command, patches string, required Requirements) string {
-	return fmt.Sprintf("Tune this repository's verify.\nCheckout: %s\nHints from km init:\n%s\nCurrent verify: %s\nBreak patch directory: %s\n\n%s\n\nOnly scripts/verify and .kapellmeister/config.toml may change in the checkout. Keep the bounded-output wrapper and remove the unfinished marker. Set [test] verify to scripts/verify so later runs use that wrapper. Keep break patches in the directory above. Leave changes uncommitted.\nThe conductor runs km prove itself; a chair's approval cannot prove the result.\n", checkout, hints, command, patches, required.Procedure())
+	return fmt.Sprintf("Tune this repository's verify.\nCheckout: %s\nHints from km init:\n%s\nCurrent verify: %s\nBreak patch directory: %s\n\n%s\n\nOnly scripts/verify and .kapellmeister/config.toml may change in the checkout. Keep the bounded-output wrapper and remove the unfinished marker. Set [test] verify to scripts/verify so later runs use that wrapper. Keep break patches in the directory above. Leave changes uncommitted.\nThe conductor runs km prove itself; a chair's approval cannot prove the result.\n", checkout, hints, command, patches, strings.Replace(required.Procedure(), provesByHand, kmProves, 1))
 }

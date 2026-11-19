@@ -524,7 +524,7 @@ func TestDetachedTuneKeepsRefusalsAndPreflightFailuresInTheForeground(t *testing
 	}
 }
 
-func TestTheGuideAndTheTaskUseExactlyTheSameProcedure(t *testing.T) {
+func TestTheGuideAndTheTaskUseTheSameProcedureExceptThatKmRunsTheProofInTheTask(t *testing.T) {
 	code, out := tuneCall(t, "verify", "-guide")
 	if code != 0 || out != tune.VerifyProcedure+"\n" {
 		t.Fatal(code, out)
@@ -548,7 +548,8 @@ func TestTheGuideAndTheTaskUseExactlyTheSameProcedure(t *testing.T) {
 	if err := json.Unmarshal(data, &config); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(config.Task, tune.VerifyProcedure) != 1 {
+	steps, _, _ := strings.Cut(tune.VerifyProcedure, "4. Run `km prove`")
+	if strings.Count(config.Task, steps) != 1 || !strings.Contains(config.Task, "Do not run `km prove` yourself") {
 		t.Fatal(config.Task)
 	}
 }
@@ -942,7 +943,7 @@ func TestTuneProofReuseRequiresIdenticalConfigModesAndOrderedBreakPatchContents(
 				}
 				return prove.Result{Status: "proved"}
 			}
-			hooks, _, err := tuneHooks(root, root, head, runID, t.TempDir(), dir, setup, &bytes.Buffer{}, time.Minute, time.Now().Add(30*time.Minute), tune.Requirements{})
+			hooks, _, err := tuneHooks(root, root, head, runID, t.TempDir(), dir, setup, &bytes.Buffer{}, time.Minute, true, time.Now().Add(30*time.Minute), tune.Requirements{})
 			if err != nil {
 				t.Fatal(err)
 			}

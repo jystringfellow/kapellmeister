@@ -28,10 +28,11 @@ type TuneReply struct {
 }
 
 type TuneProof struct {
-	Proved bool
-	Path   string
-	Status string
-	Reason string
+	Proved      bool
+	Path        string
+	Status      string
+	Reason      string
+	NeedsCaller bool
 }
 
 type TuneHooks struct {
@@ -223,6 +224,9 @@ func (e *Engine) Tune(ctx context.Context, hooks TuneHooks) (res Result, err err
 			lastReason += "; see " + proof.Path
 			feedback = proof.Path
 			e.progress("  %s", lastReason)
+			if proof.NeedsCaller {
+				return finishWith(VerifyLimit, lastReason)
+			}
 			if budgetSpent() {
 				return budgetStop()
 			}

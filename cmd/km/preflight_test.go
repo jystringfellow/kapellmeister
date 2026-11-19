@@ -99,7 +99,7 @@ func TestAnInterruptedPreflightReportsTeardownAndPrintsNoAttachHints(t *testing.
 			os.Stderr = stderr
 			defer func() { os.Stderr = original }()
 			out, err := captureStdout(t, func() error {
-				return preflight(ctx, cao.NewClient(srv.URL), t.TempDir(), time.Minute, loop.Chair{Provider: "a"})
+				return preflight(ctx, cao.NewClient(srv.URL), t.TempDir(), time.Minute, 0, loop.Chair{Provider: "a"})
 			})
 			if !errors.Is(err, context.Canceled) {
 				t.Errorf("error = %v", err)
@@ -159,7 +159,7 @@ func TestPreflightPrintsWhenASeatWasRetried(t *testing.T) {
 			}))
 			defer srv.Close()
 			output, err := captureStdout(t, func() error {
-				return preflight(context.Background(), cao.NewClient(srv.URL), dir, time.Minute, loop.Chair{Provider: "a"})
+				return preflight(context.Background(), cao.NewClient(srv.URL), dir, time.Minute, 0, loop.Chair{Provider: "a"})
 			})
 			if (err != nil) != blocked {
 				t.Errorf("error %v", err)
@@ -179,7 +179,7 @@ func TestAnInterruptedPreflightCommandReturnsTheSignalNotContextCanceled(t *test
 	ctx, cancel := context.WithCancelCause(context.Background())
 	cancel(&loop.SignalError{Signal: os.Interrupt})
 	output, err := captureStdout(t, func() error {
-		return preflight(ctx, cao.NewClient("http://127.0.0.1:1"), t.TempDir(), time.Minute, loop.Chair{Provider: "a"})
+		return preflight(ctx, cao.NewClient("http://127.0.0.1:1"), t.TempDir(), time.Minute, 0, loop.Chair{Provider: "a"})
 	})
 	if err == nil || err.Error() != "interrupted by SIGINT" || !errors.Is(err, context.Canceled) {
 		t.Errorf("error %v; output %s", err, output)
@@ -229,7 +229,7 @@ func TestPreflightExplainsATimeoutInPlainWordsAndNamesTheSession(t *testing.T) {
 				if command {
 					return preflightCommand([]string{"-worktree", root, "-cao", srv.URL, "-timeout", "1s"})
 				}
-				return preflight(context.Background(), cao.NewClient(srv.URL), root, time.Second, loop.Chair{Provider: "test", Profile: "mock"})
+				return preflight(context.Background(), cao.NewClient(srv.URL), root, time.Second, 0, loop.Chair{Provider: "test", Profile: "mock"})
 			})
 			if err == nil {
 				t.Fatal(out)
@@ -252,7 +252,7 @@ func TestPreflightKeepsTheMessageOfANonTimeoutFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 	out, err := captureStdout(t, func() error {
-		return preflight(context.Background(), cao.NewClient(srv.URL), t.TempDir(), time.Second, loop.Chair{Provider: "a"})
+		return preflight(context.Background(), cao.NewClient(srv.URL), t.TempDir(), time.Second, 0, loop.Chair{Provider: "a"})
 	})
 	want := "preflight failed for 1 chair(s):\n  a:: resolve it with `tmux attach -t preflight-fake`, then detach with Ctrl-b d"
 	if err == nil || err.Error() != want || !strings.Contains(out, "BLOCKED a: (") || !strings.Contains(out, "): POST /terminals/run-step: HTTP 400: check failed\n") {
@@ -321,7 +321,7 @@ func TestPreflightReportsTheSecondAttemptAfterATimeout(t *testing.T) {
 			}))
 			defer srv.Close()
 			out, err := captureStdout(t, func() error {
-				return preflight(context.Background(), cao.NewClient(srv.URL), dir, time.Second, loop.Chair{Provider: "codex"})
+				return preflight(context.Background(), cao.NewClient(srv.URL), dir, time.Second, 0, loop.Chair{Provider: "codex"})
 			})
 			if calls != 2 || (err == nil) != pass {
 				t.Fatal(calls, out, err)
@@ -349,8 +349,18 @@ func TestTuneVerifyReportsATimeoutRetry(t *testing.T) {
 	}))
 	defer srv.Close()
 	var out strings.Builder
-	err := tuneSeat(context.Background(), cao.NewClient(srv.URL), t.TempDir(), time.Second, &out, loop.Chair{Provider: "codex"})
+	err := tuneSeat(context.Background(), cao.NewClient(srv.URL), t.TempDir(), time.Second, 0, &out, loop.Chair{Provider: "codex"})
 	if err == nil || !strings.Contains(out.String(), "first attempt also timed out and was retried once") {
 		t.Fatal(out.String(), err)
+	}
+}
+
+func TestThePreflightLineSaysWhenAFastFailureWasRetriedAfterAWaitAndWhatTheFailureWas(t *testing.T) {
+	waited := loop.PreflightResult{OK: true, Retried: true, RetryWaitMS: 20000, RetryWaitError: "policy is still loading"}
+	if got, want := timeoutRetryNote(waited, time.Minute), "; first attempt failed (policy is still loading), retried after waiting 20s"; got != want {
+		t.Fatalf("note = %q", got)
+	}
+	if got := timeoutRetryNote(loop.PreflightResult{OK: true}, time.Minute); got != "" {
+		t.Fatalf("note = %q", got)
 	}
 }
