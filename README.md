@@ -1045,7 +1045,7 @@ JSON summary carries `strict` (`status` of `passed`, `failed` or `not_run`, `com
 copies, then every break patch must make it fail. `scripts/strict` is copied into the clean copies
 with the config and `scripts/verify`, so it may be uncommitted, and a break patch may not touch
 it. The probe runs first in its own clean copy; when it fails the result is `strict_not_run`
-(exit 16), never `proved`. `[test] verify_required` applies to the verify level only.
+(exit 17), never `proved`. `[test] verify_required` applies to the verify level only.
 `km tune strict` does not exist yet; write `scripts/strict` by hand and prove it.
 
 The writer keeps the bounded-output wrapper and writes at least two break patches outside the
@@ -1150,7 +1150,7 @@ that raised it, and the JSON carries `timeout_ms` and `break_timeout_ms`.
 | 13 | A break patch left verify passing |
 | 14 | A required suite's step did not run in a clean run |
 | 15 | A required suite has no break patch that makes verify fail in its step |
-| 16 | `-level strict` only: the `strict_ready` probe failed, so strict was not run |
+| 17 | `-level strict` only: the `strict_ready` probe failed, so strict was not run |
 
 `-level` chooses the command to prove: `verify` (the default) or `strict`. `-timeout D` is a positive limit per verify run; it defaults to `[test] verify_timeout`, then `10m`. Output names each clean run and
 patch, reports exit codes and durations, and bounds verify output to 40 lines of 300 characters.

@@ -252,7 +252,7 @@ func Prove(ctx context.Context, options Options) (result Result) {
 			if probe.Status == "timed_out" {
 				outcome = "timed out at " + timeout.String()
 			}
-			return finish("strict_not_run", 16, fmt.Sprintf("strict not run: %s %s: %s", test.StrictReady, outcome, bounded(probe.Output)))
+			return finish("strict_not_run", 17, fmt.Sprintf("strict not run: %s %s: %s", test.StrictReady, outcome, bounded(probe.Output)))
 		}
 	}
 	required := test.VerifyRequired

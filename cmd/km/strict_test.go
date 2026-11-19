@@ -147,13 +147,13 @@ func TestProveAtTheStrictLevelRefusesWhenNoStrictCommandIsConfiguredOrTheLevelIs
 func TestProveSaysStrictNotRunWhenTheProbeFailsAndThatIsNotAProof(t *testing.T) {
 	root := strictProofFixture(t, "strict = 'scripts/strict'\nstrict_ready = 'echo no device attached; exit 3'\n", "slow")
 	report := proofJSON(t, root, "-level", "strict", "-break", suitePatch(t, "slow.patch", suiteSlowOnlyBreak))
-	if report.ExitStatus != 16 || report.Status != "strict_not_run" || len(report.Runs) != 0 {
+	if report.ExitStatus != 17 || report.Status != "strict_not_run" || len(report.Runs) != 0 {
 		t.Fatal(report)
 	}
 	if !strings.Contains(report.Reason, "strict not run: echo no device attached; exit 3 exited 3: no device attached") {
 		t.Fatal(report.Reason)
 	}
-	if code, out := proofCall(t, root, "-level", "strict"); code != 16 || strings.Contains(out, "proved") || !strings.Contains(out, "strict_not_run: strict not run") {
+	if code, out := proofCall(t, root, "-level", "strict"); code != 17 || strings.Contains(out, "proved") || !strings.Contains(out, "strict_not_run: strict not run") {
 		t.Fatal(code, out)
 	}
 }
