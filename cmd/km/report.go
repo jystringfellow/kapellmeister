@@ -26,21 +26,21 @@ import (
 
 type reportRun struct {
 	*ReportCost
-	Retries       int         `json:"retries,omitempty"`
-	Restores      int         `json:"restores,omitempty"`
-	VerifyRetried int         `json:"verify_retried,omitempty"`
-	Command       string      `json:"command,omitempty"`
-	RunID         string      `json:"run_id"`
-	Path          string      `json:"path"`
-	Started       *time.Time  `json:"started,omitempty"`
-	Repository    string      `json:"repository,omitempty"`
-	Ensemble      string      `json:"ensemble,omitempty"`
-	Outcome       string      `json:"outcome,omitempty"`
-	Rounds        *int        `json:"rounds,omitempty"`
-	DurationMS    *int64      `json:"duration_ms,omitempty"`
-	Reason        string      `json:"reason,omitempty"`
-	Usage         reportUsage `json:"usage"`
-	Conflict      bool        `json:"conflict,omitempty"`
+	Retries       int                `json:"retries,omitempty"`
+	Restores      int                `json:"restores,omitempty"`
+	VerifyRetried []loop.VerifyRetry `json:"verify_retried,omitempty"`
+	Command       string             `json:"command,omitempty"`
+	RunID         string             `json:"run_id"`
+	Path          string             `json:"path"`
+	Started       *time.Time         `json:"started,omitempty"`
+	Repository    string             `json:"repository,omitempty"`
+	Ensemble      string             `json:"ensemble,omitempty"`
+	Outcome       string             `json:"outcome,omitempty"`
+	Rounds        *int               `json:"rounds,omitempty"`
+	DurationMS    *int64             `json:"duration_ms,omitempty"`
+	Reason        string             `json:"reason,omitempty"`
+	Usage         reportUsage        `json:"usage"`
+	Conflict      bool               `json:"conflict,omitempty"`
 	quality       int
 	state         *runState
 	roughStart    bool
@@ -54,7 +54,7 @@ type reportTotals struct {
 	UnpricedModels      []string                    `json:"unpriced_models,omitempty"`
 	Retries             int                         `json:"retries,omitempty"`
 	Restores            int                         `json:"restores,omitempty"`
-	VerifyRetried       int                         `json:"verify_retried,omitempty"`
+	VerifyRetriedRuns   int                         `json:"verify_retried_runs,omitempty"`
 	Usage               reportUsageTotal            `json:"usage"`
 	EnsembleUsage       map[string]reportUsageTotal `json:"ensemble_usage"`
 	RepositoryUsage     map[string]reportUsageTotal `json:"repository_usage"`
@@ -142,8 +142,8 @@ func reportCommand(args []string, stdout, stderr io.Writer) error {
 		if run.Retries > 0 {
 			report.Totals.Retries++
 		}
-		if run.VerifyRetried > 0 {
-			report.Totals.VerifyRetried++
+		if len(run.VerifyRetried) > 0 {
+			report.Totals.VerifyRetriedRuns++
 		}
 		report.Totals.Usage.add(run.Usage)
 		addReportGroupUsage(report.Totals.EnsembleUsage, reportKnown(run.Ensemble), run.Usage)
@@ -255,7 +255,7 @@ func readReportRun(dir *os.File, hasResult, hasTelemetry, hasCurrent, hasConfig 
 		run.Repository, run.Ensemble = recorded.Repository, recorded.Ensemble
 		run.Command = recorded.Command
 		run.Restores = len(recorded.Restores)
-		run.VerifyRetried = len(recorded.VerifyRetried)
+		run.VerifyRetried = recorded.VerifyRetried
 		for _, restore := range recorded.Restores {
 			if restore.Outcome == "retried" {
 				run.Retries++
@@ -494,8 +494,8 @@ func printReport(stdout io.Writer, report runReport) error {
 	if report.Totals.Retries > 0 {
 		fmt.Fprintf(w, "retried: %d\n", report.Totals.Retries)
 	}
-	if report.Totals.VerifyRetried > 0 {
-		fmt.Fprintf(w, "verify retried: %d\n", report.Totals.VerifyRetried)
+	if report.Totals.VerifyRetriedRuns > 0 {
+		fmt.Fprintf(w, "verify retried: %d\n", report.Totals.VerifyRetriedRuns)
 	}
 	conflicts := 0
 	for _, run := range report.Runs {

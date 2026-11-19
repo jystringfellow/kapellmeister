@@ -95,10 +95,10 @@ func TestReportCountsRunsWhereVerifyPassedOnlyAfterARetryUnderItsOwnNameApartFro
 	writeFile(t, filepath.Join(root, "flaky-run", "result.json"), string(data))
 	doc := reportJSON(t, root)
 	totals := doc["totals"].(map[string]any)
-	if totals["verify_retried"] != float64(1) || totals["retries"] != nil {
+	if totals["verify_retried_runs"] != float64(1) || totals["retries"] != nil {
 		t.Fatalf("%v", totals)
 	}
-	if run := doc["runs"].([]any)[0].(map[string]any); run["verify_retried"] != float64(2) || run["retries"] != nil {
+	if run := doc["runs"].([]any)[0].(map[string]any); len(run["verify_retried"].([]any)) != 2 || run["retries"] != nil {
 		t.Fatalf("%v", run)
 	}
 	out, _ := captureReport(t, root)

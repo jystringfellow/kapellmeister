@@ -353,3 +353,42 @@ func TestStrictFailsWhenItRunsAKnownFailureStepTheListDoesNotName(t *testing.T) 
 		t.Fatalf("got %+v %+v", res, res.Strict)
 	}
 }
+
+func TestTheScriptACommandPointsAtIsFoundPastAssignmentsAndQuotes(t *testing.T) {
+	for command, want := range map[string]string{
+		"scripts/ready":                "scripts/ready",
+		"./scripts/ready --device":     "scripts/ready",
+		"FOO=a/b scripts/ready":        "scripts/ready",
+		"A=1 B='x y' ./scripts/ready":  "scripts/ready",
+		"'scripts/my ready' --device":  "scripts/my ready",
+		`"scripts/ready" --device`:     "scripts/ready",
+		`scripts/my\ ready`:            "scripts/my ready",
+		"make strict":                  "",
+		"FOO=a/b make strict":          "",
+		"$HOME/bin/ready":              "",
+		"scripts/*.sh":                 "",
+		"'scripts/ready":               "",
+		"../outside/ready":             "",
+		"/usr/local/bin/ready":         "",
+		"scripts/ready; scripts/other": "scripts/ready",
+		"FOO=a/b":                      "",
+	} {
+		if got := ScriptPath(command); got != want {
+			t.Errorf("ScriptPath(%q) = %q, want %q", command, got, want)
+		}
+	}
+}
+
+func TestAProbeBehindAnAssignmentOrQuotesIsNotCalledBroken(t *testing.T) {
+	dir := t.TempDir()
+	strictScript(t, dir, "scripts/ready", "#!/bin/sh\nexit 0\n")
+	strictScript(t, dir, "scripts/my ready", "#!/bin/sh\nexit 0\n")
+	for _, command := range []string{"FOO=a/b scripts/ready", "'scripts/my ready'", `"scripts/ready" --device`} {
+		if fault := ProbeFault(dir, command); fault != "" {
+			t.Errorf("%q: %s", command, fault)
+		}
+	}
+	if fault := ProbeFault(dir, "FOO=a/b scripts/missing"); fault != "scripts/missing does not exist" {
+		t.Error(fault)
+	}
+}

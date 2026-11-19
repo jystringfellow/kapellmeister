@@ -33,6 +33,7 @@ type TuneProof struct {
 	Status      string
 	Reason      string
 	NeedsCaller bool
+	BudgetNote  string
 	Outcome     string
 }
 
@@ -106,11 +107,15 @@ func (e *Engine) Tune(ctx context.Context, hooks TuneHooks) (res Result, err err
 		res.Outcome, res.Reason = outcome, reason
 		return res, nil
 	}
+	budgetNote := ""
 	budgetSpent := func() bool { return cfg.Budget > 0 && now().Sub(started) >= cfg.Budget }
 	budgetStop := func() (Result, error) {
 		reason := fmt.Sprintf("time budget %s spent (elapsed %s) after round %d", cfg.Budget, now().Sub(started), res.Rounds)
 		if provedRound > 0 && res.Rounds > provedRound {
 			reason += fmt.Sprintf("; later revision was not adopted: budget ran out in round %d", res.Rounds)
+		}
+		if budgetNote != "" {
+			reason += "; " + budgetNote
 		}
 		return finishWith(BudgetExhausted, reason)
 	}
@@ -199,6 +204,9 @@ func (e *Engine) Tune(ctx context.Context, hooks TuneHooks) (res Result, err err
 			e.progress("→ prove[%d]", round)
 			proof, err = hooks.Prove(ctx, reply, round)
 			finish()
+			if proof.BudgetNote != "" {
+				budgetNote = proof.BudgetNote
+			}
 			code := 1
 			if proof.Proved {
 				code = 0

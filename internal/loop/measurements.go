@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -46,8 +47,8 @@ func measurementItem(line string) (string, bool) {
 
 func readMeasurements(review string) measurementSection {
 	var section measurementSection
-	var rest []string
-	state, declined := "before", false
+	var rest, fenced []string
+	state, declined, inFence := "before", false, false
 	add := func(request string) string {
 		if strings.EqualFold(strings.TrimRight(request, "."), "none") {
 			declined = true
@@ -56,8 +57,21 @@ func readMeasurements(review string) measurementSection {
 		section.requests = append(section.requests, request)
 		return "list"
 	}
+	extend := func(text string) {
+		section.requests[len(section.requests)-1] += text
+	}
 	for _, line := range strings.SplitAfter(review, "\n") {
 		trimmed := strings.TrimSpace(line)
+		if inFence {
+			fenced = append(fenced, line)
+			if strings.HasPrefix(trimmed, "```") {
+				for _, inner := range fenced[1 : len(fenced)-1] {
+					extend("\n  " + strings.TrimSpace(inner))
+				}
+				fenced, inFence = nil, false
+			}
+			continue
+		}
 		switch state {
 		case "before":
 			inline, ok := measurementHeading(line)
@@ -72,6 +86,7 @@ func readMeasurements(review string) measurementSection {
 			}
 		case "heading", "list":
 			item, listed := measurementItem(trimmed)
+			indented := line != strings.TrimLeft(line, " \t")
 			switch {
 			case trimmed == "" && state == "heading":
 			case trimmed == "":
@@ -80,6 +95,10 @@ func readMeasurements(review string) measurementSection {
 				state = add(item)
 			case state == "heading" && strings.EqualFold(strings.TrimRight(trimmed, "."), "none"):
 				declined, state = true, "after"
+			case state == "list" && strings.HasPrefix(trimmed, "```"):
+				fenced, inFence = []string{line}, true
+			case state == "list" && indented:
+				extend(" " + trimmed)
 			default:
 				rest = append(rest, line)
 				state = "after"
@@ -88,6 +107,7 @@ func readMeasurements(review string) measurementSection {
 			rest = append(rest, line)
 		}
 	}
+	rest = append(rest, fenced...)
 	section.rest = strings.Join(rest, "")
 	if declined && len(section.requests) == 0 {
 		section.found = false
@@ -131,7 +151,16 @@ func (e *Engine) readReview(round int, path string) (handed string, ok bool) {
 		return path, true
 	}
 	required := filepath.Join(filepath.Dir(path), "required-"+strings.TrimPrefix(filepath.Base(path), "review-"))
-	if err := os.WriteFile(filepath.Join(e.Config.Worktree, required), []byte(section.rest), 0o644); err != nil {
+	moved := fmt.Sprintf("km moved %d measurement request(s) from this review to the tester; the full review is %s.\n\n", len(section.requests), path)
+	if len(section.requests) == 1 {
+		moved = strings.Replace(moved, "request(s)", "request", 1)
+	} else {
+		moved = strings.Replace(moved, "request(s)", "requests", 1)
+	}
+	if len(section.requests) == 0 {
+		moved = fmt.Sprintf("km removed an empty `%s` section from this review; the full review is %s.\n\n", measurementsHeading, path)
+	}
+	if err := os.WriteFile(filepath.Join(e.Config.Worktree, required), []byte(moved+section.rest), 0o644); err != nil {
 		return path, true
 	}
 	return required, true

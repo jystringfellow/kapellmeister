@@ -202,7 +202,7 @@ func TestTheImplementerIsHandedAReviewWithoutItsMeasurementRequestsAndTheReviewF
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(copied), "Required changes:\n- fix a.go:3\n\nNothing else.\n\nCHANGES\n"; got != want {
+	if got, want := string(copied), "km moved 1 measurement request from this review to the tester; the full review is "+review+".\n\nRequired changes:\n- fix a.go:3\n\nNothing else.\n\nCHANGES\n"; got != want {
 		t.Errorf("copy for the implementer = %q, want %q", got, want)
 	}
 	whole, _ := os.ReadFile(filepath.Join(e.Config.Worktree, review))
@@ -246,5 +246,44 @@ func TestMeasurementRequestsHandedToATestStepThatFinishedAreNotReportedAsNotRun(
 	res := run(t, e)
 	if res.Outcome != RoundsExhausted || len(res.MeasurementsNotRun) != 0 {
 		t.Fatal(res)
+	}
+}
+
+func TestAWrappedMeasurementRequestIsOneRequestAndDoesNotEndTheSection(t *testing.T) {
+	section := readMeasurements("Measurements for the tester:\n- run the import three more times\n  and compare the timings\n- measure memory\n\nRequired changes:\n- fix a.go:3\n")
+	if want := []string{"run the import three more times and compare the timings", "measure memory"}; strings.Join(section.requests, "|") != strings.Join(want, "|") {
+		t.Fatalf("%q", section.requests)
+	}
+	if section.rest != "Required changes:\n- fix a.go:3\n" {
+		t.Fatalf("%q", section.rest)
+	}
+}
+
+func TestAFencedCommandUnderAMeasurementRequestStaysWithItAndDoesNotEndTheSection(t *testing.T) {
+	const fence = "```"
+	section := readMeasurements("Measurements for the tester:\n- run the benchmark:\n  " + fence + "sh\n  go test -bench . -count 5\n  " + fence + "\n- measure memory\n\nCHANGES\n")
+	if len(section.requests) != 2 || section.requests[0] != "run the benchmark:\n  go test -bench . -count 5" || section.requests[1] != "measure memory" {
+		t.Fatalf("%q", section.requests)
+	}
+	if section.rest != "CHANGES\n" {
+		t.Fatalf("%q", section.rest)
+	}
+}
+
+func TestAFenceThatNeverClosesStaysInTheImplementersCopy(t *testing.T) {
+	const fence = "```"
+	section := readMeasurements("Measurements for the tester:\n- run the benchmark:\n" + fence + "\ngo test -bench .\nRequired changes:\n- fix a.go:3\n")
+	if len(section.requests) != 1 || section.requests[0] != "run the benchmark:" {
+		t.Fatalf("%q", section.requests)
+	}
+	if section.rest != fence+"\ngo test -bench .\nRequired changes:\n- fix a.go:3\n" {
+		t.Fatalf("%q", section.rest)
+	}
+}
+
+func TestAnUnindentedLineAfterARequestStillEndsTheSection(t *testing.T) {
+	section := readMeasurements("Measurements for the tester:\n- rerun the benchmark\nRequired changes:\n- fix a.go:3\n")
+	if len(section.requests) != 1 || section.rest != "Required changes:\n- fix a.go:3\n" {
+		t.Fatalf("%q %q", section.requests, section.rest)
 	}
 }

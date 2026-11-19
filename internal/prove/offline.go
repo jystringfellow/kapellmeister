@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/jystringfellow/kapellmeister/internal/initrepo"
@@ -183,7 +184,7 @@ func Offline(ctx context.Context, options OfflineOptions) (result OfflineResult)
 		return fail(err)
 	}
 	skip := filepath.Join(scratch, "skip")
-	run := func(skipped []string, network bool) (offlineRun, error) {
+	run := func(skipped []string, network bool, timed string) (offlineRun, error) {
 		result.Runs++
 		name := fmt.Sprintf("clean-%d", result.Runs)
 		dir, err := cleanCopy(ctx, root, head, scratch, name, setup)
@@ -207,11 +208,49 @@ func Offline(ctx context.Context, options OfflineOptions) (result OfflineResult)
 		if !network {
 			wrapped = withoutNetwork(result.Method, command)
 		}
-		verify := initrepo.Run(ctx, dir, prefix+wrapped, timeout)
+		runCtx, limit, stepTimedOut := ctx, timeout, func() bool { return false }
+		if at := slices.Index(options.Labels, timed); timed != "" && at >= 0 {
+			before := 0
+			for _, label := range options.Labels[:at] {
+				if !slices.Contains(skipped, label) {
+					before++
+				}
+			}
+			var stop context.CancelFunc
+			runCtx, stop = context.WithCancel(ctx)
+			defer stop()
+			var fired atomic.Bool
+			stepTimedOut = fired.Load
+			limit = time.Duration(before+1) * timeout
+			go func() {
+				tick := time.NewTicker(20 * time.Millisecond)
+				defer tick.Stop()
+				var deadline <-chan time.Time
+				for {
+					select {
+					case <-runCtx.Done():
+						return
+					case <-deadline:
+						fired.Store(true)
+						stop()
+						return
+					case <-tick.C:
+						if deadline == nil {
+							if data, _ := os.ReadFile(record); strings.Count(string(data), "\n") >= before {
+								deadline = time.After(timeout)
+							}
+						}
+					}
+				}
+			}()
+		}
+		verify := initrepo.Run(runCtx, dir, prefix+wrapped, limit)
 		recorded, _ := os.ReadFile(record)
 		failed, _ := os.ReadFile(record + ".failed")
 		out := offlineRun{passed: verify.Status == "passed" && verify.ExitCode == 0, timedOut: verify.Status == "timed_out", step: strings.TrimSuffix(string(failed), "\n"), evidence: offlineEvidence(verify.Output), ran: strings.Split(strings.TrimSuffix(string(recorded), "\n"), "\n"), output: verify.Output}
-		if out.timedOut {
+		if stepTimedOut() {
+			out.timedOut, out.step, out.evidence = true, timed, fmt.Sprintf("did not finish within %s", timeout)
+		} else if out.timedOut {
 			out.step, out.evidence = "", fmt.Sprintf("did not finish within %s", timeout)
 			for _, label := range options.Labels {
 				if !slices.Contains(out.ran, label) && !slices.Contains(skipped, label) {
@@ -224,7 +263,7 @@ func Offline(ctx context.Context, options OfflineOptions) (result OfflineResult)
 	}
 	var skipped []string
 	for {
-		first, err := run(skipped, false)
+		first, err := run(skipped, false, "")
 		if err != nil {
 			return fail(err)
 		}
@@ -251,7 +290,7 @@ func Offline(ctx context.Context, options OfflineOptions) (result OfflineResult)
 		if at := slices.Index(options.Labels, first.step); at >= 0 {
 			alone = append(alone, options.Labels[at+1:]...)
 		}
-		again, err := run(alone, false)
+		again, err := run(alone, false, first.step)
 		if err != nil {
 			return fail(err)
 		}
@@ -261,10 +300,16 @@ func Offline(ctx context.Context, options OfflineOptions) (result OfflineResult)
 		if again.timedOut && again.step == "" {
 			again.step = first.step
 		}
+		if first.timedOut && again.step != first.step {
+			if again.passed || slices.Contains(again.ran, first.step) {
+				return finish("timeout", fmt.Sprintf("verify did not finish within %s without network and was at step %q, but that step finished within %s when km timed it by itself without network: the verify as a whole is slower without network, and nothing was recorded for the step", timeout, first.step, timeout))
+			}
+			return finish("timeout", fmt.Sprintf("verify did not finish within %s without network at step %q, and when km ran it again to time that step it stopped at step %q first; nothing was recorded", timeout, first.step, again.step))
+		}
 		if again.step != first.step {
 			return finish("flaky", fmt.Sprintf("step %q failed once without network (%s) and passed when run again without it: flaky, not a suite that needs network", first.step, first.evidence))
 		}
-		with, err := run(alone, true)
+		with, err := run(alone, true, first.step)
 		if err != nil {
 			return fail(err)
 		}
