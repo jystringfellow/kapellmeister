@@ -73,6 +73,7 @@ type RunConfig struct {
 	ReplyGrace         string `toml:"reply_grace"`
 	PreflightTimeout   string `toml:"preflight_timeout"`
 	PreflightRetryWait string `toml:"preflight_retry_wait"`
+	MinFreeMB          *int   `toml:"min_free_mb"`
 }
 
 const (
@@ -182,6 +183,7 @@ type Settings struct {
 	ReplyGrace         time.Duration          `json:"reply_grace"`
 	PreflightTimeout   time.Duration          `json:"preflight_timeout"`
 	PreflightRetryWait time.Duration          `json:"preflight_retry_wait"`
+	MinFreeMB          int                    `json:"min_free_mb"`
 	Chairs             map[string]string      `json:"chairs"`
 	Agents             []string               `json:"agents"`
 	Ensembles          map[string]Ensemble    `json:"ensembles,omitempty"`
@@ -246,6 +248,7 @@ func DefaultSettings() Settings {
 		ReplyGrace:         15 * time.Minute,
 		PreflightTimeout:   4 * time.Minute,
 		PreflightRetryWait: 20 * time.Second,
+		MinFreeMB:          DefaultMinFreeMB,
 		Chairs:             map[string]string{},
 		Defined:            BuiltInAgents(),
 		Policy:             DefaultPolicy(),
@@ -524,6 +527,12 @@ func (s *Settings) applyRun(layer loadedConfig) error {
 			return fmt.Errorf("%s: run.verify_retries: must be 0 or more", layer.name)
 		}
 		s.VerifyRetries = *r.VerifyRetries
+	}
+	if r.MinFreeMB != nil {
+		if *r.MinFreeMB < 0 {
+			return fmt.Errorf("%s: run.min_free_mb: must be 0 (off) or more", layer.name)
+		}
+		s.MinFreeMB = *r.MinFreeMB
 	}
 	for _, d := range []struct {
 		key   string

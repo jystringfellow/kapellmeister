@@ -355,6 +355,9 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		if err := json.Unmarshal(data, &launch); err != nil {
 			return err
 		}
+		if err := loop.ValidRunID(launch.RunID); err != nil {
+			return fmt.Errorf("detached launch %s: %w", *detachedLaunch, err)
+		}
 		text = launch.Task
 	} else {
 		text, err = taskText(*c.task, *c.taskFile)
@@ -454,10 +457,19 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 			return err
 		}
 	}
+	if err := loop.LowDisk(s.MinFreeMB, wt, loop.StateDir()); err != nil {
+		return err
+	}
 	scratch, err := prepareScratch(loop.StateDir(), runID)
 	if err != nil {
 		return err
 	}
+	handedOff, approved := false, false
+	defer func() {
+		if !handedOff {
+			settleScratch(stderr, loop.StateDir(), runID, approved)
+		}
+	}()
 	if ctx == nil {
 		var stop context.CancelFunc
 		ctx, stop = loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
@@ -498,6 +510,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		if err != nil {
 			return err
 		}
+		handedOff = true
 		if handle != nil {
 			*handle = h
 			return nil
@@ -523,7 +536,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 	sum, err := runEnsemble(ctx, ensembleRun{
 		RunID: runID, StateDir: runDir, Ensemble: *ensemble, BaseBranch: baseBranch, Meter: loop.NewLogMeter(),
 		Config: loop.Config{
-			ScratchDir: scratch, CAOURL: s.CAOURL, StateDir: loop.StateDir(), RunID: runID, Task: text, Worktree: wt, Chairs: seated, GateWhen: s.GateWhen,
+			ScratchDir: scratch, MinFreeMB: s.MinFreeMB, CAOURL: s.CAOURL, StateDir: loop.StateDir(), RunID: runID, Task: text, Worktree: wt, Chairs: seated, GateWhen: s.GateWhen,
 			Lessons: s.Lessons, LessonsTimeout: s.LessonsTimeout,
 			LearnedBudget: s.LearnedBudget, BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, CheckCommand: checkCmd, Policy: &policy,
 		},
@@ -534,6 +547,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		return err
 	}
 	summarized = true
+	approved = sum.Outcome == loop.Approved
 	return finishRun(stdout, sum)
 }
 
@@ -1225,8 +1239,25 @@ func gitOutput(worktree string, args ...string) (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
+func settleScratch(stderr io.Writer, stateDir, runID string, approved bool) {
+	scratch, err := loop.ScratchDir(stateDir, runID)
+	if err != nil {
+		fmt.Fprintln(stderr, "km: removing scratch:", err)
+		return
+	}
+	if !approved {
+		if err := os.Remove(scratch); err != nil && !errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(stderr, "km: scratch was kept at %s\n", scratch)
+		}
+		return
+	}
+	if err := loop.RemoveScratch(stateDir, runID); err != nil {
+		fmt.Fprintln(stderr, "km: removing scratch:", err)
+	}
+}
+
 func prepareScratch(stateDir, runID string) (string, error) {
-	scratch, err := filepath.Abs(filepath.Join(stateDir, "scratch", runID))
+	scratch, err := loop.ScratchDir(stateDir, runID)
 	if err != nil {
 		return "", err
 	}

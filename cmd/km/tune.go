@@ -147,6 +147,9 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 		if err := json.Unmarshal(data, &launch); err != nil {
 			return err
 		}
+		if err := loop.ValidRunID(launch.RunID); err != nil {
+			return fmt.Errorf("detached launch %s: %w", *launchPath, err)
+		}
 		*worktree = launch.Checkout
 	}
 	root, err := worktreeDir(*worktree)
@@ -220,6 +223,9 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 	if err != nil {
 		return err
 	}
+	if err := loop.LowDisk(s.MinFreeMB, root, s.WorktreeDir, loop.StateDir()); err != nil {
+		return err
+	}
 	if ctx == nil {
 		var stop context.CancelFunc
 		ctx, stop = loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
@@ -240,7 +246,7 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 	writingChair, _ := s.Policy.Chair("implement", chairs.Implementer, "", 0)
 	readingChair, _ := s.Policy.Chair("review", chairs.Reviewers[0], "", 0)
 	runID := newRunID()
-	if launch.RunID != "" {
+	if *launchPath != "" {
 		runID = launch.RunID
 	}
 	runDir, err := filepath.Abs(filepath.Join(loop.StateDir(), "runs", runID))
@@ -287,6 +293,8 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 	if err != nil {
 		return err
 	}
+	approved := false
+	defer func() { settleScratch(stderr, loop.StateDir(), runID, approved) }()
 	patches := filepath.Join(scratch, "breaks")
 	if err := os.MkdirAll(patches, 0755); err != nil {
 		return err
@@ -318,13 +326,14 @@ func tuneVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (r
 	}()
 	sum, err := runEnsemble(ctx, ensembleRun{
 		Command: "tune verify", RunID: runID, StateDir: runDir, Meter: loop.NewLogMeter(), Tune: hooks, TuneSummary: summary, TuneCheckout: root,
-		Config:  loop.Config{RunID: runID, Task: task, Worktree: wt, Chairs: chairs, MaxRounds: s.Rounds, Budget: *budget, BudgetStarted: started, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, Policy: &s.Policy, CAOURL: s.CAOURL, StateDir: loop.StateDir(), ScratchDir: scratch, BlockerPoll: s.BlockerPoll},
+		Config:  loop.Config{RunID: runID, Task: task, Worktree: wt, Chairs: chairs, MaxRounds: s.Rounds, Budget: *budget, BudgetStarted: started, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, Policy: &s.Policy, CAOURL: s.CAOURL, StateDir: loop.StateDir(), ScratchDir: scratch, MinFreeMB: s.MinFreeMB, BlockerPoll: s.BlockerPoll},
 		Watcher: loop.CAOWatcher{Client: client, Session: podium.SessionName}, Stepper: loop.CAOStepper{Client: client, Session: podium.SessionName}, Progress: progress,
 	})
 	if err != nil {
 		return err
 	}
 	keep = sum.Outcome != loop.Approved
+	approved = !keep
 	if *asJSON {
 		if err := json.NewEncoder(stdout).Encode(sum); err != nil {
 			return err

@@ -594,6 +594,17 @@ for `[tiers]`, because only you know what your accounts can run. `[cao]`, `[chai
 `[ensembles]`, `[report]`, `[run] worktree_dir` and `[run] trust_folder` are machine-only
 (see [Trusting the folder](#trusting-the-folder)); `[test]` and `[run] base` are repository-only.
 Putting one in the wrong file is an error.
+
+`[run] min_free_mb` (default `1024`, either file, the repository's value wins) is the free space,
+in MiB, that `km run`, `km play` and `km tune verify` require on the filesystems holding the
+worktree and the state directory. They check before seating any chair and again before each
+round. A run below it stops with, for example,
+`low disk: /path has 10 MB free and this run needs 1024 MB ([run] min_free_mb); free some space or lower the setting`
+rather than failing in a later step; mid-run this is the failed run's reason. Free space that
+cannot be measured never stops a run. The default applies to existing configs, so a run that
+worked before on a machine with less than 1024 MiB free now stops at the start with that message;
+set `min_free_mb = 0` under `[run]` in either config file to turn the check off, or a smaller
+number to lower it.
 `$CAO_API_BASE_URL` overrides `[cao] url`. State lives in `~/.kapellmeister/state` (`$KAPELLMEISTER_STATE_DIR`).
 User-only `[report] dirs` adds search directories to `<state>/runs` for bare report, status and
 wait commands and their MCP tools. `[report.prices."<model>"]` supplies input/output
@@ -670,6 +681,7 @@ dirs = ["~/kept-sandboxes"]
 timeout = "60m"                     # each agent step
 reply_grace = "15m"
 preflight_timeout = "4m"
+min_free_mb = 1024                  # free disk a run needs, in MiB; 0 turns the check off
 preflight_retry_wait = "20s"        # wait before retrying a check that failed fast; "0s" retries at once
 blocker_poll = "20s"
 lessons = true                     # off by default; proposals need human review
@@ -798,7 +810,15 @@ test step, including failure, timeout or interruption, km reports each distinct 
 km never signals these processes. It silently skips non-regular `pids` files (including FIFOs) and
 files larger than 1 MiB. The concurrent test-plan step
 relies on its prompt to forbid file changes because implementation is editing at the same time.
-km creates the scratch directory and writes nothing into it. What a tester needs to set up belongs
+km creates the scratch directory and, in `km run` and `km play`, writes nothing into it. After a
+test step that ends in `APPROVE` and its left-running report, km removes everything in scratch
+except `pids`. After a test step that ends in `CHANGES`, times out or fails, scratch stays as it
+is, because the implementer is then asked to reproduce the failures from it. When a run ends
+approved, km removes the directory. When it ends any other way and scratch holds anything or cannot be read, km
+keeps it and says where: `km: scratch was kept at <state dir>/scratch/<run id>`; remove it by
+hand when it is no longer needed. `km tune verify` treats its scratch the same way; its break
+patches are also in the run record. Read-only directories, such as a copied module cache, are
+removed too. A removal that fails is reported as a warning and does not change the outcome. What a tester needs to set up belongs
 in the repository's instruction files and lessons: isolated environments, tools to avoid and how
 to start a second conductor are knowledge about that repository. See the [worked example](#checked-in-lessons)
 in this repository's `AGENTS.md`, "Exercising km live", `scripts/nested-km-env` and
@@ -1735,9 +1755,10 @@ RUN                     STARTED              REPOSITORY             ENSEMBLE  RO
 
 Run records (`config.json`, `telemetry.jsonl`, `current.json`, `result.json` and `replies/`) live in
 `<state dir>/runs/<run id>/`. Tester scratch lives separately in `<state dir>/scratch/<run id>/`
-and is left in place after the run. Detached runs also keep `output.log` (complete stdout and
-stderr) and `launch.json` (the run id, worktree, base branch and task text passed to their run
-process). They publish `current.json` before preflight and record failures from that point.
+and is removed when the run ends approved; otherwise it is kept and the run says where. Detached
+runs also keep `output.log` (complete stdout and stderr) and `launch.json` (the run id, worktree,
+base branch and task text passed to their run process). A `launch.json` whose run id is empty or
+not a single path element is refused. They publish `current.json` before preflight and record failures from that point.
 Once `telemetry.jsonl` is created, `km run` and `km play`
 write a start record and leave `result.json` on normal completion, failure or interruption, including
 errors recording configuration, engine setup or the final git summary. Failures record their reason;
