@@ -71,6 +71,7 @@ func playCommand(args []string) error {
 	if err != nil {
 		return err
 	}
+	printExcluded(os.Stdout, standing.Worktree)
 	runID := newRunID()
 	runDir := filepath.Join(loop.StateDir(), "runs", runID)
 	scratch, err := prepareScratch(loop.StateDir(), runID)

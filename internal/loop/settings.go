@@ -34,6 +34,8 @@ type TestConfig struct {
 	VerifyRequired    []string `toml:"verify_required"`
 	VerifyTimeBounded bool     `toml:"verify_time_bounded"`
 	VerifyTimeout     string   `toml:"verify_timeout"`
+
+	Excluded []Exclusion `toml:"excluded"`
 }
 
 func (t TestConfig) Timeout(fallback time.Duration) time.Duration {
@@ -388,6 +390,9 @@ func decodeConfig(data []byte, name string) (loadedConfig, error) {
 	}
 	if err := ValidSuites(cfg.Test.VerifyRequired); err != nil {
 		return cfg, fmt.Errorf("%s: test.verify_required: %w", name, err)
+	}
+	if err := ValidExclusions(cfg.Test.Excluded); err != nil {
+		return cfg, fmt.Errorf("%s: test.excluded: %w", name, err)
 	}
 	if value := cfg.Test.VerifyTimeout; value != "" {
 		if parsed, err := time.ParseDuration(value); err != nil || parsed <= 0 {

@@ -915,6 +915,13 @@ verify_required = ["unit", "integration"]  # suites verify must run, each a run 
 verify_timeout = "20m"              # limit for each verify run in km prove and km tune verify; saved by tune when it raises it
 verify_time_bounded = true          # allow tune to cut what does not fit two minutes; default false
 
+[[test.excluded]]                   # a suite left out of verify; written by km tune verify, not by hand or by a chair
+suite    = "e2e"
+reason   = "network"
+method   = "network namespace"      # how km cut the network: or "sandbox profile", or "proxy variables (best effort)"
+evidence = "exit 7: could not resolve host"
+run      = "make e2e"               # how to run it by hand
+
 [tiers.claude_code]                 # override any provider's tier model or effort
 large = { model = "claude-fable-5-1" }
 
@@ -1020,16 +1027,18 @@ is commented out or never reached does not count; km publishes nothing without i
 `km prove` keep them; km refuses a round that leaves them out of the config.
 
 **Slow verifies.** One number sizes a tune: the limit for one verify run, from `-verify-timeout`,
-then the saved `[test] verify_timeout`, then `5m`. A whole proof is two clean runs and one run
-per break patch, each counted at that limit. Before seating any chair, tune prints the budget and
+then the saved `[test] verify_timeout`, then `5m`. A whole proof is two clean runs, one run
+per break patch and one run without network, each counted at that limit. Before seating any chair, tune prints the budget and
 how it was worked out, counting two break patches or one per required suite if that is more, and
 `10m` for the chairs:
 
 ```
-budget 3h10m0s: a whole proof at the 45m0s verify timeout is two clean runs and 2 break runs (3h0m0s), plus 10m0s for the chairs; pass -budget to set it yourself
+budget 3h55m0s: a whole proof at the 45m0s verify timeout is two clean runs, 2 break runs and one run without network (3h45m0s), plus 10m0s for the chairs; pass -budget to set it yourself
 ```
 
-Without `-budget`, the budget is that sum, and never less than `30m`. A detached tune prints the
+Without `-budget`, the budget is that sum, and never less than `30m` (`35m` at the default
+limit). The sum counts one run without network; each suite that turns out to need network adds
+up to three more, which the budget does not count. A detached tune prints the
 line from the command you ran as well as in its output file. km does not set a budget above `8h`
 by itself, because the limit can come from the repository's committed config: above that, tune
 stops before seating any chair and asks for an explicit `-budget` or a shorter `-verify-timeout`.
@@ -1068,9 +1077,71 @@ as [test] verify_timeout`, and the JSON summary carries `required`, `time_bounde
 the timeout: a timeout fails the proof. `km tune verify -guide` with `-require` or `-time-bounded`
 prints the procedure for those requirements.
 
-The three `[test] verify_*` keys are new. A km built before them rejects a config that contains
-any of them as an unknown key, for every command including `km run`, so update km on every
-machine and CI job that reads the repository's config before committing them.
+**Which suites belong in verify.** A suite belongs in verify when it passes on a clean copy
+without network. km decides this by test, not by a chair's opinion. After a round's proof passes,
+km runs the same verify once more on a clean copy with the network cut. A step that fails there
+is not recorded on that one failure. km runs it again without network and then once with
+network, and records it only when it fails, fails and passes. It then writes the step into the
+tuned config as a `[[test.excluded]]` entry with the reason `network`, the method used, the
+evidence (the step's exit status and the last line it printed) and the step's command to run by
+hand. The round is not proved, and the writer is told to remove that step. The writer is asked to
+give every suite CI runs its own step and leave this decision to km.
+
+Anything else is not an exclusion, and nothing is recorded for it:
+
+| Round status | What happened without network |
+|---|---|
+| `needs_network` | One or more steps failed twice without network and passed with it; each is now in `[[test.excluded]]` and must leave `scripts/verify` |
+| `no_network_flaky` | A step failed once and passed when run again without network |
+| `no_network_failure` | A step failed twice without network and failed again with it |
+| `no_network_timeout` | The run hit its limit and km could not tell which step was running |
+| `no_network_unknown` | Verify failed and its wrapper did not record which step failed |
+| `no_network_error` | km could not make the clean copy or run verify |
+
+All of these carry exit status `18` in the round's proof record and the JSON summary, and the
+round is not proved.
+
+Only the network off the machine is cut. Loopback (`127.0.0.1`, `::1`) and Unix sockets stay
+open, so a suite that starts its own local server and talks to it stays in verify. On macOS the
+machine's own addresses count as local too.
+
+The run without network gets the verify timeout or twice the slowest clean run of the proof,
+whichever is longer. A step that does not finish in that time is treated as a failing step, since
+a step waiting on network retries looks like that: km names it from the step order of the proof,
+confirms it the same way (again without network, then with it) and records it with the evidence
+`did not finish within D`.
+
+km cuts the network with the strongest method the machine offers and records which one it used:
+`network namespace` on Linux (`unshare --net`, with `lo` brought up), `sandbox profile` on macOS
+(`sandbox-exec`), and otherwise `proxy variables (best effort)`, which points the proxy variables
+at a closed local port and so only stops programs that honour them. Linux falls back to proxy
+variables when the machine does not allow unprivileged user namespaces or has neither `ip` nor
+`ifconfig`; that is common inside containers, so check the method before trusting an empty list.
+The tune summary always names it (`network cut by: sandbox profile`, and `no_network_method` in
+the JSON), whether or not anything was excluded.
+
+All failing steps are found in one pass: the `run` wrapper skips the steps named in the file
+`KAPELLMEISTER_VERIFY_SKIP` points at, and km adds each confirmed step to that file and runs
+again. Only that run names steps there. `km init`, `km run`, `km play` and `km rehearse` unset
+the variable before running verify, and `km prove` points it at an empty file, so no step is
+skipped anywhere else and a step cannot tell the run without network from a proof run by it.
+`km prove` refuses a `[test] verify` command or a `scripts/verify` that assigns the variable
+itself. A wrapper written before this has no skip line; km then finds one step per round and
+says the result is partial.
+
+Only km writes `[[test.excluded]]`, and only the caller removes an entry. A round whose config
+adds, changes or drops an entry is refused, and so is a verify that still has a step for an
+excluded suite. A required suite is never excluded: when one fails without network the round is
+refused with `a required suite cannot be excluded: make it pass without network, or stop
+requiring it`. The tune summary lists each entry (`excluded: e2e (network; network namespace):
+exit 7: could not resolve host; run it by hand: make e2e`, and `excluded` in the JSON), and
+`km run`, `km play`, `km rehearse` and `km prove` print `verify excludes ...` for each one before
+they start (`excluded` in `km prove -json`), so an exclusion is never silent. The extra run costs
+one verify per proved round, plus up to three for each suite it excludes.
+
+The three `[test] verify_*` keys and `[[test.excluded]]` are new. A km built before them rejects
+a config that contains any of them as an unknown key, for every command including `km run`, so
+update km on every machine and CI job that reads the repository's config before committing them.
 
 The writer keeps the bounded-output wrapper and writes at least two break patches outside the
 checkout: one breaks covered source code and one breaks a test expectation. Work takes place in
@@ -1171,12 +1242,13 @@ that raised it, and the JSON carries `timeout_ms` and `break_timeout_ms`.
 | 0 | Proved: two clean passes and every break patch made verify fail |
 | 1 | Command, Git or filesystem error, or interrupted |
 | 3 | A verify run timed out |
-| 10 | Refused: unfinished stub, verify not configured, invalid checkout, or bad/setup-touching patch |
+| 10 | Refused: unfinished stub, verify not configured, invalid checkout, bad/setup-touching patch, or a verify that assigns `KAPELLMEISTER_VERIFY_SKIP` |
 | 11 | Passes twice, not proved: no break patch supplied |
 | 12 | Verify failed or was flaky on clean copies |
 | 13 | A break patch left verify passing |
 | 14 | A required suite's step did not run in a clean run |
 | 15 | A required suite has no break patch that makes verify fail in its step |
+| 18 | Only in a `km tune verify` round: the run without network did not pass (`needs_network` or `no_network_*`) |
 
 `-timeout D` is a positive limit per verify run; it defaults to `[test] verify_timeout`, then `10m`, and a timeout names the limit that applied (the longer break timeout when a break run timed out) and both ways to raise it. Output names each clean run and
 patch, reports exit codes and durations, and bounds verify output to 40 lines of 300 characters.

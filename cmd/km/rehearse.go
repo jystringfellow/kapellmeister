@@ -60,6 +60,7 @@ func rehearseCommand(args []string) error {
 	if err != nil {
 		return err
 	}
+	printExcluded(os.Stdout, wt)
 	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	if verifyCmd == "" {
