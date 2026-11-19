@@ -187,3 +187,17 @@ func TestAStepSeesTheSkipVariableInAProofRunTooSoItCannotTellTheRunWithoutNetwor
 		t.Fatal(result)
 	}
 }
+
+func TestAStepIsNotExcludedBecauseAnEarlierStepWasSlowWithoutNetwork(t *testing.T) {
+	for _, name := range strings.Fields("http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY") {
+		t.Setenv(name, "")
+	}
+	root := offlineFixture(t, "run 'early' 'if test -n \"$ALL_PROXY\"; then sleep 2; fi'\nrun 'late' 'sleep 2'\n")
+	result := prove.Offline(t.Context(), prove.OfflineOptions{Worktree: root, Method: prove.MethodProxy, Timeout: 3 * time.Second, Labels: []string{"early", "late"}})
+	if result.Status != "timeout" || len(result.Failed) != 0 {
+		t.Fatal(result)
+	}
+	if want := `verify did not finish within 3s without network and was at step "late", but that step finished within 3s when km timed it by itself without network: the verify as a whole is slower without network, and nothing was recorded for the step`; result.Reason != want {
+		t.Fatal(result.Reason)
+	}
+}

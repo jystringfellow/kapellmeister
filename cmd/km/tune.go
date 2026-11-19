@@ -379,6 +379,7 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 	if saved, err := loop.ResolveTest(wt); err == nil {
 		savedTimeout = saved.VerifyTimeout
 	}
+	offlineExtra, offlineHold := 0, time.Duration(0)
 	hooks := &loop.TuneHooks{
 		PatchDir:    patches,
 		ReviewRules: required.ReviewRules(),
@@ -460,6 +461,16 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 			}
 			var result prove.Result
 			needsCaller, callerOutcome := false, ""
+			budgetNote := func() string {
+				if offlineExtra == 0 {
+					return ""
+				}
+				runs := "runs"
+				if offlineExtra == 1 {
+					runs = "run"
+				}
+				return fmt.Sprintf("the run without network took %d more verify %s than the one the budget counts, to confirm each step that failed there: pass -budget with %s more to hold them", offlineExtra, runs, offlineHold)
+			}
 			switch {
 			case resolveErr != nil:
 				result = prove.Result{Worktree: wt, Status: "refused", ExitStatus: 10, Reason: resolveErr.Error()}
@@ -530,6 +541,9 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 						}
 					}
 					offline := runTuneOffline(ctx, prove.OfflineOptions{Worktree: wt, Timeout: limit, Labels: labels})
+					if extra := offline.Runs - 1; extra > 0 {
+						offlineExtra, offlineHold = offlineExtra+extra, offlineHold+time.Duration(extra)*limit
+					}
 					summary.NoNetwork = offline.Method
 					commands := tune.StepCommands(string(script))
 					var reasons []string
@@ -587,7 +601,7 @@ func tuneHooks(root, wt, head, runID, runDir, patches string, setup map[string]t
 			if result.Status == "proved" {
 				proved = &tuneProved{round: round, setup: current, summary: *summary, patches: patchDigests}
 			}
-			return loop.TuneProof{Proved: result.Status == "proved", Path: proofPath, Status: result.Status, Reason: result.Reason, NeedsCaller: needsCaller, Outcome: callerOutcome}, nil
+			return loop.TuneProof{Proved: result.Status == "proved", Path: proofPath, Status: result.Status, Reason: result.Reason, NeedsCaller: needsCaller, Outcome: callerOutcome, BudgetNote: budgetNote()}, nil
 		},
 		Keep: func(reply loop.TuneReply, round int) (bool, string, string, error) {
 			if proved == nil {

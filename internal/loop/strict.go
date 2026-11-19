@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -27,18 +28,69 @@ type StrictResult struct {
 	Changed    []string `json:"changed,omitempty"`
 }
 
+var assignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
+
 func ScriptPath(command string) string {
-	fields := strings.Fields(command)
-	if len(fields) == 0 || !strings.Contains(fields[0], "/") || !filepath.IsLocal(fields[0]) {
-		return ""
+	rest := command
+	for {
+		word, raw, after, ok := shellWord(rest)
+		if !ok {
+			return ""
+		}
+		if assignment.MatchString(raw) {
+			rest = after
+			continue
+		}
+		if !strings.Contains(word, "/") || !filepath.IsLocal(word) {
+			return ""
+		}
+		return filepath.Clean(word)
 	}
-	return filepath.Clean(fields[0])
+}
+
+func shellWord(text string) (word, raw, rest string, ok bool) {
+	text = strings.TrimLeft(text, " \t\n")
+	var out strings.Builder
+	i := 0
+	for i < len(text) {
+		c := text[i]
+		switch {
+		case c == ' ' || c == '\t' || c == '\n' || c == ';' || c == '&' || c == '|':
+			return out.String(), text[:i], text[i:], i > 0
+		case c == '\'':
+			end := strings.IndexByte(text[i+1:], '\'')
+			if end < 0 {
+				return "", "", "", false
+			}
+			out.WriteString(text[i+1 : i+1+end])
+			i += end + 2
+		case c == '"':
+			end := strings.IndexByte(text[i+1:], '"')
+			if end < 0 || strings.ContainsAny(text[i+1:i+1+end], "$`\\") {
+				return "", "", "", false
+			}
+			out.WriteString(text[i+1 : i+1+end])
+			i += end + 2
+		case c == '\\':
+			if i+1 >= len(text) {
+				return "", "", "", false
+			}
+			out.WriteByte(text[i+1])
+			i += 2
+		case strings.IndexByte("$`*?[~(){}<>", c) >= 0:
+			return "", "", "", false
+		default:
+			out.WriteByte(c)
+			i++
+		}
+	}
+	return out.String(), text, "", i > 0
 }
 
 func StrictScripts(test TestConfig) []string {
 	var names []string
-	for _, command := range []string{test.Strict, test.StrictReady} {
-		if name := ScriptPath(command); name != "" && !slices.Contains(names, name) {
+	for _, command := range []string{test.Verify, test.Strict, test.StrictReady} {
+		if name := ScriptPath(command); name != "" && name != "scripts/verify" && !slices.Contains(names, name) {
 			names = append(names, name)
 		}
 	}

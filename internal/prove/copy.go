@@ -171,19 +171,19 @@ func setupSnapshot(root string, scripts ...string) (map[string]fileState, error)
 				return err
 			}
 			state[rel] = value
-			if name != ".kapellmeister" {
-				parent, err := os.Lstat(filepath.Join(root, "scripts"))
+			if dir := filepath.Dir(name); name != ".kapellmeister" && dir != "." {
+				parent, err := os.Lstat(filepath.Join(root, dir))
 				if err != nil {
 					return err
 				}
 				parentState := fileState{Mode: parent.Mode()}
 				if parent.Mode()&os.ModeSymlink != 0 {
-					parentState.Link, err = os.Readlink(filepath.Join(root, "scripts"))
+					parentState.Link, err = os.Readlink(filepath.Join(root, dir))
 					if err != nil {
 						return err
 					}
 				}
-				state["scripts"] = parentState
+				state[dir] = parentState
 			}
 			return nil
 		})

@@ -341,7 +341,8 @@ chair. When the check itself failed fast, in under a quarter of `preflight_timeo
 blocker on screen, km waits `[run] preflight_retry_wait` (default `20s`) before that retry: a
 provider that refuses with "still loading, try again" refuses again a second later. The line then
 reports `first attempt failed (<error>), retried after waiting 20s`, and the JSON result carries
-`retry_wait_ms` and `retry_wait_error`. Set the key to `0s` for an immediate retry, or longer
+`retry_wait_ms` and `retry_wait_error`. When the retry fails with the same error, the line says
+`the retry after waiting 20s failed the same way: run the command again in a few minutes`. Set the key to `0s` for an immediate retry, or longer
 when a provider needs more time. A slower failure and a failed seat call are retried at once;
 a preflight check timeout gets one fresh chair and one retry. km reports whether that second
 attempt passed or failed. Two timeouts can take two full `preflight_timeout`s plus CAO's readiness
@@ -756,7 +757,11 @@ as a `measurements-empty` step naming the review file; `none` under the heading 
 
 The implementer is not handed these requests. When a review has the section, km writes a copy
 without it beside the review (`required-N.md` for `review-N.md`) and names the copy in the next
-implement prompt; the review file stays whole, and the gate reads the whole review.
+implement prompt; the review file stays whole, and the gate reads the whole review. The copy
+starts with a line saying how many requests km moved to the tester and naming the full review.
+A request may wrap onto indented lines and may carry a fenced block; both stay with the request.
+An unindented line that is not a list item ends the section and stays in the implementer's copy,
+and so does a fence that never closes.
 
 Requests that no finished test step was given are reported whatever the outcome: without a tester
 km prints `measurements not run: no tester is seated:` with the requests, and with one, when the
@@ -1064,7 +1069,9 @@ budget 3h55m0s: a whole proof at the 45m0s verify timeout is two clean runs, 2 b
 
 Without `-budget`, the budget is that sum, and never less than `30m` (`35m` at the default
 limit). The sum counts one run without network; each suite that turns out to need network adds
-up to three more, which the budget does not count. A detached tune prints the
+up to three more, which the budget does not count. When the budget runs out after such runs, the
+`budget_exhausted` reason says how many extra runs there were and how much more `-budget` would
+hold them. A detached tune prints the
 line from the command you ran as well as in its output file. km does not set a budget above `8h`
 by itself, because the limit can come from the repository's committed config: above that, tune
 stops before seating any chair and asks for an explicit `-budget` or a shorter `-verify-timeout`.
@@ -1135,7 +1142,11 @@ The run without network gets the verify timeout or twice the slowest clean run o
 whichever is longer. A step that does not finish in that time is treated as a failing step, since
 a step waiting on network retries looks like that: km names it from the step order of the proof,
 confirms it the same way (again without network, then with it) and records it with the evidence
-`did not finish within D`.
+`did not finish within D`. In those two confirming runs the limit applies to the named step by
+itself, counted from when the steps before it have finished, so a step is not excluded because an
+earlier step was slow without network. When the step finishes in time by itself, nothing is
+recorded and the round ends `no_network_timeout`, saying the verify as a whole is slower without
+network.
 
 km cuts the network with the strongest method the machine offers and records which one it used:
 `network namespace` on Linux (`unshare --net`, with `lo` brought up), `sandbox profile` on macOS
@@ -1361,27 +1372,31 @@ The JSON summary carries `strict` (`status` of `passed`, `failed`, `not_run` or 
 with the same 5 and 6, and with 16 for `baseline_mismatch`, also with `-json`.
 
 km records the script `[test] strict` and `[test] strict_ready` point at when the run starts:
-the first word of the command, when it is a path inside the worktree such as `scripts/strict`.
+the command's first word after any `NAME=value` assignments, with quotes removed, when it is a
+path inside the worktree such as `scripts/strict`.
 If the run changed, created or removed one of them before strict ran, the summary adds
 `strict    this run changed scripts/strict after it started: read the change before trusting the
 line above`, and `changed` in the JSON names it. Strict still runs and its status stands; the line
 is there because a chair can otherwise make strict pass by rewriting it. A command that is not a
-path, such as `make strict`, is not tracked this way.
+path, such as `make strict`, or whose first word uses a variable or a glob, is not tracked this
+way, and km makes no claim about whether its probe script exists.
 
 `strict_ready` without `strict` is a config error. So is a `verify`, `check`, `strict` or
 `strict_ready` that holds only spaces or comments: the config is refused when it loads, because
 such a command exits 0 and would read as a pass. Leave the key out instead.
 
 A `known_failure` step in the strict command is held to the same list as verify: when strict
-runs one whose label is not in `[test] verify_known_failures`, strict fails with exit 16 and names
-it. A listed label that strict does not run is not a mismatch, since verify runs it.
+runs one whose label is not in `[test] verify_known_failures`, strict fails and names
+it. The 16 is the exit code recorded for strict, in `strict.exit_code` and the summary line
+`strict    failed (exit 16)`; the run's outcome is `strict_failed`, so `km run` and `km wait`
+exit 5. A listed label that strict does not run is not a mismatch, since verify runs it.
 
 Strict has no time limit of its own in a run.
 
 `km prove -level strict` proves the strict command the way `km prove` proves verify: two clean
-copies, then every break patch must make it fail. The scripts `[test] strict` and
+copies, then every break patch must make it fail. The scripts `[test] verify`, `[test] strict` and
 `[test] strict_ready` point at are copied into the clean copies with the config and
-`scripts/verify`, so they may be uncommitted, and a break patch may not touch them. With no
+`scripts/verify`, wherever in the checkout they live, so they may be uncommitted, and a break patch may not touch them. With no
 `[test] strict`, a path named `scripts/strict` means nothing to km. A probe whose script is
 missing or not executable is refused as a broken probe (exit 10). Otherwise the probe runs first
 in its own clean copy; when it fails the result is `strict_not_run` (exit 17), never `proved`.
@@ -1512,8 +1527,9 @@ user config's `[report] dirs`. `km report ~/kept-sandboxes` searches across kept
 Runs with restored work add a `restored: N` footer count, and runs that retried a read-only step
 add `retried: N`. Runs where verify passed only after a retry add `verify retried: N`, a separate
 count, so the report agrees with the `retried   verify[...]` line of a run's final summary.
-JSON includes `restores`, `retries` and `verify_retried` counts per run and the numbers of
-runs with each in totals.
+JSON includes `restores` and `retries` counts per run and the numbers of runs with each in
+totals. Each run's `verify_retried` is the same list `result.json` holds (`round`, `attempts`),
+and totals count the runs that have one as `verify_retried_runs`.
 
 To add directories a bare `km report`, `km status` or `km wait` searches, add this to
 `~/.kapellmeister/config.toml` (`$KAPELLMEISTER_HOME` moves this file):
