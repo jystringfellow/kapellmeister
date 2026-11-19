@@ -1250,6 +1250,12 @@ func printOutcome(w io.Writer, s ensembleSummary) {
 		line += ": " + s.Reason
 	}
 	fmt.Fprintln(w, "\n"+line)
+	if len(s.MeasurementsNotRun) > 0 {
+		fmt.Fprintln(w, "measurements not run:")
+		for _, request := range s.MeasurementsNotRun {
+			fmt.Fprintln(w, "  - "+plain(request))
+		}
+	}
 }
 
 func taskText(task, file string) (string, error) {
