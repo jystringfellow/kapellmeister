@@ -11,7 +11,7 @@ import (
 	"github.com/jystringfellow/kapellmeister/internal/loop"
 )
 
-const ScriptFile = "scripts/verify"
+const ScriptFile = loop.VerifyScript
 
 type Options struct {
 	Worktree string

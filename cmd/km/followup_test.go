@@ -47,15 +47,24 @@ func TestRehearsePrintsEachSuiteVerifyExcludesBeforeItStarts(t *testing.T) {
 	}
 }
 
-func TestAPreflightRetryThatFailsTheSameWayTellsTheUserToRunAgainInAFewMinutes(t *testing.T) {
-	const loading = "policy is still loading"
-	same := loop.PreflightResult{Retried: true, RetryWaitMS: 20000, RetryWaitError: loading, Error: loading}
-	if got, want := timeoutRetryNote(same, time.Minute), "; the retry after waiting 20s failed the same way: run the command again in a few minutes"; got != want {
-		t.Fatalf("note = %q", got)
+func TestAWaitedPreflightRetryThatFailsTellsTheUserToRunAgainInAFewMinutesWhateverTheTwoErrorsSay(t *testing.T) {
+	const advice = "run the command again in a few minutes"
+	tests := []struct {
+		name   string
+		result loop.PreflightResult
+		want   string
+	}{
+		{"same text", loop.PreflightResult{Retried: true, RetryWaitMS: 20000, RetryWaitError: "policy is still loading", Error: "policy is still loading"}, "; the retry after waiting 20s failed the same way: " + advice},
+		{"different text", loop.PreflightResult{Retried: true, RetryWaitMS: 20000, RetryWaitError: "timed out after 31s", Error: "timed out after 33s"}, "; first attempt failed (timed out after 31s), the retry after waiting 20s failed too: " + advice},
+		{"no first error", loop.PreflightResult{Retried: true, RetryWaitMS: 20000, Error: "profile not found"}, "; the retry after waiting 20s failed too: " + advice},
+		{"retry timed out", loop.PreflightResult{Retried: true, RetryWaitMS: 20000, RetryWaitError: "policy is still loading", TimedOut: true}, "; first attempt failed (policy is still loading), the retry after waiting 20s failed too: " + advice},
 	}
-	other := loop.PreflightResult{Retried: true, RetryWaitMS: 20000, RetryWaitError: loading, Error: "profile not found"}
-	if got, want := timeoutRetryNote(other, time.Minute), "; first attempt failed (policy is still loading), retried after waiting 20s"; got != want {
-		t.Fatalf("note = %q", got)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := timeoutRetryNote(tc.result, time.Minute); got != tc.want {
+				t.Fatalf("note = %q", got)
+			}
+		})
 	}
 }
 
