@@ -39,7 +39,7 @@ func RunShell(parent context.Context, dir, command string, env []string, limit t
 	cmd.WaitDelay = 200 * time.Millisecond
 	cmd.Stdout, cmd.Stderr = out, out
 	err := cmd.Run()
-	if cmd.Process != nil && (ctx.Err() != nil || errors.Is(err, exec.ErrWaitDelay)) {
+	if cmd.Process != nil {
 		_ = stopGroup()
 	}
 	switch {

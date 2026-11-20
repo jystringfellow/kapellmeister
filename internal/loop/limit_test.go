@@ -130,6 +130,32 @@ func TestAShellThatExitsWhileItsChildHoldsTheOutputLeavesNoProcessBehind(t *test
 	}
 }
 
+func TestAFailingShellThatLeavesAChildRunningLeavesNoProcessBehindAndKeepsItsExitCode(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	start := time.Now()
+	v, err := CommandVerifier("sleep 30 & echo $! >"+pidFile+"; echo failing; exit 3")(context.Background(), t.TempDir())
+	if err != nil || v.ExitCode != 3 || v.TimedOut || !strings.Contains(v.Output, "failing") || time.Since(start) > 10*time.Second {
+		t.Fatalf("got %+v %v after %s", v, err, time.Since(start))
+	}
+	if !childStopped(t, pidFile) {
+		t.Fatal("the background process outlived the failing command")
+	}
+}
+
+func TestAChildThatRedirectedItsOwnOutputDoesNotOutliveTheShell(t *testing.T) {
+	for _, exit := range []int{0, 3} {
+		pidFile := filepath.Join(t.TempDir(), "pid")
+		start := time.Now()
+		v, err := CommandVerifier("sleep 30 >/dev/null 2>&1 & echo $! >"+pidFile+"; echo done; exit "+strconv.Itoa(exit))(context.Background(), t.TempDir())
+		if err != nil || v.ExitCode != exit || !strings.Contains(v.Output, "done") || time.Since(start) > 10*time.Second {
+			t.Fatalf("exit %d: got %+v %v after %s", exit, v, err, time.Since(start))
+		}
+		if !childStopped(t, pidFile) {
+			t.Fatalf("exit %d: the background process outlived the command", exit)
+		}
+	}
+}
+
 func slow(limit time.Duration) Verifier {
 	return CommandVerifierWithin("echo started; sleep 30", limit)
 }
