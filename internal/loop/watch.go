@@ -105,7 +105,7 @@ func (e *Engine) watchStep(s Step) func() {
 	if s.ChairName == "" {
 		s.ChairName = firstSet(s.Chair.Address, stepRoles[s.Name])
 		if s.ChairName == "" && strings.HasPrefix(s.Name, "classify-") {
-			s.ChairName = "classifier"
+			s.ChairName = DefaultScore().Classifier
 		}
 	}
 	e.watch.Lock()

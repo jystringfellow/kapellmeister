@@ -341,6 +341,7 @@ func (e *Engine) Run(ctx context.Context) (res Result, err error) {
 }
 
 func (e *Engine) play(ctx context.Context) (Result, error) {
+	score := DefaultScore()
 	cfg := e.Config
 	res := Result{RunID: cfg.RunID, Worktree: cfg.Worktree, RunDir: filepath.Join(cfg.Worktree, RunDirRel(cfg.RunID))}
 	if err := PrepareRunDir(cfg.Worktree, cfg.RunID); err != nil {
@@ -405,7 +406,7 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 	var implementerChair Chair
 	misses := 0
 	defer func() {
-		if implementer != "" {
+		if score.Resumes("implement") && implementer != "" {
 			_ = e.Stepper.Release(context.WithoutCancel(ctx), implementer)
 		}
 	}()
@@ -418,7 +419,7 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 		}
 		res.Rounds = round
 		summary := e.relf("implement-%d.md", round)
-		if chair, _ := e.resolve("implement", cfg.Chairs.Implementer); implementer != "" && chair != implementerChair {
+		if chair, _ := e.resolve("implement", cfg.Chairs.Implementer); score.Resumes("implement") && implementer != "" && chair != implementerChair {
 			_ = e.Stepper.Release(context.WithoutCancel(ctx), implementer)
 			implementer = ""
 		}
@@ -426,9 +427,9 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 		out, err := e.step(ctx, Step{
 			Name: "implement", Round: round, Chair: cfg.Chairs.Implementer,
 			Prompt:    implementPrompt(cfg.Task, plan, summary, cfg.CheckCommand, cfg.VerifyCommand, feedback, feedbackGate, feedbackTest, e.lessonsFor("implement", cfg.Chairs.Implementer)),
-			ReplyPath: summary, KeepTerminal: true, ReuseTerminal: implementer,
+			ReplyPath: summary, KeepTerminal: score.Resumes("implement"), ReuseTerminal: implementer,
 		})
-		if out.TerminalID != "" {
+		if score.Resumes("implement") && out.TerminalID != "" {
 			implementer = out.TerminalID
 		}
 		if err != nil {
@@ -742,14 +743,21 @@ func (e *Engine) step(ctx context.Context, s Step) (StepResult, error) {
 	return out, err
 }
 
-var stepRoles = map[string]string{"lessons": "gate", "plan": "planner", "implement": "implementer", "review": "reviewer", "gate": "gate", "test-plan": "tester", "test": "tester"}
+var stepRoles = func() map[string]string {
+	score := DefaultScore()
+	parts := map[string]string{"lessons": score.LessonsBy}
+	for _, step := range score.Steps {
+		parts[step.Name] = step.Part
+	}
+	return parts
+}()
 
 func PartOf(stepName string) string {
 	if part, ok := stepRoles[stepName]; ok {
 		return part
 	}
 	if strings.HasPrefix(stepName, "classify-") {
-		return "classifier"
+		return DefaultScore().Classifier
 	}
 	return stepName
 }
@@ -955,7 +963,7 @@ func (e *Engine) reviewRound(ctx context.Context, round int, plan, summary strin
 			path = e.rel(fmt.Sprintf("review-%d-%d.md", round, i+1))
 		}
 		reviews[i] = review{Name: name, Chair: chair, Path: path}
-		steps[i] = Step{Name: "review", Round: round, Chair: chair, ChairName: chairName,
+		steps[i] = Step{Name: "review", Round: round, Chair: chair, ChairName: chairName, KeepTerminal: DefaultScore().Resumes("review"),
 			Prompt: reviewPrompt(e.Config.Task, plan, summary, e.Config.VerifyCommand, verify, verifyPath, path, e.lessonsFor("review", chair)), ReplyPath: path}
 	}
 	classifyErrs := make([]error, len(chairs))
