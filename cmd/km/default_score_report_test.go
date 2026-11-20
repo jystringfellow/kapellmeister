@@ -57,6 +57,7 @@ func TestReportPrintsThisTableForARunOfTheDefaultScore(t *testing.T) {
 	}
 	out = regexp.MustCompile(`\d{4}-\d\d-\d\d \d\d:\d\d:\d\d`).ReplaceAllString(out, "YYYY-MM-DD HH:MM:SS")
 	out = regexp.MustCompile(`(approved  1       )\d+s`).ReplaceAllString(out, "${1}Ns")
+	out = regexp.MustCompile(`(?m)^(\S+ +p +m +\d+ +\d+ +\d+ +)\S+ +\S+ +(unknown +unknown)$`).ReplaceAllString(out, "${1}TIME  TIME/STEP  ${2}")
 	reportGolden(t, "default_score_report.golden", out)
 }
 
