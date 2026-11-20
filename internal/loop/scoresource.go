@@ -4,9 +4,11 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -129,7 +131,32 @@ func (r scoreReader) read(kind, name string) (string, ScoreFile, error) {
 	rel := scorePath(kind, name)
 	path := filepath.Join(r.src.Home, rel)
 	file := ScoreFile{Kind: kind, Name: name, Source: "user", Path: path}
-	data, err := os.ReadFile(path)
+	limit := int64(64 << 10)
+	if kind == "part" {
+		limit = 256 << 10
+	}
+	tooLarge := func(path string, size int64) error {
+		return fmt.Errorf("%s: %s file is %d bytes, over the %d-byte limit", path, kind, size, limit)
+	}
+	if info, err := os.Stat(path); err == nil && info.Mode()&os.ModeNamedPipe != 0 {
+		return "", file, fmt.Errorf("%s: named pipe is not a regular file", path)
+	}
+	var data []byte
+	input, err := os.Open(path)
+	if err == nil {
+		defer input.Close()
+		info, statErr := input.Stat()
+		if statErr != nil {
+			return "", file, fmt.Errorf("%s: %w", path, statErr)
+		}
+		if info.Size() > limit {
+			return "", file, tooLarge(path, info.Size())
+		}
+		data, err = io.ReadAll(io.LimitReader(input, limit+1))
+		if int64(len(data)) > limit {
+			return "", file, tooLarge(path, int64(len(data)))
+		}
+	}
 	if errors.Is(err, os.ErrNotExist) {
 		file.Path, file.Source = ".kapellmeister/"+rel, "repository"
 		fields, ok := r.tree[file.Path]
@@ -138,6 +165,17 @@ func (r scoreReader) read(kind, name string) (string, ScoreFile, error) {
 		}
 		if !r.src.AllowRepository {
 			return "", file, fmt.Errorf("repository %s %q (%s) refused: [run] repository_scores is false", kind, name, file.Path)
+		}
+		sizeText, sizeErr := r.engine.gitOutput("cat-file", "-s", fields[2])
+		if sizeErr != nil {
+			return "", file, fmt.Errorf("%s: %w", file.Path, sizeErr)
+		}
+		size, sizeErr := strconv.ParseInt(strings.TrimSpace(sizeText), 10, 64)
+		if sizeErr != nil {
+			return "", file, fmt.Errorf("%s: %w", file.Path, sizeErr)
+		}
+		if size > limit {
+			return "", file, tooLarge(file.Path, size)
 		}
 		blob := r.engine.readTextBlob(fields[0], fields[2])
 		if blob.reason != "" {

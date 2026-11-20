@@ -51,3 +51,16 @@ func TestHiddenHandOffFlagsStillParse(t *testing.T) {
 		})
 	}
 }
+
+func TestRunHelpSaysTheScoreFlagNamesABuiltInOrFileScore(t *testing.T) {
+	var out, errout bytes.Buffer
+	err := runAt(context.Background(), []string{"-h"}, &out, &errout, nil)
+	if !errors.Is(err, flag.ErrHelp) {
+		t.Fatal(err)
+	}
+	_, help, ok := strings.Cut(errout.String(), "-score string\n")
+	line, _, _ := strings.Cut(strings.TrimSpace(help), "\n")
+	if !ok || !strings.Contains(line, "built-in or file score") {
+		t.Fatalf("score help = %s", line)
+	}
+}

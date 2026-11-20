@@ -57,6 +57,13 @@ func decodePart(text, path string, steps []ScoreStep) (map[string]string, error)
 				return nil, fmt.Errorf("%s: step %s: unknown placeholder %s", path, step.Name, placeholder)
 			}
 		}
+		if len(step.Reads) == 0 {
+			for _, placeholder := range []string{"{plan}", "{inputs}"} {
+				if strings.Contains(value, placeholder) {
+					return nil, fmt.Errorf("%s: step %s: placeholder %s has nothing to fill it: the step reads nothing", path, step.Name, placeholder)
+				}
+			}
+		}
 		out[step.Name] = value
 	}
 	return out, nil
