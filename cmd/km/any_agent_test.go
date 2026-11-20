@@ -293,7 +293,7 @@ func TestChairFlagsAndReseatAcceptAUserDefinedAgent(t *testing.T) {
 	if err := reseatCommand([]string{s.Session, s.Chairs[0].Address, "-agent", "mine@large", "-cao", srv.URL}); err != nil {
 		t.Fatal(err)
 	}
-	if fake.query.Get("agent_profile") != "my-reviewer-xhigh" || fake.query.Get("provider") != "claude_code" {
+	if fake.query.Get("agent_profile") != "my-reviewer-high" || fake.query.Get("provider") != "claude_code" {
 		t.Fatalf("launch = %v", fake.query)
 	}
 }

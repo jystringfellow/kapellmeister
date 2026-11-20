@@ -312,3 +312,15 @@ func (s Score) EditsWorktree() bool {
 	}
 	return false
 }
+
+func (s Score) PartPolicyKey(part string) string {
+	if part == s.Classifier {
+		return "classify"
+	}
+	for _, step := range s.Steps {
+		if step.Part == part {
+			return s.PolicyKey(step.Name)
+		}
+	}
+	return ""
+}

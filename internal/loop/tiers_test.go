@@ -27,7 +27,7 @@ func TestInheritAdviceNamesEveryTierWithTheRequestedEffortInTierOrder(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "[tiers.claude_code]\nsmall = { effort = \"inherit\" }\nmedium = { effort = \"inherit\" }"
+	want := "[tiers.claude_code]\nsmall = { effort = \"inherit\" }\nmedium = { effort = \"inherit\" }\nlarge = { effort = \"inherit\" }\nxlarge = { effort = \"inherit\" }"
 	if got := s.Policy.InheritAdvice("claude_code", "high"); got != want {
 		t.Fatalf("advice = %q, want %q", got, want)
 	}
@@ -44,7 +44,7 @@ func TestEachStepResolvesToItsTierModelAndEffortProfile(t *testing.T) {
 		t.Fatalf("classify is pinned to small, got %+v %+v", chair, a)
 	}
 	chair, a = p.Chair("gate", agyChair, "small", 0)
-	if chair != (Chair{Provider: "antigravity_cli", Profile: "km-agy", Model: "gemini-3.8-flash-high"}) || a.Tier != "medium" || a.Effort != "" {
+	if chair != (Chair{Provider: "antigravity_cli", Profile: "km-agy", Model: "gemini-4-hydrogen-high"}) || a.Tier != "medium" || a.Effort != "" {
 		t.Fatalf("gate never drops below medium and agy has no effort profile, got %+v %+v", chair, a)
 	}
 }
@@ -94,7 +94,7 @@ escalate_after = 0
 		t.Fatal(err)
 	}
 	p := settings.Policy
-	if got := p.Tiers["claude_code"]["large"]; got != (TierSpec{Model: "claude-fable-5-1", Effort: "xhigh"}) {
+	if got := p.Tiers["claude_code"]["large"]; got != (TierSpec{Model: "claude-fable-5-1", Effort: "high"}) {
 		t.Fatalf("large tier = %+v, want the model replaced and the default effort kept", got)
 	}
 	if chair, a := p.Chair("classify", claudeChair, "", 0); chair.Profile != "km-claude" || a.Effort != "" {
@@ -114,7 +114,6 @@ func TestPolicyRejectsSettingsCAOCannotApply(t *testing.T) {
 		"effort for copilot":    "[tiers.copilot_cli]\nlarge = { effort = \"high\" }\n",
 		"unknown effort":        "[tiers.claude_code]\nlarge = { effort = \"ultra\" }\n",
 		"inverted bounds":       "[steps.review]\nmin = \"large\"\n",
-		"unknown step":          "[steps.deploy]\ntier = \"large\"\nmin = \"large\"\nmax = \"large\"\n",
 		"unknown tier":          "[tiers.codex]\nhuge = { model = \"x\" }\n",
 		"new provider no model": "[tiers.kiro_cli]\nsmall = { effort = \"low\" }\n",
 		"bad mode":              "[sizing]\nmode = \"maybe\"\n",
@@ -154,6 +153,8 @@ func TestPlannerSizeReadsTheLastSizeLine(t *testing.T) {
 func tieredEngine(t *testing.T, mode string) (*Engine, *fakeStepper, *bytes.Buffer) {
 	eng, fake, records := newEngine(t, passing)
 	p := defaultPolicy()
+	p.Tiers["codex"]["medium"] = TierSpec{Model: "gpt-6.1-sol", Effort: "high"}
+	p.Tiers["codex"]["large"] = TierSpec{Model: "gpt-6-astra", Effort: "high"}
 	p.Sizing.Mode = mode
 	eng.Config.Policy = p
 	eng.Config.Chairs = Chairs{Planner: claudeChair, Implementer: codexChair, Reviewers: []Chair{claudeChair}, Gate: claudeChair, Classifier: claudeChair}
@@ -355,7 +356,7 @@ func TestEffortVariantsCoverEveryTierAStepCanReach(t *testing.T) {
 	for _, v := range got {
 		names = append(names, v.Name())
 	}
-	if strings.Join(names, " ") != "km-codex-medium km-claude-medium km-claude-high km-claude-xhigh" {
+	if strings.Join(names, " ") != "km-codex-medium km-claude-medium km-claude-high" {
 		t.Fatalf("variants = %v", names)
 	}
 }
@@ -422,7 +423,7 @@ func TestAPinnedTierReplacesTheStepDefaultAndSizingDoesNotMoveIt(t *testing.T) {
 	pinned.Tier = "large"
 	for _, want := range []string{"", "small", "medium", "large"} {
 		chair, a := p.Chair("implement", pinned, want, 0)
-		if chair != (Chair{Provider: "claude_code", Profile: "km-claude-xhigh", Model: "claude-opus-5-5"}) || a != (Assignment{Tier: "large", Effort: "xhigh", Source: "pinned"}) {
+		if chair != (Chair{Provider: "claude_code", Profile: "km-claude-high", Model: "claude-opus-5-5"}) || a != (Assignment{Tier: "large", Effort: "high", Source: "pinned"}) {
 			t.Fatalf("size %q: %+v %+v", want, chair, a)
 		}
 	}

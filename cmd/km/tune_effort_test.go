@@ -50,7 +50,7 @@ func TestTuneVerifyInstallsMissingEffortVariantsBeforeItSeatsAnyChair(t *testing
 				progress = diag.String()
 			}
 			seat := strings.Index(progress, "→ preflight ")
-			for _, effort := range []string{"medium", "high", "xhigh"} {
+			for _, effort := range []string{"medium", "high"} {
 				name := "km-claude-" + effort
 				path := filepath.Join(loop.StateDir(), "profiles", name+".md")
 				line := "→ installed CAO profile " + name + " from " + path
@@ -66,7 +66,7 @@ func TestTuneVerifyInstallsMissingEffortVariantsBeforeItSeatsAnyChair(t *testing
 				t.Fatal(progress, f.seated)
 			}
 			arguments := initRead(t, filepath.Dir(args), filepath.Base(args))
-			if strings.Count(arguments, "install\n") != 3 || strings.Count(arguments, "--provider\nclaude_code\n") != 3 {
+			if strings.Count(arguments, "install\n") != 2 || strings.Count(arguments, "--provider\nclaude_code\n") != 2 {
 				t.Fatal(arguments)
 			}
 		})
@@ -132,7 +132,7 @@ func TestTuneVerifyRefusesAVariantKapellmeisterDidNotGenerateAndInstallsNothing(
 
 func TestTuneVerifyWithVariantsAlreadyInstalledPrintsNoInstallLines(t *testing.T) {
 	root, args, f := tuneEffortFixture(t)
-	for _, effort := range []string{"medium", "high", "xhigh"} {
+	for _, effort := range []string{"medium", "high"} {
 		name := "km-claude-" + effort
 		f.profiles = append(f.profiles, cao.Profile{Name: name, Loadable: true})
 		f.permissions[name] = f.permissions["km-claude"]
@@ -153,14 +153,14 @@ func TestTuneVerifyInstallsEffortVariantsEvenWhenSeatingChecksAreDisabled(t *tes
 	f.mode = ""
 	srv := f.serve(t)
 	code, out := tuneCall(t, "verify", "-worktree", root, "-cao", srv.URL)
-	if code != 0 || !strings.Contains(out, "approved") || strings.Contains(out, "→ preflight") || strings.Count(out, "→ installed CAO profile") != 3 {
+	if code != 0 || !strings.Contains(out, "approved") || strings.Contains(out, "→ preflight") || strings.Count(out, "→ installed CAO profile") != 2 {
 		t.Fatal(code, out)
 	}
 	if len(f.steps) != 2 || len(f.writes) != 0 {
 		t.Fatal(f.steps, f.writes)
 	}
 	arguments := initRead(t, filepath.Dir(args), filepath.Base(args))
-	if strings.Count(arguments, "install\n") != 3 {
+	if strings.Count(arguments, "install\n") != 2 {
 		t.Fatal(arguments)
 	}
 }

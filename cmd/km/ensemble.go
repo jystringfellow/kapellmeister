@@ -130,7 +130,7 @@ func sizeMembers(policy loop.Policy, members []ensemble.Member) {
 }
 
 func sizeMember(policy loop.Policy, m ensemble.Member) ensemble.Member {
-	m.Chair, _ = policy.Chair(roleSteps[m.Part], m.Chair, "", 0)
+	m.Chair, _ = policy.Chair(policy.PartPolicyKey(m.Part), m.Chair, "", 0)
 	return m
 }
 
@@ -145,7 +145,7 @@ func prepareMember(ctx context.Context, client *cao.Client, policy loop.Policy, 
 	chair.Address = m.Chair.Address
 	m.Chair = chair
 	m = sizeMember(policy, m)
-	if err := ensureProfiles(ctx, client, &policy, map[string][]loop.Chair{roleSteps[m.Part]: {chair}}); err != nil {
+	if err := ensureProfiles(ctx, client, &policy, map[string][]loop.Chair{policy.PartPolicyKey(m.Part): {chair}}); err != nil {
 		return m, err
 	}
 	return m, nil
@@ -192,6 +192,11 @@ func loadSelectedScore(s loop.Settings, worktree, name string) (loop.Settings, e
 		if err != nil {
 			return s, err
 		}
+	}
+	var err error
+	s.Policy, err = s.Policy.ForScore(loaded.Score)
+	if err != nil {
+		return s, err
 	}
 	s.Score = loaded
 	if loaded.Score.Rounds > 0 && !s.RoundsConfigured {

@@ -287,3 +287,29 @@ func TestARepositoryEnsembleNamingAnAgentTheUserHasNotDefinedIsRejected(t *testi
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestAnEnsembleFileAcceptsXlargeAsAnAgentPinOrChairTier(t *testing.T) {
+	for _, pin := range []string{`agents = ["codex@xlarge"]`, "agents = [\"codex\"]\ntier = \"xlarge\""} {
+		home, wt := repoEnsemble(t, "solo", "[sections.all.chairs.implementer]\npart = \"implementer\"\n"+pin)
+		members := bind(t, find(t, "solo", home, wt), everyAgent)
+		if members[0].Chair.Tier != "xlarge" {
+			t.Fatal(members)
+		}
+	}
+}
+
+func TestAChairTierMustBeValidAndAgreeWithItsAgentPins(t *testing.T) {
+	for _, c := range []struct{ agents, tier, reason string }{
+		{`["codex"]`, "huge", "unknown tier"},
+		{`["codex"]`, "", "unknown tier"},
+		{`["codex@small"]`, "xlarge", "conflicts with agent pin"},
+		{`["codex:base:chosen"]`, "xlarge", "explicit model"},
+	} {
+		home := t.TempDir()
+		writeEnsemble(t, filepath.Join(home, UserDir), "solo", "[sections.all.chairs.implementer]\npart = \"implementer\"\nagents = "+c.agents+"\ntier = \""+c.tier+"\"\n")
+		_, _, err := Find("solo", home, "", loop.BuiltInAgents())
+		if err == nil || !strings.Contains(err.Error(), c.reason) {
+			t.Fatal(err)
+		}
+	}
+}

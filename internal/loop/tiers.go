@@ -9,7 +9,9 @@ import (
 	"strings"
 )
 
-var TierNames = []string{"small", "medium", "large"}
+var TierNames = []string{"small", "medium", "large", "xlarge"}
+
+var SizeNames = []string{"small", "medium", "large"}
 
 var StepKeys = []string{"plan", "implement", "review", "gate", "classify", "test"}
 
@@ -43,6 +45,8 @@ type SizingConfig struct {
 }
 
 type Policy struct {
+	custom map[string]StepPolicy
+	score  Score
 	Tiers  map[string]map[string]TierSpec `json:"tiers"`
 	Steps  map[string]StepPolicy          `json:"steps"`
 	Sizing SizingConfig                   `json:"sizing"`
@@ -76,27 +80,31 @@ func DefaultPolicy() Policy {
 			"claude_code": {
 				"small":  {Model: "claude-haiku-5-5", Effort: "medium"},
 				"medium": {Model: "claude-sonnet-5-5", Effort: "high"},
-				"large":  {Model: "claude-opus-5-5", Effort: "xhigh"},
+				"large":  {Model: "claude-opus-5-5", Effort: "high"},
+				"xlarge": {Model: "claude-fable-5-2", Effort: "high"},
 			},
 			"codex": {
 				"small":  {Model: "gpt-6-luna", Effort: "medium"},
-				"medium": {Model: "gpt-6.1-sol", Effort: "high"},
-				"large":  {Model: "gpt-6-astra", Effort: "high"},
+				"medium": {Model: "gpt-6.1-terra", Effort: "high"},
+				"large":  {Model: "gpt-6.1-sol", Effort: "high"},
+				"xlarge": {Model: "gpt-6-astra", Effort: "high"},
 			},
 			"copilot_cli": {
 				"small":  {Model: "claude-haiku-5.5"},
 				"medium": {Model: "claude-sonnet-5.5"},
 				"large":  {Model: "claude-opus-5.5"},
+				"xlarge": {Model: "claude-fable-5.2"},
 			},
 			"antigravity_cli": {
-				"small":  {Model: "gemini-3.8-flash-low"},
-				"medium": {Model: "gemini-3.8-flash-high"},
-				"large":  {Model: "gemini-4-argon-high"},
+				"small":  {Model: "gemini-3.8-flash-high"},
+				"medium": {Model: "gemini-4-hydrogen-high"},
+				"large":  {Model: "gemini-4-neon-high"},
+				"xlarge": {Model: "gemini-4-argon-high"},
 			},
 		},
 		Steps: map[string]StepPolicy{
 			"plan":      {Tier: "medium", Min: "medium", Max: "large"},
-			"implement": {Tier: "medium", Min: "small", Max: "large"},
+			"implement": {Tier: "medium", Min: "small", Max: "xlarge"},
 			"review":    {Tier: "medium", Min: "small", Max: "large"},
 			"gate":      {Tier: "medium", Min: "medium", Max: "large"},
 			"test":      {Tier: "medium", Min: "medium", Max: "large"},
@@ -107,7 +115,7 @@ func DefaultPolicy() Policy {
 }
 
 func (p Policy) clone() Policy {
-	out := Policy{Tiers: map[string]map[string]TierSpec{}, Steps: map[string]StepPolicy{}, Sizing: p.Sizing}
+	out := Policy{Tiers: map[string]map[string]TierSpec{}, Steps: map[string]StepPolicy{}, Sizing: p.Sizing, score: p.score}
 	for provider, tiers := range p.Tiers {
 		out.Tiers[provider] = map[string]TierSpec{}
 		for name, spec := range tiers {
@@ -116,6 +124,12 @@ func (p Policy) clone() Policy {
 	}
 	for name, step := range p.Steps {
 		out.Steps[name] = step
+	}
+	if p.custom != nil {
+		out.custom = map[string]StepPolicy{}
+		for name, step := range p.custom {
+			out.custom[name] = step
+		}
 	}
 	return out
 }
@@ -139,11 +153,14 @@ func (p Policy) withTiers(over map[string]map[string]TierSpec) Policy {
 func (p Policy) withSteps(over map[string]StepPolicy) Policy {
 	out := p.clone()
 	for name, step := range over {
-		cur := out.Steps[name]
-		cur.Tier = firstSet(step.Tier, cur.Tier)
-		cur.Min = firstSet(step.Min, cur.Min)
-		cur.Max = firstSet(step.Max, cur.Max)
-		out.Steps[name] = cur
+		if slices.Contains(StepKeys, name) {
+			out.Steps[name] = mergeStep(out.Steps[name], step)
+		} else {
+			if out.custom == nil {
+				out.custom = map[string]StepPolicy{}
+			}
+			out.custom[name] = mergeStep(out.custom[name], step)
+		}
 	}
 	return out
 }
@@ -185,17 +202,17 @@ func (p Policy) Validate() error {
 		}
 	}
 	for _, name := range sortedKeys(p.Steps) {
-		step := p.Steps[name]
-		where := "steps." + name
-		if !slices.Contains(StepKeys, name) {
-			problems = append(problems, fmt.Sprintf("%s: unknown step (want %s)", where, strings.Join(StepKeys, ", ")))
-			continue
+		if err := validateStep(name, p.Steps[name]); err != nil {
+			problems = append(problems, err.Error())
 		}
-		lo, mid, hi := tierIndex(step.Min), tierIndex(step.Tier), tierIndex(step.Max)
-		if lo < 0 || mid < 0 || hi < 0 {
-			problems = append(problems, fmt.Sprintf("%s: tier, min and max must each be one of %s", where, strings.Join(TierNames, ", ")))
-		} else if lo > mid || mid > hi {
-			problems = append(problems, where+": want min <= tier <= max")
+	}
+	for _, name := range sortedKeys(p.custom) {
+		step := p.custom[name]
+		for _, value := range []string{step.Tier, step.Min, step.Max} {
+			if value != "" && tierIndex(value) < 0 {
+				problems = append(problems, fmt.Sprintf("steps.%s: tier, min and max must each be one of %s", name, strings.Join(TierNames, ", ")))
+				break
+			}
 		}
 	}
 	switch p.Sizing.Mode {
@@ -326,4 +343,67 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+func mergeStep(base, over StepPolicy) StepPolicy {
+	return StepPolicy{Tier: firstSet(over.Tier, base.Tier), Min: firstSet(over.Min, base.Min), Max: firstSet(over.Max, base.Max)}
+}
+
+func (p Policy) ForScore(score Score) (Policy, error) {
+	out := p.clone()
+	out.score = score
+	names := slices.Clone(StepKeys)
+	for _, step := range score.Steps {
+		if !slices.Contains(names, step.Name) {
+			names = append(names, step.Name)
+		}
+	}
+	for _, name := range sortedKeys(p.custom) {
+		step, ok := score.Step(name)
+		if !ok {
+			return p, fmt.Errorf("steps.%s: unknown step (want %s)", name, strings.Join(names, ", "))
+		}
+		if key := score.PolicyKey(step.Name); key != name {
+			return p, fmt.Errorf("steps.%s: use [steps.%s] for this step", name, key)
+		}
+	}
+	for _, step := range score.Steps {
+		key := score.PolicyKey(step.Name)
+		if _, ok := out.Steps[key]; !ok {
+			policy := StepPolicy{Tier: "medium", Min: "medium", Max: "large"}
+			if step.Kind == KindProduce || step.Kind == KindReview {
+				policy.Min = "small"
+			}
+			if step.Kind == KindProduce && step.Escalate {
+				policy.Max = "xlarge"
+			}
+			out.Steps[key] = policy
+		}
+		out.Steps[key] = mergeStep(out.Steps[key], p.custom[step.Name])
+	}
+	for _, name := range sortedKeys(out.Steps) {
+		if err := validateStep(name, out.Steps[name]); err != nil {
+			return p, err
+		}
+	}
+	return out, nil
+}
+
+func (p Policy) PartPolicyKey(part string) string {
+	score := p.score
+	if len(score.Steps) == 0 {
+		score = DefaultScore()
+	}
+	return score.PartPolicyKey(part)
+}
+
+func validateStep(name string, step StepPolicy) error {
+	lo, mid, hi := tierIndex(step.Min), tierIndex(step.Tier), tierIndex(step.Max)
+	if lo < 0 || mid < 0 || hi < 0 {
+		return fmt.Errorf("steps.%s: tier, min and max must each be one of %s", name, strings.Join(TierNames, ", "))
+	}
+	if lo > mid || mid > hi {
+		return fmt.Errorf("steps.%s: want min <= tier <= max", name)
+	}
+	return nil
 }
