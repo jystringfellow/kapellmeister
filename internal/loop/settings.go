@@ -20,12 +20,12 @@ const (
 	homeDirName    = ".kapellmeister"
 )
 
-var ChairRoles = []string{"planner", "implementer", "reviewer", "gate", "classifier"}
+var ChairRoles = DefaultScore().Required()
 
-var OptionalRoles = []string{"tester"}
+var OptionalRoles = DefaultScore().Optional()
 
 func AllRoles() []string {
-	return append(slices.Clone(ChairRoles), OptionalRoles...)
+	return DefaultScore().Roles()
 }
 
 type TestConfig struct {
@@ -253,7 +253,7 @@ func DefaultSettings() Settings {
 		BlockerPoll:        20 * time.Second,
 		GateWhen:           GateWhenAny,
 		CAOURL:             "http://127.0.0.1:9889",
-		Rounds:             3,
+		Rounds:             DefaultScore().Rounds,
 		VerifyRetries:      1,
 		Timeout:            60 * time.Minute,
 		ReplyGrace:         15 * time.Minute,

@@ -261,15 +261,19 @@ func ChairsOf(members []Member) (loop.Chairs, error) {
 		byPart[m.Part] = append(byPart[m.Part], m)
 	}
 	var chairs loop.Chairs
-	for _, part := range loop.AllRoles() {
-		seated := byPart[part]
+	score := loop.DefaultScore()
+	for _, part := range score.Parts {
+		seated := byPart[part.Name]
 		if len(seated) == 0 {
-			if slices.Contains(loop.OptionalRoles, part) {
+			if part.Optional {
 				continue
 			}
-			return loop.Chairs{}, fmt.Errorf("ensemble seats no %s; the score needs one", part)
+			return loop.Chairs{}, fmt.Errorf("ensemble seats no %s; the score needs one", part.Name)
 		}
-		if part == "reviewer" {
+		review := slices.ContainsFunc(score.StepsOf(part.Name), func(step loop.ScoreStep) bool {
+			return step.Kind == loop.KindReview
+		})
+		if review {
 			for _, m := range seated {
 				chairs.Reviewers = append(chairs.Reviewers, m.Chair)
 			}
@@ -280,10 +284,10 @@ func ChairsOf(members []Member) (loop.Chairs, error) {
 			for _, m := range seated {
 				names = append(names, m.Section+"."+m.Name)
 			}
-			return loop.Chairs{}, fmt.Errorf("ensemble seats %d %ss (%s); the score has one", len(seated), part, strings.Join(names, ", "))
+			return loop.Chairs{}, fmt.Errorf("ensemble seats %d %ss (%s); the score has one", len(seated), part.Name, strings.Join(names, ", "))
 		}
 		chair := seated[0].Chair
-		switch part {
+		switch part.Name {
 		case "planner":
 			chairs.Planner = chair
 		case "implementer":
