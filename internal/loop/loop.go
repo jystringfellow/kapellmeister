@@ -251,6 +251,7 @@ type Result struct {
 }
 
 type ActiveStep struct {
+	label     string
 	Part      string    `json:"part,omitempty"`
 	Round     int       `json:"round,omitempty"`
 	Terminal  string    `json:"terminal,omitempty"`
@@ -794,11 +795,12 @@ func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 			return StepResult{}, err
 		}
 	}
-	finish := e.beginStep(s.Round, ActiveStep{Part: DefaultScore().StepPart(s.Name), Step: s.Name, ChairName: s.ChairName, Chair: s.Chair.Address, Terminal: s.ReuseTerminal})
+	finish := e.beginStep(s.Round, ActiveStep{Part: DefaultScore().StepPart(s.Name), Step: s.Name, ChairName: s.ChairName, Chair: s.Chair.Address, Terminal: s.ReuseTerminal, label: s.Label})
 	defer finish()
 	start := time.Now()
 	finishWatch := e.watchStep(s)
 	out, err := e.Stepper.Run(ctx, s)
+	e.rememberFinishedTerminal(out.TerminalID)
 	finishWatch()
 	rec.DurationMS = time.Since(start).Milliseconds()
 	rec.TerminalID, rec.Status, rec.Model, rec.ModelHonored = out.TerminalID, out.Status, out.ReportedModel, out.ModelHonored
