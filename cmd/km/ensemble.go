@@ -30,7 +30,26 @@ func lineUp(s loop.Settings, worktree, name string, roles map[string]*string) (l
 		if err := checkPins(s.Policy, chairSpecs(s, roles), chairs); err != nil {
 			return s, chairs, nil, err
 		}
-		return s, chairs, ensemble.MembersOf(chairs), nil
+
+		members := ensemble.MembersOf(chairs)
+		s, err = loadSelectedScore(s, worktree, s.ScoreName)
+		if err != nil {
+			return s, chairs, nil, err
+		}
+		if _, err := ensemble.ChairsFor(s.Score.Score, members); err != nil {
+			return s, chairs, nil, err
+		}
+		if s.Score.Score.Source != "" {
+			s.GateWhen = ""
+		}
+		return s, chairs, members, nil
+	}
+	if s.ScoreName != "" {
+		return s, loop.Chairs{}, nil, fmt.Errorf("-score cannot override ensemble %s from %s; edit its score key", name, spec.Path)
+	}
+	s, err = loadSelectedScore(s, worktree, spec.Score)
+	if err != nil {
+		return s, loop.Chairs{}, nil, err
 	}
 	if inConfig {
 		return s, loop.Chairs{}, nil, fmt.Errorf("ensemble %s is defined both in [ensembles.%s] of %s and in %s; rename one", name, name, loop.UserConfigPath(loop.Home()), spec.Path)
@@ -49,11 +68,14 @@ func lineUp(s loop.Settings, worktree, name string, roles map[string]*string) (l
 			return s, loop.Chairs{}, nil, err
 		}
 	}
-	chairs, err := ensemble.ChairsOf(members)
+	chairs, err := ensemble.ChairsFor(s.Score.Score, members)
 	if err != nil {
 		return s, loop.Chairs{}, nil, fmt.Errorf("%s: %w", spec.Path, err)
 	}
-	s.GateWhen = firstNonEmpty(spec.GateWhen, loop.GateWhenAny)
+	s.GateWhen = spec.GateWhen
+	if s.Score.Score.Source == "" {
+		s.GateWhen = firstNonEmpty(spec.GateWhen, loop.GateWhenAny)
+	}
 	return s, chairs, members, nil
 }
 
@@ -125,7 +147,7 @@ func failedChairs(report ensemble.Report) []string {
 	return failed
 }
 
-func addressedChairs(worktree, name string, chairs loop.Chairs, members []ensemble.Member) (loop.Chairs, error) {
+func addressedChairs(worktree, name string, chairs loop.Chairs, members []ensemble.Member, score loop.Score) (loop.Chairs, error) {
 	if _, found := ensemble.Path(name, loop.Home(), worktree); !found {
 		return chairs, nil
 	}
@@ -133,5 +155,37 @@ func addressedChairs(worktree, name string, chairs loop.Chairs, members []ensemb
 	for i, m := range seated {
 		seated[i].Chair.Address = m.Address(name)
 	}
-	return ensemble.ChairsOf(seated)
+	return ensemble.ChairsFor(score, seated)
+}
+
+func printScoreFiles(w io.Writer, files []loop.ScoreFile) {
+	for _, file := range files {
+		if file.Source == "repository" {
+			fmt.Fprintf(w, "%s  %s  repository  %s  %.12s\n", file.Kind, file.Name, file.Path, file.SHA256)
+		}
+	}
+}
+func loadSelectedScore(s loop.Settings, worktree, name string) (loop.Settings, error) {
+	loaded := s.Score
+	if loaded.Score.Name != "" {
+		selected := firstNonEmpty(name, "default")
+		if selected != loaded.Score.Name {
+			return s, fmt.Errorf("score changed from %s to %s after loading", loaded.Score.Name, selected)
+		}
+	} else {
+		var err error
+		loaded, err = loop.LoadScore(name, loop.ScoreSource{Home: loop.Home(), Worktree: worktree, AllowRepository: s.RepositoryScores})
+		if err != nil {
+			return s, err
+		}
+	}
+	s.Score = loaded
+	if loaded.Score.Rounds > 0 && !s.RoundsConfigured {
+		s.Rounds = loaded.Score.Rounds
+	}
+	return s, nil
+}
+
+func ensembleScoreName(name, worktree string) (string, error) {
+	return ensemble.ScoreName(name, loop.Home(), worktree)
 }

@@ -50,7 +50,7 @@ km init [-worktree DIR] [-dry-run] [-json] [-verify CMD] [-check CMD] [-no-run] 
 km tune verify [-worktree DIR] [-require SUITE]... [-known-failure LABEL]... [-time-bounded] [-detach] [-timeout D] [-budget D] [-verify-timeout D] [-json] [-again] [-guide]  # write and prove verify
 km tune strict [-worktree DIR] [-strict-timeout D] [-budget D] [-timeout D] [-detach] [-json] [-again] [-guide]  # write and prove strict: what verify had to leave out
 km prove [-worktree DIR] [-level verify|strict] [-break PATCH]... [-timeout D] [-json]  # prove verify or strict on clean copies and broken code
-km run -repo ~/Code/app [-base BRANCH] -task-file task.md [-ensemble thorough] [-detach]  # one ensemble
+km run -repo ~/Code/app [-base BRANCH] -task-file task.md [-ensemble thorough | -score NAME] [-detach]  # one ensemble
 km audition -worktree DIR [-ensemble thorough]   # can this ensemble play? no real work
 km rehearse -worktree DIR -task-file task.md [-ensemble thorough]  # brief and leave standing
 km play SESSION [-max-rounds N] [-verify CMD] [-timeout D] [-cao URL]  # run the score
@@ -189,6 +189,7 @@ success or wait on it forever.
 | 4 | Unfinished; no result and the process is gone or liveness cannot be checked |
 | 5 | Finished with `strict_failed`: approved, then the strict level failed |
 | 6 | Finished with `strict_not_run`: approved, but strict did not run or did not finish (environment missing, broken probe, or interrupted) |
+| 7 | Finished with `changes_requested`: a score sent changes to an ending, with nobody to fix them |
 | 16 | Finished with `baseline_mismatch`: `verify_known_failures` did not match the `known_failure` steps that ran before any chair played |
 
 `-json` prints `{"run_id":"…","state":"finished","exit_status":0,"reason":"","result":{…}}`.
@@ -571,8 +572,8 @@ agents = ["claude"]
 ```
 
 Each chair has the address `section.chair@ensemble`, such as `review.security@thorough`, and
-plays one part: `planner`, `implementer`, `reviewer`, `gate`, `classifier` or the optional `tester`.
-The score needs exactly one planner, implementer, gate and classifier, at least one reviewer,
+plays one part. The built-in parts are `planner`, `implementer`, `reviewer`, `gate`, `classifier` and the optional `tester`.
+The default score needs exactly one planner, implementer, gate and classifier, at least one reviewer,
 and at most one tester. Parts are roles with plain names; chairs may carry orchestral names,
 such as `tonmeister` for the tester. Section and chair names are lowercase letters, digits and dashes. Sections keep the order they first appear in the file,
 and chairs keep their order within a section.
@@ -585,6 +586,131 @@ error even if a later preference is available. Your own files may also name
 file's, which wins over `[run] timeout`. Role flags cannot override an ensemble file; copy it to
 `~/.kapellmeister/ensembles/` and edit that instead. A name defined both as a file and in
 `[ensembles]` is an error. `km config` lists the ensemble files it finds and where each is from.
+
+## Scores and parts as files
+
+A score names steps and their exits; parts hold the instructions each chair follows. An ensemble
+file selects a score with the top-level key `score = "NAME"`. Without it the ensemble plays the
+built-in `default`, with the same steps, prompts, reply files and outcomes as before. `km run -score NAME` selects one when seating from `[chairs]`; it cannot override an ensemble file.
+`km rehearse`, `km audition` and `km play` use the ensemble file's key. Play reads that key again
+when it starts; the standing record does not store the choice.
+
+Keep scores in `~/.kapellmeister/scores/NAME.toml` or `.kapellmeister/scores/NAME.toml`, and
+parts in `~/.kapellmeister/parts/NAME.md` or `.kapellmeister/parts/NAME.md`. The user directories
+follow `$KAPELLMEISTER_HOME`. A user file shadows the repository file of the same name, whole;
+scores and parts resolve independently. Names use lowercase letters, digits and dashes, starting
+with a letter or digit. The score name `default` and the part names `planner`, `implementer`,
+`reviewer`, `gate`, `tester` and `classifier` are reserved: a file with one is refused, naming it.
+A run that names no score does not inspect these directories.
+
+For example, `scores/small.toml` could contain:
+
+```toml
+rounds = 2
+
+[parts.drafter]
+memory = "fresh"
+
+[[steps]]
+name = "draft"
+kind = "produce"
+part = "drafter"
+next = { done = "inspect" }
+
+[[steps]]
+name = "inspect"
+kind = "review"
+part = "inspector"
+reads = ["draft"]
+approve_when = "all"
+next = { approve = "approved", changes = "draft" }
+```
+
+Seat `drafter`, `inspector` and `classifier` chairs in an ensemble file with `score = "small"`,
+and supply `parts/drafter.md` and `parts/inspector.md`. Required parts need a chair; review steps
+use all chairs of their part, and other kinds accept one. Every seated part must belong to the
+score; the classifier is a service and is always accepted. A review, decide or test step needs a
+classifier. With `-score` and `[chairs]`, only the built-in roles those settings supply can be
+seated; custom parts need an ensemble file. Roles outside the score are refused.
+
+The only score keys are `rounds`, `[parts.NAME]` and `[[steps]]`. Part tables accept `memory`
+(`fresh`, the default, or `resume`) and `optional` (default false). Resume is supported only for
+the implementer; review steps always use fresh memory. Optional parts may play only test steps
+or the background step. Each step accepts `name`, `kind`, `part`, `reads`, `writes`, `background`,
+`approve_when`, `escalate` and `next`. Reads name steps whose newest reply files are handed over.
+Writes may be `"reply"` on produce steps; otherwise a produce step may change the worktree and
+is followed by verify. Approval policy is `any`, `all` or `always`, only on review steps; an
+ensemble's explicit `gate_when` overrides it. Escalate is a produce-step option.
+
+| Kind | Required exits in `next` |
+| --- | --- |
+| `produce` | `done` |
+| `review`, `decide` | `approve`, `changes` |
+| `test` | `approve`, `changes`, `absent` |
+
+Every exit targets another step or an ending, `approved` or `changes_requested`. A backward exit
+(to the same or an earlier step) needs `rounds`; `[run] rounds` and `-rounds` override it. One
+produce step may set `background = true` and `writes = "reply"`, with no `next`. It starts when
+the step before it exits and is joined before its first reader. It cannot be first or an exit
+target. Baseline verify, verify after worktree-writing produce steps and strict after approval
+stay under the conductor's control. A decide step takes `changes` while verify is failing.
+
+A part file is plain Markdown, without front matter. With no step headings its text applies to
+every step it plays. A part playing several steps can separate their instructions with exact
+`## step: NAME` headings; text above the first heading applies to every step. Headings must name
+steps the part plays, cannot repeat, and must leave nonempty instructions for each step.
+
+| Placeholder | Filled by the conductor |
+| --- | --- |
+| `{plan}` | The first input reply file handed to this step |
+| `{reply}` | This step's reply file path |
+| `{inputs}` | All input reply paths, separated by commas |
+| `{verify}` | The verify output file path |
+| `{check}` | The configured check command |
+| `{scratch}` | The generated scratch directory |
+
+Only braces matching `\{[a-z][a-z0-9_]*\}` are placeholders; JSON braces and `${HOME}` stay
+literal. Substitution is single-pass; text from a chair is never substituted. The prompt contains,
+in order, the conductor's preamble, task, lessons, part text and a fixed block naming the files to
+read and the reply to write. Review, decide and test steps end that block with
+`Put APPROVE or CHANGES alone on the last line of the reply file.` A part cannot remove or reword
+that block. Test steps also get the scratch-directory constraint. Reply files are named by the
+conductor: `STEP.md` before the loop, `STEP-ROUND.md` inside it, and `STEP-ROUND-N.md` for several
+review chairs.
+
+A file score may use a built-in part. Its prompt depends on part and kind, regardless of step
+name: planner plays produce (plan prompt), implementer plays produce (implement prompt), reviewer
+plays review, gate plays decide (gate prompt), and tester plays test or produce (test-plan prompt).
+Other kinds are refused. Reads are handed positionally as in
+those prompts: implement needs plan; review needs plan and implementation summary; gate needs
+plan, summary and reviews; test needs plan, test plan and summary; test-plan needs plan. At least
+that many reads are required. Planner and tester's produce steps need `writes = "reply"`.
+File scores do not request sizing; a step receives a tier policy only when its name is an existing
+policy key. Custom step names have no sizing or tier configuration, and a tier pin on a chair of
+a custom part is refused. Takeover by another non-review chair and memory for other parts are
+not supported yet.
+
+Before any chair is seated, loading refuses unknown keys, kinds, parts, reads, writes, memory,
+approval policies, exit names, targets or placeholders; missing exits; invalid, duplicate or
+reserved step names; unused part tables; unreachable steps or steps with no path to an ending;
+backward exits without rounds; invalid background or optional steps; review memory; missing
+required chairs, extra parts, several non-review chairs or a verdict step without a classifier.
+Messages name the file and the affected step or part. Reserved step names include `approved`,
+`changes_requested`, `verify`, `strict`, `lessons` and names starting with `classify-`.
+
+Repository scores and parts are read once at run start from committed files at the base commit,
+never from their worktree copies. They must be regular UTF-8 files without control, invisible or
+direction-changing characters. Before the run, each repository file is printed with its path and
+a short SHA-256 content hash. `result.json` records `score`, `score_source` and `score_files`
+(names, kinds, sources, paths and full hashes). `km status -json` reports the score's `name`,
+`source` (`built-in`, `user` or `repository`) and steps. When the run changes a repository score
+or part it played, the summary names its path and records it in `score_files_changed`; the run
+continues using the original committed text. Detached runs carry that same loaded text forward.
+
+A repository already supplies instruction files and commands. To refuse its scores and parts,
+set `[run] repository_scores = false` in your own config. This setting defaults to true and is
+refused in repository config. The refusal names the repository file; a user file that shadows
+it remains usable. No approval prompt is added inside the run.
 
 ## Configuration
 
@@ -599,7 +725,7 @@ available agent in your user config.
 
 The repository's values win for `[run]` rounds, retries, `lessons`, `lessons_timeout` and `learned_budget`, `[steps]` and `[sizing]`; yours win
 for `[tiers]`, because only you know what your accounts can run. `[cao]`, `[chairs]`, `[agents]`,
-`[ensembles]`, `[report]`, `[run] worktree_dir` and `[run] trust_folder` are machine-only
+`[ensembles]`, `[report]`, `[run] worktree_dir`, `[run] trust_folder` and `[run] repository_scores` are machine-only
 (see [Trusting the folder](#trusting-the-folder)); `[test]` and `[run] base` are repository-only.
 Putting one in the wrong file is an error.
 
@@ -1392,7 +1518,7 @@ In every case but a pass the approved change is left in the worktree, as after a
 gate's approval stands and strict still has to pass before the change is trusted at that level.
 The JSON summary carries `strict` (`status` of `passed`, `failed`, `not_run` or `not_reached`,
 `command`, `ready`, `exit_code`, `duration_ms`, `reply`, `reason`, `changed`). `km wait` exits
-with the same 5 and 6, and with 16 for `baseline_mismatch`, also with `-json`.
+with the same 5 and 6, with 7 for `changes_requested`, and with 16 for `baseline_mismatch`, also with `-json`.
 
 km records the script `[test] strict` and `[test] strict_ready` point at when the run starts:
 the command's first word after any `NAME=value` assignments, with quotes removed, when it is a
@@ -1541,8 +1667,8 @@ in the selected ensemble to turn escalation off for that run. `true` or an omitt
 
 `km run` and `km play` exit 0 only for an `approved` outcome. Every other outcome, including `untested`
 (approved but testing did not finish), a failed, interrupted or rounds-exhausted run, exits 1 after
-printing the outcome and diff-stat. Two outcomes have their own status: `strict_failed` exits 5 and
-`strict_not_run` exits 6. SIGINT, SIGTERM and SIGHUP cancel steps and allow cleanup; a run
+printing the outcome and diff-stat. Outcomes with their own status are `strict_failed` (5),
+`strict_not_run` (6), `changes_requested` (7) and `baseline_mismatch` (16). SIGINT, SIGTERM and SIGHUP cancel steps and allow cleanup; a run
 ended by a signal names it, such as `interrupted by SIGINT`, in the output, `result.json` and
 telemetry. A second signal while km is cleaning up ends it at once. `km audition`, `rehearse` and
 `reseat` name the signal in their error line. Cancellation from another cause keeps its usual wording. Missing or unknown subcommands

@@ -50,16 +50,28 @@ func playCommand(args []string) error {
 	if unbriefed := standing.Unbriefed(); len(unbriefed) > 0 {
 		return fmt.Errorf("chair(s) %s were not briefed when session %s was rehearsed; take it down with km ensemble down %s and km rehearse again; %s", strings.Join(unbriefed, ", "), standing.Session, standing.Session, reseatHints(standing.Session, unbriefed))
 	}
-	chairs, err := standing.RebuildChairs()
-	if err != nil {
-		return err
-	}
 	s, err := loop.LoadSettings(loop.Home(), standing.Worktree)
 	if err != nil {
 		return err
 	}
 	if set["max-rounds"] {
 		s.Rounds = *rounds
+		s.RoundsConfigured = true
+	}
+	name, err := ensemble.ScoreName(standing.Ensemble, loop.Home(), standing.Worktree)
+	if err != nil {
+		return err
+	}
+	s, err = loadSelectedScore(s, standing.Worktree, name)
+	if err != nil {
+		return err
+	}
+	chairs, err := standing.RebuildChairsFor(s.Score.Score)
+	if err != nil {
+		return err
+	}
+	if s.Score.Score.Source != "" {
+		s.GateWhen = ""
 	}
 	if set["timeout"] {
 		s.Timeout = *timeout
@@ -98,6 +110,7 @@ func playCommand(args []string) error {
 		return fmt.Errorf("chair(s) %s have no occupant in session %s; take it down with km ensemble down %s and km rehearse again; %s", strings.Join(missing, ", "), standing.Session, standing.Session, reseatHints(standing.Session, missing))
 	}
 	printSources(os.Stdout, s)
+	printScoreFiles(os.Stdout, s.Score.Files)
 	fmt.Printf("ensemble %s (session %s); sizing and tier escalation off\n", standing.Ensemble, standing.Session)
 	var members []ensemble.Member
 	terminals := map[string]string{}
@@ -106,7 +119,7 @@ func playCommand(args []string) error {
 		terminals[chair.Address] = chair.TerminalID
 	}
 	sum, err := runEnsemble(ctx, ensembleRun{
-		Members: members, Agents: s.Defined, CAOURL: client.BaseURL, Terminals: terminals,
+		Score: s.Score.Score, ScoreFiles: s.Score.Files, Members: members, Agents: s.Defined, CAOURL: client.BaseURL, Terminals: terminals,
 		Command: "play", RunID: runID, StateDir: runDir, Ensemble: standing.Ensemble, Meter: loop.NewLogMeter(),
 		Config: loop.Config{
 			ScratchDir: scratch, MinFreeMB: s.MinFreeMB, CAOURL: s.CAOURL, StateDir: loop.StateDir(), RunID: runID, Task: text, Worktree: standing.Worktree, Chairs: chairs, GateWhen: firstNonEmpty(standing.GateWhen, s.GateWhen),

@@ -71,6 +71,7 @@ func ValidSuites(names []string) error {
 }
 
 type RunConfig struct {
+	RepositoryScores   *bool  `toml:"repository_scores"`
 	BaseBranch         string `toml:"base"`
 	WorktreeDir        string `toml:"worktree_dir"`
 	TrustFolder        *bool  `toml:"trust_folder"`
@@ -175,6 +176,10 @@ type ReportPrice struct {
 }
 
 type Settings struct {
+	ScoreName          string                 `json:"-"`
+	Score              LoadedScore            `json:"-"`
+	RoundsConfigured   bool                   `json:"-"`
+	RepositoryScores   bool                   `json:"repository_scores"`
 	ReportPrices       map[string]ReportPrice `json:"report_prices,omitempty"`
 	ReportDirs         []string               `json:"report_dirs,omitempty"`
 	Defined            Agents                 `json:"-"`
@@ -247,6 +252,7 @@ func UserConfigPath(home string) string {
 
 func DefaultSettings() Settings {
 	return Settings{
+		RepositoryScores:   true,
 		LearnedBudget:      defaultLearnedBudget,
 		Lessons:            false,
 		LessonsTimeout:     DefaultLessonsTimeout,
@@ -491,7 +497,10 @@ func refuseRepoConfig(cfg loadedConfig, userPath string) error {
 	if err := refuseRunKey(cfg, "worktree_dir", userPath); err != nil {
 		return err
 	}
-	return refuseRunKey(cfg, "trust_folder", userPath)
+	if err := refuseRunKey(cfg, "trust_folder", userPath); err != nil {
+		return err
+	}
+	return refuseRunKey(cfg, "repository_scores", userPath)
 }
 
 func RepoBaseBranch(data []byte) (string, error) {
@@ -551,7 +560,11 @@ func (s *Settings) applyRun(layer loadedConfig) error {
 	if layer.md.IsDefined("run", "lessons_timeout") && r.LessonsTimeout == "" {
 		return fmt.Errorf("%s: run.lessons_timeout: must be above 0", layer.name)
 	}
+	if r.RepositoryScores != nil {
+		s.RepositoryScores = *r.RepositoryScores
+	}
 	if r.Rounds != nil {
+		s.RoundsConfigured = true
 		if *r.Rounds < 1 {
 			return fmt.Errorf("%s: run.rounds: must be at least 1", layer.name)
 		}

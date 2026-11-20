@@ -86,12 +86,16 @@ func RemoveStanding(dir, session string) error {
 }
 
 func (s Standing) RebuildChairs() (loop.Chairs, error) {
+	return s.RebuildChairsFor(loop.DefaultScore())
+}
+
+func (s Standing) RebuildChairsFor(score loop.Score) (loop.Chairs, error) {
 	for _, c := range s.Chairs {
 		if c.Binding.Provider == "" {
 			return loop.Chairs{}, fmt.Errorf("session %s was rehearsed by an older km (no recorded binding); take it down and rehearse again", s.Session)
 		}
 	}
-	chairs, err := ChairsOf(s.Members())
+	chairs, err := ChairsFor(score, s.Members())
 	if err != nil {
 		return loop.Chairs{}, fmt.Errorf("session %s: %w", s.Session, err)
 	}

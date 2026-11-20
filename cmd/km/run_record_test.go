@@ -141,7 +141,7 @@ func chairsFromEnsembleFile(t *testing.T, worktree string) loop.Chairs {
 	if err != nil {
 		t.Fatal(err)
 	}
-	chairs, err = addressedChairs(worktree, "thorough", chairs, members)
+	chairs, err = addressedChairs(worktree, "thorough", chairs, members, loop.DefaultScore())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +272,7 @@ func TestAStepRecordOfARunWithoutAnEnsembleFileCarriesNoAddress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if chairs, err = addressedChairs(s.Worktree, "", chairs, members); err != nil {
+	if chairs, err = addressedChairs(s.Worktree, "", chairs, members, loop.DefaultScore()); err != nil {
 		t.Fatal(err)
 	}
 	for _, rec := range recordedSteps(t, recordRun(t, s.Worktree, "", chairs)) {

@@ -59,7 +59,7 @@ func auditionCommand(args []string) error {
 	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	client := newClient(firstNonEmpty(*caoURL, s.CAOURL), s, os.Stdout)
-	if err := ensureProfiles(ctx, client, &policy, stepChairs(chairs)); err != nil {
+	if err := ensureProfiles(ctx, client, &policy, stepChairs(chairs, s.Score.Score)); err != nil {
 		return err
 	}
 	ensembleName := firstNonEmpty(*name, defaultEnsembleName)

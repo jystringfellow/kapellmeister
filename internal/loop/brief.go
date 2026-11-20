@@ -10,7 +10,7 @@ func (e *Engine) brief(spec ScoreStep, h handoff, path string, chair Chair) stri
 	lessons := e.lessonsFor(spec.Name, chair)
 	switch spec.Brief {
 	case "plan":
-		askSize := e.sizing().Mode != SizingOff && e.sizing().Decider == DeciderPlanner
+		askSize := spec.Sizes && e.sizing().Mode != SizingOff && e.sizing().Decider == DeciderPlanner
 		return planPrompt(cfg.Task, path, askSize, lessons)
 	case "implement":
 		return implementPrompt(cfg.Task, h.path(0), path, cfg.CheckCommand, cfg.VerifyCommand, h.feedback, h.decide, h.test, lessons)
@@ -39,7 +39,7 @@ func (e *Engine) brief(spec ScoreStep, h handoff, path string, chair Chair) stri
 	}
 	prompt += "Write your reply to " + path + ".\n"
 	if spec.Kind != KindProduce {
-		prompt += "Put APPROVE or CHANGES alone on the last line.\n"
+		prompt += "Put APPROVE or CHANGES alone on the last line of the reply file.\n"
 	}
 	return prompt
 }
