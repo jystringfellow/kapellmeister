@@ -357,10 +357,10 @@ func TestTuneVerifyReportsATimeoutRetry(t *testing.T) {
 
 func TestThePreflightLineSaysWhenAFastFailureWasRetriedAfterAWaitAndWhatTheFailureWas(t *testing.T) {
 	waited := loop.PreflightResult{OK: true, Retried: true, RetryWaitMS: 20000, RetryWaitError: "policy is still loading"}
-	if got, want := timeoutRetryNote(waited, time.Minute), "; first attempt failed (policy is still loading), retried after waiting 20s"; got != want {
+	if got, want := timeoutRetryNote(waited, time.Minute, false), "; first attempt failed (policy is still loading), retried after waiting 20s"; got != want {
 		t.Fatalf("note = %q", got)
 	}
-	if got := timeoutRetryNote(loop.PreflightResult{OK: true}, time.Minute); got != "" {
+	if got := timeoutRetryNote(loop.PreflightResult{OK: true}, time.Minute, false); got != "" {
 		t.Fatalf("note = %q", got)
 	}
 }

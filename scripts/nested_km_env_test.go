@@ -210,3 +210,20 @@ func TestAMissingScratchDirectoryArgumentIsAUsageError(t *testing.T) {
 		t.Fatalf("err %v, stdout %q, stderr %q", err, stdout, stderr)
 	}
 }
+
+func TestTheScriptSaysCopilotCannotBeSeatedFromANestedCaoHome(t *testing.T) {
+	for _, shell := range shells(t) {
+		t.Run(shell, func(t *testing.T) {
+			path, stderr, err := nestedKmEnv(t, shell, shortScratch(t))
+			if err != nil {
+				t.Fatalf("%v: %s", err, stderr)
+			}
+			c := exec.Command(shell, "-c", `. "$1"`, "chair", path)
+			var out, note bytes.Buffer
+			c.Stdout, c.Stderr = &out, &note
+			if err := c.Run(); err != nil || out.Len() != 0 || !strings.Contains(note.String(), "nested-km-env: note: Copilot cannot be seated from this nested CAO home") || !strings.Contains(note.String(), ".copilot/agents") {
+				t.Fatalf("%v: stdout %q, stderr %q", err, out.String(), note.String())
+			}
+		})
+	}
+}

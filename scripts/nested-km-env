@@ -88,6 +88,7 @@ trap 'rm -f "$draft"' EXIT
 	printf 'export CAO_API_BASE_URL=%s\n' "$(quoted "http://127.0.0.1:$port")"
 	printf 'mkdir -p "$TMUX_TMPDIR" "$KAPELLMEISTER_HOME" "$KAPELLMEISTER_STATE_DIR" "$CAO_HOME_DIR" || return 1\n'
 	printf 'chmod 700 "$TMUX_TMPDIR" || return 1\n'
+	printf '%s\n' "printf '%s\\n' 'nested-km-env: note: Copilot cannot be seated from this nested CAO home: its agent files live in ~/.copilot/agents, which the CAO home that installed them owns' >&2"
 } >"$draft"
 mv "$draft" "$env_file"
 printf '%s\n' "$env_file"

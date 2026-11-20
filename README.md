@@ -351,7 +351,8 @@ failed the same way: run the command again in a few minutes` when the two errors
 a few minutes`. Set the key to `0s` for an immediate retry, or longer
 when a provider needs more time. A slower failure and a failed seat call are retried at once;
 a preflight check timeout gets one fresh chair and one retry. km reports whether that second
-attempt passed or failed. Two timeouts can take two full `preflight_timeout`s plus CAO's readiness
+attempt passed or failed. When the chair is Codex, the second attempt passed and `[run] trust_folder` is off, km adds that
+Codex asks to trust a folder it has not seen and that the key records the trust before chairs launch. Two timeouts can take two full `preflight_timeout`s plus CAO's readiness
 margins and seating time. Seat call timeouts, including an expired launch context, and permission
 blockers are not retried. Real work steps get no additional retry.
 A seat launch is bounded at three-eighths of `preflight_timeout` (90s by default, at least 10s),
@@ -1190,6 +1191,11 @@ and prints a diagnostic. It prints one line when it records trust. km and cao-se
 For Claude Code, Copilot CLI and Antigravity, km writes nothing: CAO 2.5.4 accepts their trust
 dialogs. km also does nothing for other providers. With the setting **off**, km changes nothing,
 but CAO still accepts the dialogs it recognises; off does not mean a folder stays untrusted.
+
+CAO 2.5.4 does not recognise the dialog Codex 0.167 shows for a folder it has not seen ("Trust this
+folder?"). With the setting off, a Codex chair's first readiness check in such a folder times out,
+km's message is lost in the dialog, its Enter accepts the trust, and the second attempt passes. With
+the setting on there is no dialog and the first attempt passes.
 
 Codex supports a per-launch override, `-c 'projects={"/path"={trust_level="trusted"}}'`, which saves
 nothing. CAO cannot carry it: profile `codexConfig` keys must match `[A-Za-z0-9_.-]` and values must
