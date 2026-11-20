@@ -269,7 +269,17 @@ type ActiveStep struct {
 	Started   time.Time `json:"started"`
 }
 
+type Reseated struct {
+	Old string
+	New string
+}
+
+type Reseater interface {
+	Reseat(context.Context, Chair) (Reseated, error)
+}
+
 type Engine struct {
+	Reseater        Reseater
 	kept            map[string]*keptChair
 	keptOrder       []string
 	Score           Score
@@ -873,6 +883,24 @@ func (e *Engine) reviewRound(ctx context.Context, spec ScoreStep, round int, han
 	chairs := e.Config.Chairs.Of(spec.Part)
 	if len(chairs) == 0 {
 		return nil, errors.New("no reviewers configured")
+	}
+	if e.Reseater != nil {
+		seated := map[string]bool{}
+		for _, chair := range chairs {
+			if seated[chair.Address] {
+				continue
+			}
+			seated[chair.Address] = true
+			e.progress("  reseating review chair %s", chair.Address)
+			result, err := e.Reseater.Reseat(ctx, chair)
+			if result.New != "" {
+				e.record(Record{RunID: e.Config.RunID, Round: round, Step: "reseat", Part: spec.Part, Chair: &chair, TerminalID: result.New, Detail: "replaced " + result.Old})
+			}
+			if err != nil {
+				return nil, fmt.Errorf("reseating review chair %s: %w", chair.Address, err)
+			}
+			e.progress("  %s: %s → %s", chair.Address, result.Old, result.New)
+		}
 	}
 	reviews := make([]review, len(chairs))
 	steps := make([]Step, len(chairs))

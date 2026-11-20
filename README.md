@@ -604,8 +604,19 @@ when CAO says the session is already gone.
 
 `km play SESSION [-max-rounds N] [-verify CMD] [-timeout D] [-cao URL]` runs the score on a
 standing ensemble. It uses the recorded worktree, task and chairs, rereading the task file when
-one was recorded. Every step runs in its chair's standing occupant, including each reviewer in
-its own chair. Steps sharing an occupant run one at a time.
+one was recorded. Before each review step, including the first, `km play` reseats every chair
+that will play it, as `km reseat` does: a new terminal in the same session, with the same address,
+section, agent, profile, model and tier, briefed before the old terminal is released. Review is
+always fresh under every command: a reviewer that remembers its last verdict reviews its memory.
+This follows the score's step kinds, whatever the steps and parts are named. All other chairs
+keep their terminals for the whole play, including non-review parts declaring `memory = "resume"`.
+Steps sharing an occupant run one at a time.
+
+A progress line names each chair being reseated before the review step. All review chairs are
+reseated before any plays, and they still play in parallel under one snapshot. The standing record
+names the new terminals, and `km status -json` shows them once the chairs play. A failed reseat
+stops the play naming the chair and the failure; no review step falls back to an old terminal.
+The standing record keeps an existing terminal for every other chair.
 
 Sizing and tier escalation are off: each occupant keeps its recorded provider, profile and model.
 Before planning, km refuses an ensemble with any chair that did not close its rehearsal briefing,

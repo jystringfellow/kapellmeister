@@ -169,7 +169,7 @@ func requireRecordedAddresses(t *testing.T, dir string, want map[string][]string
 }
 
 func standingAddresses(s ensemble.Standing) map[string][]string {
-	steps := map[string][]string{"planner": {"plan"}, "implementer": {"implement"}, "reviewer": {"review"}, "gate": {"gate", "lessons"}, "classifier": {"classify-review", "classify-gate"}}
+	steps := map[string][]string{"planner": {"plan"}, "implementer": {"implement"}, "reviewer": {"review", "reseat"}, "gate": {"gate", "lessons"}, "classifier": {"classify-review", "classify-gate"}}
 	want := map[string][]string{}
 	for _, c := range s.Chairs {
 		for _, step := range steps[c.Part] {
