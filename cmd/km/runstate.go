@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -10,18 +11,30 @@ import (
 )
 
 type runState struct {
-	RunID        string            `json:"run_id"`
-	Command      string            `json:"command"`
-	Repository   string            `json:"repository"`
-	Ensemble     string            `json:"ensemble"`
-	Started      time.Time         `json:"started"`
-	Updated      time.Time         `json:"updated"`
-	Round        int               `json:"round"`
-	MaxRounds    int               `json:"max_rounds"`
-	Playing      []loop.ActiveStep `json:"playing"`
-	PID          int               `json:"pid"`
-	Host         string            `json:"host"`
-	ProcessStart string            `json:"process_start"`
+	CAO          string             `json:"cao,omitempty"`
+	Seating      *statusSeating     `json:"seating,omitempty"`
+	Score        *loop.ScoreOutline `json:"score,omitempty"`
+	RunID        string             `json:"run_id"`
+	Command      string             `json:"command"`
+	Repository   string             `json:"repository"`
+	Ensemble     string             `json:"ensemble"`
+	Started      time.Time          `json:"started"`
+	Updated      time.Time          `json:"updated"`
+	Round        int                `json:"round"`
+	MaxRounds    int                `json:"max_rounds"`
+	Playing      []loop.ActiveStep  `json:"playing"`
+	PID          int                `json:"pid"`
+	Host         string             `json:"host"`
+	ProcessStart string             `json:"process_start"`
+}
+
+func statusServerAddress(address string) string {
+	parsed, err := url.Parse(address)
+	if err != nil {
+		return ""
+	}
+	parsed.User = nil
+	return parsed.String()
 }
 
 func writeRunState(dir string, state runState) error {

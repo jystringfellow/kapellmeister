@@ -116,3 +116,22 @@ func DefaultChairs(available []string) map[string]string {
 	chairs["implementer"], chairs["reviewer"] = implementer, reviewer
 	return chairs
 }
+
+func (defined Agents) NameOf(chair Chair) string {
+	for _, agent := range defined {
+		if agent.Chair.Provider == chair.Provider && agent.Chair.Profile == chair.Profile {
+			return agent.Name
+		}
+	}
+	for _, agent := range defined {
+		if agent.Chair.Provider != chair.Provider {
+			continue
+		}
+		for _, effort := range effortLevels[chair.Provider] {
+			if EffortProfile(agent.Chair.Profile, effort) == chair.Profile {
+				return agent.Name
+			}
+		}
+	}
+	return chair.Profile
+}

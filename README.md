@@ -229,7 +229,7 @@ records live outside the default state directory. In Claude Code, register it wi
 | --- | --- | --- |
 | `run` | Required `task` text (at most 1 MiB) and exactly one of `repo` or `worktree`; optional `base` (only with `repo`) and `ensemble` | `run_id`, `pid`, `worktree`, `output` (log path); always detached |
 | `wait` | Required `run` id or unique prefix; optional integer `timeout_seconds`, default 30, minimum 1, capped at **55 seconds** | The `km wait -json` document: `run_id`, `state`, `exit_status`, `reason`, and `result` when finished |
-| `status` | None | The `km status -json` document of runs in progress |
+| `status` | None | The `km status -json` document of runs in progress, with seating, score, current steps, trail and measured usage |
 | `report` | Optional `since` (YYYY-MM-DD or RFC3339) and `repository` | The `km report -json` summary with those filters |
 | `output` | Required `run`; optional integer `max_bytes`, default 16384, minimum 1, capped at **65536 bytes** | `run_id`, `path`, total byte `size`, byte count `returned`, `truncated`, and tail `text` |
 
@@ -1938,6 +1938,32 @@ to stderr. Runs with empty or blank-only telemetry are listed like other runs in
 diagnostics.
 `-json` emits `{"runs":[...]}`, including every playing step and its elapsed milliseconds;
 an empty result without configured directories is `{"runs":[]}`.
+
+Each JSON run has `schema: 1` and keeps the existing fields, including `command`, `round`,
+`max_rounds` and the `ensemble` name string. The structured ensemble is under `seating` to
+preserve that string: `{name, source, sections: [{name, chairs: [...]}]}`. Its source is `user`
+or `repository` for an ensemble file, otherwise empty. Runs seated from `[chairs]` have one
+section named `chairs`. `cao` is the server address used by that run, with URL userinfo removed.
+An address that cannot be parsed is omitted.
+
+Each chair includes `address`, `name`, `part`, `agent`, `provider`, `model`, `tier`, `memory`,
+`state`, `step`, `since`, `terminal`, `needs_input` and `usage`. State is `waiting`, `playing`,
+`done` or `unknown`; a prompt waiting for a person is a separate `needs_input: {count, reason}`.
+`terminal` is empty when no occupant is seated. For a fresh occupant, its id is only available
+when the step returns or records a prompt; a resumed or standing occupant can be known sooner.
+
+`score` includes its `name`, `source`, `rounds` and ordered `steps`, each with a `name`, `kind`,
+optional `part` and an exit-to-next-step map `next`. Verify appears before the score and after
+steps that may change the worktree. Strict appears last only when a strict command is configured.
+`current` groups the chairs playing each step and round, with their earliest `started` time;
+parallel chairs and the background step can appear together. An abandoned run has an empty
+`current` and every chair's state is `unknown`; the existing `playing` field keeps the last
+recorded steps. `trail` lists completed steps in telemetry order with `step`, `round`, `exit`,
+`chair` and `duration_ms`, one entry per chair that played, including separate entries for
+parallel reviews. Chair and run `usage` give
+`input_tokens`, `output_tokens` and `measured`: `all`, `some` or `none`. With `some`, the counts
+include only measured steps; with `none`, zero counts do not indicate measured zero usage.
+Older runs still appear, with fields they did not record empty or omitted.
 
 Each row shows the start in UTC, repository, ensemble, round, step, chair, elapsed time and
 liveness. When steps overlap, the row shows the longest-running step and `+N` for the others.

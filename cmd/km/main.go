@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/jystringfellow/kapellmeister/internal/cao"
+	"github.com/jystringfellow/kapellmeister/internal/ensemble"
 	"github.com/jystringfellow/kapellmeister/internal/loop"
 )
 
@@ -539,6 +540,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		}
 	}()
 	sum, err := runEnsemble(ctx, ensembleRun{
+		Members: members, Agents: s.Defined, CAOURL: client.BaseURL,
 		RunID: runID, StateDir: runDir, Ensemble: *ensemble, BaseBranch: baseBranch, Meter: loop.NewLogMeter(),
 		Config: loop.Config{
 			ScratchDir: scratch, MinFreeMB: s.MinFreeMB, CAOURL: s.CAOURL, StateDir: loop.StateDir(), RunID: runID, Task: text, Worktree: wt, Chairs: seated, GateWhen: s.GateWhen,
@@ -972,6 +974,10 @@ func firstNonEmpty(values ...string) string {
 }
 
 type ensembleRun struct {
+	Members      []ensemble.Member
+	Agents       loop.Agents
+	CAOURL       string
+	Terminals    map[string]string
 	Tune         *loop.TuneHooks
 	TuneSummary  *tuneSummary
 	TuneCheckout string
@@ -1072,6 +1078,13 @@ func runEnsemble(ctx context.Context, p ensembleRun) (sum ensembleSummary, runEr
 	fmt.Fprintf(p.Progress, "  state     %s\n", p.StateDir)
 	eng := &loop.Engine{Meter: p.Meter, Watcher: p.Watcher, Config: p.Config, Stepper: p.Stepper, Verify: p.Verify, Records: telemetry, Progress: p.Progress}
 	state := initialRunState(p.RunID, firstNonEmpty(p.Command, "run"), p.Config.Worktree, p.Ensemble, p.Config.MaxRounds, start)
+	if p.Tune == nil {
+		score := loop.DefaultScore()
+		outline := score.Outline(p.Config.StrictCommand != "")
+		state.Score = &outline
+		state.Seating = recordSeating(p, score)
+		state.CAO = statusServerAddress(firstNonEmpty(p.CAOURL, p.Config.CAOURL))
+	}
 	warned := false
 	publish := func() {
 		if err := writeRunState(p.StateDir, state); err != nil && !warned {
