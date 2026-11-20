@@ -11,13 +11,13 @@ by ensemble
   thorough  1  unknown (1 without usage)
 
 by part and model
-PART         PROVIDER  MODEL  RUNS  STEPS  ERRORS  TIME  TIME/STEP  TOKENS   TOKENS/STEP
-planner      p         m      1     1      0       TIME  TIME/STEP  unknown  unknown
-implementer  p         m      1     1      0       TIME  TIME/STEP  unknown  unknown
-reviewer     p         m      1     2      0       TIME  TIME/STEP  unknown  unknown
-gate         p         m      1     1      0       TIME  TIME/STEP  unknown  unknown
-tester       p         m      1     2      0       TIME  TIME/STEP  unknown  unknown
-classifier   p         m      1     4      0       TIME  TIME/STEP  unknown  unknown
+PART  PROVIDER  MODEL  RUNS  STEPS  ERRORS  TIME  TIME/STEP  TOKENS  TOKENS/STEP
+planner  p  m  1  1  0  TIME  TIME/STEP  unknown  unknown
+implementer  p  m  1  1  0  TIME  TIME/STEP  unknown  unknown
+reviewer  p  m  1  2  0  TIME  TIME/STEP  unknown  unknown
+gate  p  m  1  1  0  TIME  TIME/STEP  unknown  unknown
+tester  p  m  1  2  0  TIME  TIME/STEP  unknown  unknown
+classifier  p  m  1  4  0  TIME  TIME/STEP  unknown  unknown
 
 work: planner
 PROVIDER  MODEL  FIRST  LATER  ROUNDS?  NOT APPROVED  UNFINISHED  RESULT?  SPLIT  ROUNDS/APPROVED
