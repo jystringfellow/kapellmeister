@@ -123,3 +123,46 @@ func TestRunWithTrustFolderOnRecordsCodexAndOffDoesNot(t *testing.T) {
 		})
 	}
 }
+
+func TestACodexChairWhoseFirstCheckTimedOutIsToldAboutFolderTrustUnlessKmAlreadyRecordsIt(t *testing.T) {
+	for _, c := range []struct {
+		name, provider  string
+		recording, want bool
+	}{{"codex, trust_folder off", "codex", false, true}, {"codex, trust_folder on", "codex", true, false}, {"another agent", "claude_code", false, false}} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("KAPELLMEISTER_HOME", t.TempDir())
+			dir := t.TempDir()
+			calls := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == "POST" && r.URL.Path == "/sessions":
+					fmt.Fprint(w, `{"id":"t","session_name":"s"}`)
+				case r.URL.Path == "/terminals/run-step":
+					calls++
+					if calls == 1 {
+						w.WriteHeader(504)
+						fmt.Fprint(w, preflightTimeoutBody)
+					} else {
+						writeFile(t, filepath.Join(dir, loop.RunDirRel("preflight"), "0-"+c.provider+".txt"), "ready")
+						fmt.Fprint(w, `{"terminal_id":"t","status":"completed"}`)
+					}
+				default:
+					fmt.Fprint(w, `{}`)
+				}
+			}))
+			defer srv.Close()
+			client := cao.NewClient(srv.URL)
+			if c.recording {
+				client.BeforeLaunch = func(string, string) {}
+			}
+			var out strings.Builder
+			if err := tuneSeat(context.Background(), client, dir, time.Second, 0, &out, loop.Chair{Provider: c.provider}); err != nil || !strings.Contains(out.String(), "second attempt passed") {
+				t.Fatal(out.String(), err)
+			}
+			told := strings.Contains(out.String(), "Codex asks to trust a folder it has not seen") && strings.Contains(out.String(), "[run] trust_folder = true in "+loop.UserConfigPath(loop.Home()))
+			if told != c.want {
+				t.Fatalf("told = %t, want %t:\n%s", told, c.want, out.String())
+			}
+		})
+	}
+}

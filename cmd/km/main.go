@@ -995,15 +995,15 @@ func preflight(ctx context.Context, client *cao.Client, worktree string, timeout
 	for _, r := range results {
 		d := (time.Duration(r.DurationMS) * time.Millisecond).Round(time.Second)
 		if r.OK {
-			fmt.Printf("  ok      %s (%s)%s\n", r.Chair, d, modelNote(r)+seatRetryNote(r)+timeoutRetryNote(r, timeout))
+			fmt.Printf("  ok      %s (%s)%s\n", r.Chair, d, modelNote(r)+seatRetryNote(r)+timeoutRetryNote(r, timeout, client.BeforeLaunch != nil))
 			continue
 		}
 		if r.TimedOut {
-			fmt.Printf("  BLOCKED %s (%s): did not answer within %s%s\n", r.Chair, d, timeout, seatRetryNote(r)+timeoutRetryNote(r, timeout))
+			fmt.Printf("  BLOCKED %s (%s): did not answer within %s%s\n", r.Chair, d, timeout, seatRetryNote(r)+timeoutRetryNote(r, timeout, client.BeforeLaunch != nil))
 			blocked = append(blocked, strings.ReplaceAll(preflightTimeoutMessage(r, timeout), "\n", "\n  "))
 			continue
 		}
-		fmt.Printf("  BLOCKED %s (%s): %s\n", r.Chair, d, firstNonEmpty(r.Blocker, r.Error)+seatRetryNote(r)+timeoutRetryNote(r, timeout))
+		fmt.Printf("  BLOCKED %s (%s): %s\n", r.Chair, d, firstNonEmpty(r.Blocker, r.Error)+seatRetryNote(r)+timeoutRetryNote(r, timeout, client.BeforeLaunch != nil))
 		hint := r.Chair.String()
 		if r.Session != "" {
 			hint += fmt.Sprintf(": resolve it with `tmux attach -t %s`, then detach with Ctrl-b d", r.Session)
@@ -1560,7 +1560,7 @@ func copyDir(src, dst string) error {
 	return nil
 }
 
-func timeoutRetryNote(r loop.PreflightResult, timeout time.Duration) string {
+func timeoutRetryNote(r loop.PreflightResult, timeout time.Duration, recordsTrust bool) string {
 	if r.RetryWaitMS > 0 && !r.OK {
 		waited := time.Duration(r.RetryWaitMS) * time.Millisecond
 		switch {
@@ -1578,7 +1578,11 @@ func timeoutRetryNote(r loop.PreflightResult, timeout time.Duration) string {
 		return ""
 	}
 	if r.OK {
-		return fmt.Sprintf("; first attempt timed out after %s, second attempt passed", timeout)
+		note := fmt.Sprintf("; first attempt timed out after %s, second attempt passed", timeout)
+		if r.Chair.Provider == "codex" && !recordsTrust {
+			note += fmt.Sprintf("\n          Codex asks to trust a folder it has not seen, and the first message is lost with the answer: [run] trust_folder = true in %s records the trust before chairs launch", loop.UserConfigPath(loop.Home()))
+		}
+		return note
 	}
 	if r.TimedOut {
 		return "; first attempt also timed out and was retried once"

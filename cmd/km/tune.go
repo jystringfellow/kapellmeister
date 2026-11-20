@@ -824,7 +824,7 @@ func tuneSeat(ctx context.Context, client *cao.Client, root string, timeout, ret
 			return err
 		}
 		r := results[0]
-		if note := timeoutRetryNote(r, timeout); note != "" {
+		if note := timeoutRetryNote(r, timeout, client.BeforeLaunch != nil); note != "" {
 			fmt.Fprintf(out, "  %s%s\n", chair, note)
 		}
 		if !r.OK {

@@ -61,7 +61,7 @@ func TestAWaitedPreflightRetryThatFailsTellsTheUserToRunAgainInAFewMinutesWhatev
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := timeoutRetryNote(tc.result, time.Minute); got != tc.want {
+			if got := timeoutRetryNote(tc.result, time.Minute, false); got != tc.want {
 				t.Fatalf("note = %q", got)
 			}
 		})
