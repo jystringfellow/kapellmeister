@@ -268,3 +268,58 @@ func TestAResumedChairKeepsATerminalReturnedByAnEarlierStep(t *testing.T) {
 	}
 	finish()
 }
+
+func TestAFreshChairsTerminalIsLookedUpSoonAfterItsStepStartsWithoutWaitingForAPollOrReadingAScreen(t *testing.T) {
+	old := terminalLookups
+	terminalLookups = []time.Duration{time.Millisecond, 5 * time.Millisecond}
+	defer func() { terminalLookups = old }()
+	e, f, _ := newEngine(t, nil)
+	w := &fakeWatcher{terminals: []WatchedTerminal{{ID: "fresh", Description: "run · planner", Status: "processing"}}}
+	e.Watcher, e.Config.BlockerPoll = w, time.Hour
+	updates := make(chan []ActiveStep, 16)
+	e.Playing = func(_ int, active []ActiveStep) { updates <- active }
+	holdPlayingSteps(t, e, f, Step{Name: "plan", ChairName: "planner", Label: "run · planner", ReplyPath: "reply.md"})
+	timeout := time.After(2 * time.Second)
+	for {
+		select {
+		case active := <-updates:
+			if len(active) != 1 || active[0].Terminal == "" {
+				continue
+			}
+			w.mu.Lock()
+			reads, calls := len(w.reads), w.calls
+			w.mu.Unlock()
+			if active[0].Terminal != "fresh" || reads != 0 || calls > 2 {
+				t.Fatalf("playing = %+v, screens read %d, listings %d", active, reads, calls)
+			}
+			return
+		case <-timeout:
+			t.Fatal("the terminal was not looked up after the step started")
+		}
+	}
+}
+
+func TestNoTerminalIsLookedUpForAStepThatReusesOneOrWithTheWatcherOff(t *testing.T) {
+	old := terminalLookups
+	terminalLookups = []time.Duration{time.Millisecond}
+	defer func() { terminalLookups = old }()
+	for _, c := range []struct {
+		name  string
+		poll  time.Duration
+		reuse string
+	}{{"reused terminal", time.Hour, "kept"}, {"watcher off", 0, ""}} {
+		t.Run(c.name, func(t *testing.T) {
+			e, f, _ := newEngine(t, nil)
+			w := &fakeWatcher{terminals: []WatchedTerminal{{ID: "other", Description: "run · planner", Status: "processing"}}}
+			e.Watcher, e.Config.BlockerPoll = w, c.poll
+			finish := holdPlayingSteps(t, e, f, Step{Name: "plan", ChairName: "planner", Label: "run · planner", ReplyPath: "reply.md", ReuseTerminal: c.reuse})
+			time.Sleep(30 * time.Millisecond)
+			finish()
+			w.mu.Lock()
+			defer w.mu.Unlock()
+			if w.calls != 0 {
+				t.Fatalf("listings = %d", w.calls)
+			}
+		})
+	}
+}
