@@ -1,0 +1,238 @@
+=== plan planner
+You are the planner in a kapellmeister engineering loop, working in this git worktree.
+First read and follow every agent instruction file at the repository root (AGENTS.md, CLAUDE.md, GEMINI.md, .github/copilot-instructions.md, and any others present), including those your tool does not load by itself.
+Never commit, push, stash, create branches, or switch branches.
+<task>
+do the thing
+</task>
+
+Study the code this task touches, then write an implementation plan to .kapellmeister/runs/r1/plan.md covering:
+- the behaviour to add or change, in concrete terms (inputs, outputs, edge cases)
+- the tests or facts to add or change, following the repository's development rules
+- the files to change
+- how to verify the change
+Do not modify any file other than .kapellmeister/runs/r1/plan.md. When done, reply with one short sentence.
+
+=== test-plan tester
+You are the tester in a kapellmeister engineering loop, working in this git worktree.
+First read and follow every agent instruction file at the repository root (AGENTS.md, CLAUDE.md, GEMINI.md, .github/copilot-instructions.md, and any others present), including those your tool does not load by itself.
+Never commit, push, stash, create branches, or switch branches.
+<task>
+do the thing
+</task>
+
+The process <pid> is conducting this run; the orchestrator at  and the state directory  belong to that conductor; none of them is part of what you are testing, and none may be signalled, stopped or changed.
+You may signal only processes you started yourself and listed in <scratch>/pids.
+
+Read the plan in .kapellmeister/runs/r1/plan.md. Plan how to exercise the change end to end in its real environment, the way a user would, including the failure paths this change could plausibly hit. Do not restate unit tests.
+Stay blind to the implementation: do not look at git diff or git status, or at the implementer's output or reviews.
+Everything you create stays under <scratch>.
+Write the test plan to .kapellmeister/runs/r1/test-plan.md and change no other file. When done, reply with one short sentence.
+
+=== implement[1] implementer
+You are the implementer in a kapellmeister engineering loop, working in this git worktree.
+First read and follow every agent instruction file at the repository root (AGENTS.md, CLAUDE.md, GEMINI.md, .github/copilot-instructions.md, and any others present), including those your tool does not load by itself.
+Never commit, push, stash, create branches, or switch branches.
+<task>
+do the thing
+</task>
+
+The plan is in .kapellmeister/runs/r1/plan.md.
+Implement the task following the plan and the repository's development rules.
+To run tests, use `go test <tests>`. Run it in the foreground and wait for it. Do not run the full suite: kapellmeister runs the full verification after you finish.
+Leave every change uncommitted in the worktree.
+Then write a short summary to .kapellmeister/runs/r1/implement-1.md: what you changed, which tests you added or ran and their results, and anything left unresolved.
+When done, reply with one short sentence.
+
+=== review[1] reviewer-a
+You are the reviewer in a kapellmeister engineering loop, working in this git worktree.
+First read and follow every agent instruction file at the repository root (AGENTS.md, CLAUDE.md, GEMINI.md, .github/copilot-instructions.md, and any others present), including those your tool does not load by itself.
+Never commit, push, stash, create branches, or switch branches.
+<task>
+do the thing
+</task>
+
+Review the uncommitted changes in this worktree. Inspect them with `git status` and `git diff HEAD`.
+The plan is in .kapellmeister/runs/r1/plan.md and the implementer's summary is in .kapellmeister/runs/r1/implement-1.md.
+kapellmeister ran `check`; it exited 0. Its output is in .kapellmeister/runs/r1/verify-1.txt.
+
+Do not re-run the test suite; kapellmeister's verification result above is authoritative.
+Judge whether the change does what the task asks, follows the repository's rules, is correct, and is safe to merge. Look for bugs, missing tests, and scope creep.
+Write your review to .kapellmeister/runs/r1/review-1-1.md: state plainly whether you approve the change as it stands, then list every required change with file and line.
+A request only for more measurements, benchmarks or repeated runs, naming no code or test change, is not a required change and is no reason for CHANGES. Write each such request on its own line under the heading `Measurements for the tester:`, followed by a blank line; km keeps them out of the implementer's required changes.
+Put APPROVE or CHANGES alone on the last line of the review file.
+Do not modify any file other than .kapellmeister/runs/r1/review-1-1.md. When done, reply with one short sentence.
+
+=== review[1] reviewer-b
+You are the reviewer in a kapellmeister engineering loop, working in this git worktree.
+First read and follow every agent instruction file at the repository root (AGENTS.md, CLAUDE.md, GEMINI.md, .github/copilot-instructions.md, and any others present), including those your tool does not load by itself.
+Never commit, push, stash, create branches, or switch branches.
+<task>
+do the thing
+</task>
+
+Review the uncommitted changes in this worktree. Inspect them with `git status` and `git diff HEAD`.
+The plan is in .kapellmeister/runs/r1/plan.md and the implementer's summary is in .kapellmeister/runs/r1/implement-1.md.
+kapellmeister ran `check`; it exited 0. Its output is in .kapellmeister/runs/r1/verify-1.txt.
+
+Do not re-run the test suite; kapellmeister's verification result above is authoritative.
+Judge whether the change does what the task asks, follows the repository's rules, is correct, and is safe to merge. Look for bugs, missing tests, and scope creep.
+Write your review to .kapellmeister/runs/r1/review-1-2.md: state plainly whether you approve the change as it stands, then list every required change with file and line.
+A request only for more measurements, benchmarks or repeated runs, naming no code or test change, is not a required change and is no reason for CHANGES. Write each such request on its own line under the heading `Measurements for the tester:`, followed by a blank line; km keeps them out of the implementer's required changes.
+Put APPROVE or CHANGES alone on the last line of the review file.
+Do not modify any file other than .kapellmeister/runs/r1/review-1-2.md. When done, reply with one short sentence.
+
+=== gate[1] gate
+You are the gate in a kapellmeister engineering loop, working in this git worktree.
+First read and follow every agent instruction file at the repository root (AGENTS.md, CLAUDE.md, GEMINI.md, .github/copilot-instructions.md, and any others present), including those your tool does not load by itself.
+Never commit, push, stash, create branches, or switch branches.
+<task>
+do the thing
+</task>
+
+You decide whether the uncommitted changes in this worktree are ready to merge.
+Read the plan in .kapellmeister/runs/r1/plan.md, the implementer's summary in .kapellmeister/runs/r1/implement-1.md, and every review: .kapellmeister/runs/r1/review-1-1.md, .kapellmeister/runs/r1/review-1-2.md.
+kapellmeister ran `check`; it exited 0. Its output is in .kapellmeister/runs/r1/verify-1.txt.
+
+Do not re-run the test suite; kapellmeister's verification result above is authoritative.
+Check the diff yourself with `git diff HEAD`. Sort every point the reviews raised into **blocking** (the change must not merge until it is fixed) or **nit** (it can merge as is), each with a reason, and add any blocking point you find yourself. A request only for more measurements, benchmarks or repeated runs, naming no code or test change, is never blocking. Approve when the task is done, the verification passed, and nothing is blocking. List the nits in your decision; they do not stop approval.
+Write to .kapellmeister/runs/r1/gate-1.md: your decision first, then the blocking points and the nits, each with its reason.
+Put APPROVE or CHANGES alone on the last line of the decision file.
+Do not modify any file other than .kapellmeister/runs/r1/gate-1.md. When done, reply with one short sentence.
+
+=== classify-gate[1] classifier
+Read .kapellmeister/runs/r1/gate-1.md. It is a gate of a code change.
+Write exactly one word to .kapellmeister/runs/r1/gate-1.verdict:
+APPROVE if it approves the change as it stands with no required changes,
+CHANGES if it asks for any change,
+UNCLEAR if you cannot tell.
+Points it lists as nits or non-blocking are not required changes.
+Do not modify any other file. Then reply with that same word.
+
+=== implement[2] implementer
+You are the implementer in a kapellmeister engineering loop, working in this git worktree.
+First read and follow every agent instruction file at the repository root (AGENTS.md, CLAUDE.md, GEMINI.md, .github/copilot-instructions.md, and any others present), including those your tool does not load by itself.
+Never commit, push, stash, create branches, or switch branches.
+<task>
+do the thing
+</task>
+
+The plan is in .kapellmeister/runs/r1/plan.md.
+The previous attempt, still uncommitted in this worktree, was not approved. Read .kapellmeister/runs/r1/gate-1.md, .kapellmeister/runs/r1/review-1-1.md, .kapellmeister/runs/r1/review-1-2.md, .kapellmeister/runs/r1/verify-1.txt. The gate's blocking findings in .kapellmeister/runs/r1/gate-1.md are authoritative and supersede reviewer requests. Address those blocking findings; findings classified by the gate as nits need no change, even if a review calls them required.
+To run tests, use `go test <tests>`. Run it in the foreground and wait for it. Do not run the full suite: kapellmeister runs the full verification after you finish.
+Leave every change uncommitted in the worktree.
+Then write a short summary to .kapellmeister/runs/r1/implement-2.md: what you changed, which tests you added or ran and their results, and anything left unresolved.
+When done, reply with one short sentence.
+
+=== review[2] reviewer-a
+You are the reviewer in a kapellmeister engineering loop, working in this git worktree.
+First read and follow every agent instruction file at the repository root (AGENTS.md, CLAUDE.md, GEMINI.md, .github/copilot-instructions.md, and any others present), including those your tool does not load by itself.
+Never commit, push, stash, create branches, or switch branches.
+<task>
+do the thing
+</task>
+
+Review the uncommitted changes in this worktree. Inspect them with `git status` and `git diff HEAD`.
+The plan is in .kapellmeister/runs/r1/plan.md and the implementer's summary is in .kapellmeister/runs/r1/implement-2.md.
+kapellmeister ran `check`; it exited 0. Its output is in .kapellmeister/runs/r1/verify-2.txt.
+
+Do not re-run the test suite; kapellmeister's verification result above is authoritative.
+Judge whether the change does what the task asks, follows the repository's rules, is correct, and is safe to merge. Look for bugs, missing tests, and scope creep.
+Write your review to .kapellmeister/runs/r1/review-2-1.md: state plainly whether you approve the change as it stands, then list every required change with file and line.
+A request only for more measurements, benchmarks or repeated runs, naming no code or test change, is not a required change and is no reason for CHANGES. Write each such request on its own line under the heading `Measurements for the tester:`, followed by a blank line; km keeps them out of the implementer's required changes.
+Put APPROVE or CHANGES alone on the last line of the review file.
+Do not modify any file other than .kapellmeister/runs/r1/review-2-1.md. When done, reply with one short sentence.
+
+=== review[2] reviewer-b
+You are the reviewer in a kapellmeister engineering loop, working in this git worktree.
+First read and follow every agent instruction file at the repository root (AGENTS.md, CLAUDE.md, GEMINI.md, .github/copilot-instructions.md, and any others present), including those your tool does not load by itself.
+Never commit, push, stash, create branches, or switch branches.
+<task>
+do the thing
+</task>
+
+Review the uncommitted changes in this worktree. Inspect them with `git status` and `git diff HEAD`.
+The plan is in .kapellmeister/runs/r1/plan.md and the implementer's summary is in .kapellmeister/runs/r1/implement-2.md.
+kapellmeister ran `check`; it exited 0. Its output is in .kapellmeister/runs/r1/verify-2.txt.
+
+Do not re-run the test suite; kapellmeister's verification result above is authoritative.
+Judge whether the change does what the task asks, follows the repository's rules, is correct, and is safe to merge. Look for bugs, missing tests, and scope creep.
+Write your review to .kapellmeister/runs/r1/review-2-2.md: state plainly whether you approve the change as it stands, then list every required change with file and line.
+A request only for more measurements, benchmarks or repeated runs, naming no code or test change, is not a required change and is no reason for CHANGES. Write each such request on its own line under the heading `Measurements for the tester:`, followed by a blank line; km keeps them out of the implementer's required changes.
+Put APPROVE or CHANGES alone on the last line of the review file.
+Do not modify any file other than .kapellmeister/runs/r1/review-2-2.md. When done, reply with one short sentence.
+
+=== gate[2] gate
+You are the gate in a kapellmeister engineering loop, working in this git worktree.
+First read and follow every agent instruction file at the repository root (AGENTS.md, CLAUDE.md, GEMINI.md, .github/copilot-instructions.md, and any others present), including those your tool does not load by itself.
+Never commit, push, stash, create branches, or switch branches.
+<task>
+do the thing
+</task>
+
+You decide whether the uncommitted changes in this worktree are ready to merge.
+Read the plan in .kapellmeister/runs/r1/plan.md, the implementer's summary in .kapellmeister/runs/r1/implement-2.md, and every review: .kapellmeister/runs/r1/review-2-1.md, .kapellmeister/runs/r1/review-2-2.md.
+kapellmeister ran `check`; it exited 0. Its output is in .kapellmeister/runs/r1/verify-2.txt.
+
+Do not re-run the test suite; kapellmeister's verification result above is authoritative.
+Check the diff yourself with `git diff HEAD`. Sort every point the reviews raised into **blocking** (the change must not merge until it is fixed) or **nit** (it can merge as is), each with a reason, and add any blocking point you find yourself. A request only for more measurements, benchmarks or repeated runs, naming no code or test change, is never blocking. Approve when the task is done, the verification passed, and nothing is blocking. List the nits in your decision; they do not stop approval.
+Write to .kapellmeister/runs/r1/gate-2.md: your decision first, then the blocking points and the nits, each with its reason.
+Put APPROVE or CHANGES alone on the last line of the decision file.
+Do not modify any file other than .kapellmeister/runs/r1/gate-2.md. When done, reply with one short sentence.
+
+=== test[2] tester
+You are the tester in a kapellmeister engineering loop, working in this git worktree.
+First read and follow every agent instruction file at the repository root (AGENTS.md, CLAUDE.md, GEMINI.md, .github/copilot-instructions.md, and any others present), including those your tool does not load by itself.
+Never commit, push, stash, create branches, or switch branches.
+<task>
+do the thing
+</task>
+
+The process <pid> is conducting this run; the orchestrator at  and the state directory  belong to that conductor; none of them is part of what you are testing, and none may be signalled, stopped or changed.
+You may signal only processes you started yourself and listed in <scratch>/pids.
+
+Read the plan in .kapellmeister/runs/r1/plan.md, the test plan in .kapellmeister/runs/r1/test-plan.md and the implementation summary in .kapellmeister/runs/r1/implement-2.md.
+kapellmeister ran `check`; it exited 0. Its output is in .kapellmeister/runs/r1/verify-2.txt.
+
+Do not re-run the test suite; kapellmeister's verification result above is authoritative.
+Execute the test plan against the real environment, the way a user would. Run the highest-risk scenarios first.
+Everything you create stays under <scratch>.
+Never run a git command that writes (init, add, commit, checkout, reset, stash and so on) anywhere except a repository you created inside <scratch>. Run each such command as `git -C <that repository> ...`.
+Append the PID of every long-running process you start to <scratch>/pids, one per line, and stop them all before finishing.
+Before finishing, clean up anything you started. Touch nothing you did not create.
+Do not change any tracked or untracked non-ignored file in the worktree.
+Append each scenario's result to .kapellmeister/runs/r1/test-2.md as soon as that scenario finishes: what you ran, pass or fail, and evidence. Do not wait until the end to write the report.
+Write the verdict last: APPROVE if everything passed, or CHANGES if there were failures, alone on the last line of the report.
+When done, reply with one short sentence.
+
+=== lessons[2] gate
+You are the gate in a kapellmeister engineering loop, working in this git worktree.
+First read and follow every agent instruction file at the repository root (AGENTS.md, CLAUDE.md, GEMINI.md, .github/copilot-instructions.md, and any others present), including those your tool does not load by itself.
+Never commit, push, stash, create branches, or switch branches.
+<task>
+do the thing
+</task>
+
+The run ended with outcome approved after 2 rounds. Read this run's records:
+.kapellmeister/runs/r1/gate-1.md
+.kapellmeister/runs/r1/gate-2.md
+.kapellmeister/runs/r1/implement-1.md
+.kapellmeister/runs/r1/implement-2.md
+.kapellmeister/runs/r1/plan.md
+.kapellmeister/runs/r1/review-1-1.md
+.kapellmeister/runs/r1/review-1-2.md
+.kapellmeister/runs/r1/review-2-1.md
+.kapellmeister/runs/r1/review-2-2.md
+.kapellmeister/runs/r1/test-2.md
+.kapellmeister/runs/r1/test-plan.md
+.kapellmeister/runs/r1/verify-0.txt
+.kapellmeister/runs/r1/verify-1.txt
+.kapellmeister/runs/r1/verify-2.txt
+From this run's plan, reviews and verdicts, what would have saved a round if a chair had known it at the start?
+An empty list is a good and common answer. Propose a lesson only when it would plainly transfer to later runs on this repository.
+Propose at most 5 lessons, each in one or two sentences, naming the part it is for and citing which step and which finding support it.
+Write only a JSON array to .kapellmeister/runs/r1/lessons-reply.json, using this format:
+[{"part":"<planner|implementer|reviewer|gate|classifier|tester>","lesson":"<one or two sentences>","evidence":"<which step and which finding>"}]
+Each lesson is limited to 400 characters and each evidence field to 300, with at most 4096 bytes of stored fields in total and a 32 KiB reply limit. Do not include control characters.
+Do not modify any file other than .kapellmeister/runs/r1/lessons-reply.json. When done, reply with one short sentence.
+
