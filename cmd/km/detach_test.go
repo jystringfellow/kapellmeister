@@ -35,7 +35,16 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(execute(os.Args[1:], os.Stderr))
 	}
-	os.Exit(m.Run())
+	home, err := os.MkdirTemp("", "km-test-home-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	os.Setenv(loop.HomeEnv, home)
+	os.Unsetenv(loop.StateEnv)
+	code := m.Run()
+	os.RemoveAll(home)
+	os.Exit(code)
 }
 
 func kmSubprocess(args ...string) *exec.Cmd {

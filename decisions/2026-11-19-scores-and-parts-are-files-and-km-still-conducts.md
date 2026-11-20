@@ -365,3 +365,43 @@ One PR each. The order differs from the proposal in two places, marked.
 - **Front matter in part files.** A part file could then change routing.
 - **Restoring an agent's stored session.** A second mechanism per agent, owned by km.
 - **Edges, queues and owner selection.** Nothing in km would read them.
+
+## What building it changed
+
+The note above is as approved. These are the places where building it showed the note wrong or
+incomplete. Tests hold the behaviour; this list is so nobody reads the sections above as exact.
+
+- **Section 7, `ensemble`.** The note shows `ensemble` as an object and also says today's fields
+  are kept. They could not both hold: `ensemble` was the name as a string. It is now the object,
+  with the name at `ensemble.name`, and `schema: 1` marks the change.
+- **Section 7, `terminal`.** The note says a fresh chair has a terminal while it plays. km learned
+  the id only when the step returned. It now looks the id up a few seconds after a step starts,
+  from the listing the watcher already used, with no change to CAO.
+- **Section 7, verify in `score.steps`.** The example shows `verify` once. It is listed where it
+  runs, so twice in the default score, and only when the run has a verify command; the same for
+  strict. A step name is therefore not unique in the outline.
+- **Section 7, before preflight.** The note says nothing of a run that is still checking its
+  chairs. It is in status from the start, with `current` holding one entry named `preflight`.
+- **Section 11, slice 2.** Making the score data did not make the engine play it: the order of
+  steps stayed in code. A slice the list does not have, the engine walking a score's steps and
+  exits, had to come before loading scores from files.
+- **Section 11, slice 5.** The second score was expected to need no engine change. It needed one
+  rule, as data: when no step of a score may edit the worktree, the baseline verify is the verify
+  its steps are handed, and a failing one sends a decide step to `changes` without playing.
+- **Section 2, placeholders.** There is a seventh, `{verification}`: km's short line about the
+  verify result. A placeholder with nothing to fill it, such as `{inputs}` in a step that reads
+  nothing, is refused.
+- **Section 3.** `changes_requested` exits 7. A score file is limited to 64 KiB and a part file to
+  256 KiB. `km score show NAME` prints a built-in; a copy of the default score cannot yet say
+  which step sizes the work, who writes lesson proposals, or that `test-plan` uses the `test`
+  step's tier policy.
+- **Section 5, limits.** `resume_tokens` counts the uncached input tokens of the chair's last
+  step, not the size of its context.
+- **Section 5, the measurement.** One run each way on one small task with a forced second round:
+  the resumed implementer's second round used about a fifth of the uncached input and half the
+  time of the fresh one, with the same rounds and outcome. `resume` stays the implementer's default.
+- **Tiers, which the note does not cover.** There are four, with `xlarge` above `large`. A step
+  with no tier policy of its own gets one by its kind, so a chair of a custom part plays on the
+  `medium` tier and may be pinned.
+- **Not built:** takeover by a second chair of a non-review part (section 4).
+
