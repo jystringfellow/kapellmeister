@@ -33,7 +33,7 @@ const usage = `usage:
   km tune verify [-worktree DIR] [-require SUITE]... [-known-failure LABEL]... [-time-bounded] [-detach] [-timeout D] [-json] [-again] [-guide]   write and prove verify
   km tune strict [-worktree DIR] [-strict-timeout D] [-budget D] [-detach] [-timeout D] [-json] [-again] [-guide]   write and prove strict: what verify had to leave out
   km prove [-worktree DIR] [-level verify|strict] [-break PATCH]... [-timeout D] [-json]   prove verify or strict on clean copies and broken code
-  km run -repo DIR [-base BRANCH] (-task TEXT | -task-file FILE) [-ensemble NAME] [-detach] [flags]   one ensemble
+  km run -repo DIR [-base BRANCH] (-task TEXT | -task-file FILE) [-ensemble NAME | -score NAME] [-detach] [flags]   one ensemble
   km audition -worktree DIR [-ensemble NAME] [-keep]       boot the ensemble, cue every chair once, tear down
   km rehearse -worktree DIR (-task TEXT | -task-file FILE) [-ensemble NAME]  brief the ensemble and leave it standing
   km play SESSION [-max-rounds N] [-verify CMD] [-timeout D] [-cao URL]  run the score on a standing ensemble
@@ -172,12 +172,16 @@ func (c common) settings(worktree string) (loop.Settings, error) {
 	if err != nil {
 		return s, err
 	}
+	if score := c.fs.Lookup("score"); score != nil {
+		s.ScoreName = score.Value.String()
+	}
 	set := flagsSet(c.fs)
 	if set["rounds"] {
 		if *c.rounds < 1 {
 			return s, errors.New("-rounds must be at least 1")
 		}
 		s.Rounds = *c.rounds
+		s.RoundsConfigured = true
 	}
 	if set["verify-retries"] {
 		s.VerifyRetries = *c.retries
@@ -309,6 +313,9 @@ func checkPin(policy loop.Policy, part, name, spec string, chair loop.Chair) err
 	if chair.Tier == "" {
 		return nil
 	}
+	if roleSteps[part] == "" {
+		return fmt.Errorf("part %s has no tier policy; name the agent without @tier", part)
+	}
 	tiers := policy.Tiers[chair.Provider]
 	if len(tiers) == 0 {
 		return fmt.Errorf("%s: chair %q: no [tiers.%s] to pin a tier against", name, spec, chair.Provider)
@@ -333,6 +340,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 	worktree := fs.String("worktree", "", "use this existing worktree instead of creating one")
 	roles := chairFlags(fs, loop.AllRoles()...)
 	ensemble := fs.String("ensemble", "", ensembleHelp)
+	fs.String("score", "", "score to play with chairs from config")
 	hideFlags(fs, "detached-launch")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -381,8 +389,14 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 	if err != nil {
 		return err
 	}
-	if _, _, _, err := lineUp(userSettings, firstNonEmpty(*worktree, *c.repo), *ensemble, roles); err != nil {
+	scoreName, err := ensembleScoreName(*ensemble, firstNonEmpty(*worktree, *c.repo))
+	if err != nil {
 		return err
+	}
+	if userSettings.ScoreName == "" && scoreName == "" {
+		if _, _, _, err := lineUp(userSettings, firstNonEmpty(*worktree, *c.repo), *ensemble, roles); err != nil {
+			return err
+		}
 	}
 	wt := *worktree
 	baseBranch := ""
@@ -434,11 +448,14 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 	if err != nil {
 		return err
 	}
+	if launch.Score != nil {
+		s.Score = *launch.Score
+	}
 	s, chairs, members, err := lineUp(s, wt, *ensemble, roles)
 	if err != nil {
 		return err
 	}
-	seated, err := addressedChairs(wt, *ensemble, chairs, members)
+	seated, err := addressedChairs(wt, *ensemble, chairs, members, s.Score.Score)
 	if err != nil {
 		return err
 	}
@@ -502,17 +519,22 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		}
 	} else {
 		printSources(output, s)
+		printScoreFiles(output, s.Score.Files)
 		if *ensemble != "" {
 			fmt.Fprintf(output, "ensemble %s\n", *ensemble)
 		}
 		printPolicy(output, &policy)
 		printPinnedEscalation(output, &policy, chairs.Implementer)
 	}
-	if err := ensureProfilesTo(ctx, client, &policy, stepChairs(chairs), output); err != nil {
+	if err := ensureProfilesTo(ctx, client, &policy, stepChairs(chairs, s.Score.Score), output); err != nil {
 		return err
 	}
 	if *detach && *detachedLaunch == "" {
-		h, err := startDetached(ctx, args, runDir, detachedLaunchRecord{RunID: runID, Worktree: wt, BaseBranch: baseBranch, CreatedWorktree: createdWorktree, Task: text}, opening.Bytes())
+		launch := detachedLaunchRecord{RunID: runID, Worktree: wt, BaseBranch: baseBranch, CreatedWorktree: createdWorktree, Task: text}
+		if s.Score.Score.Source != "" {
+			launch.Score = &s.Score
+		}
+		h, err := startDetached(ctx, args, runDir, launch, opening.Bytes())
 		if err != nil {
 			return err
 		}
@@ -524,10 +546,13 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		_, err = fmt.Fprintf(stdout, "run       %s\npid       %d\nworktree  %s\noutput    %s\n", h.RunID, h.PID, h.Worktree, h.Output)
 		return err
 	}
-	if err := preflight(ctx, client, wt, s.PreflightTimeout, s.PreflightRetryWait, defaultChairs(&policy, chairs)...); err != nil {
+	if err := preflight(ctx, client, wt, s.PreflightTimeout, s.PreflightRetryWait, defaultChairs(&policy, chairs, s.Score.Score)...); err != nil {
 		return err
 	}
 	podiumChair, _ := policy.Chair("classify", chairs.Classifier, "", 0)
+	if podiumChair.Provider == "" && len(members) > 0 {
+		podiumChair = members[0].Chair
+	}
 	podium, err := client.CreateSession(ctx, "km-"+runID, cao.Launch{Provider: podiumChair.Provider, Profile: podiumChair.Profile, Model: podiumChair.Model, WorkingDirectory: wt})
 	if err != nil {
 		return err
@@ -540,7 +565,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		}
 	}()
 	sum, err := runEnsemble(ctx, ensembleRun{
-		Members: members, Agents: s.Defined, CAOURL: client.BaseURL,
+		Score: s.Score.Score, ScoreFiles: s.Score.Files, Members: members, Agents: s.Defined, CAOURL: client.BaseURL,
 		RunID: runID, StateDir: runDir, Ensemble: *ensemble, BaseBranch: baseBranch, Meter: loop.NewLogMeter(),
 		Config: loop.Config{
 			ScratchDir: scratch, MinFreeMB: s.MinFreeMB, CAOURL: s.CAOURL, StateDir: loop.StateDir(), RunID: runID, Task: text, Worktree: wt, Chairs: seated, GateWhen: s.GateWhen,
@@ -631,6 +656,7 @@ func configCommand(args []string) error {
 	printSources(os.Stdout, s)
 	fmt.Printf("cao    %s\nstate  %s\nrun    rounds %d, verify retries %d, step timeout %s, reply grace %s, preflight %s, preflight retry wait %s, blocker poll %s, lessons %s, learned budget %d bytes, trust folder %s\n",
 		s.CAOURL, loop.StateDir(), s.Rounds, s.VerifyRetries, s.Timeout, s.ReplyGrace, s.PreflightTimeout, s.PreflightRetryWait, s.BlockerPoll, lessonsSetting(s), s.LearnedBudget, map[bool]string{true: "on", false: "off"}[s.TrustFolder])
+	fmt.Printf("repository scores %s\n", map[bool]string{true: "on", false: "off"}[s.RepositoryScores])
 	if len(s.ReportDirs) > 0 {
 		fmt.Printf("report dirs %s (in addition to %s)\n", plain(strings.Join(s.ReportDirs, ", ")), plain(defaultRunsDir()))
 	}
@@ -749,23 +775,59 @@ func printPinnedEscalation(w io.Writer, p *loop.Policy, implementer loop.Chair) 
 	fmt.Fprintf(w, "       the implementer is pinned to %s, but escalation overrides the pin: it can reach %s, one tier after every %d rounds without approval; set escalate = false in the ensemble to hold the pin\n", pinned.Tier, reach.Tier, after)
 }
 
-func stepChairs(s loop.Chairs) map[string][]loop.Chair {
+func stepChairs(s loop.Chairs, scores ...loop.Score) map[string][]loop.Chair {
+	if len(scores) > 0 && scores[0].Source != "" {
+		score := scores[0]
+		steps := map[string][]loop.Chair{}
+		for _, spec := range score.Steps {
+			for _, chair := range s.Of(spec.Part) {
+				if chair.Provider != "" {
+					steps[score.PolicyKey(spec.Name)] = append(steps[score.PolicyKey(spec.Name)], chair)
+				}
+			}
+		}
+		for _, chair := range s.Of(score.Classifier) {
+			if chair.Provider != "" {
+				steps["classify"] = append(steps["classify"], chair)
+			}
+		}
+		return steps
+	}
 	steps := map[string][]loop.Chair{
 		"plan": {s.Planner}, "implement": {s.Implementer}, "review": s.Reviewers, "gate": {s.Gate}, "classify": {s.Classifier},
 	}
 	if s.Tester != nil {
 		steps["test"] = []loop.Chair{*s.Tester}
 	}
+	for part, chairs := range s.Parts {
+		steps["part:"+part] = chairs
+	}
 	return steps
 }
 
-func defaultChairs(p *loop.Policy, s loop.Chairs) []loop.Chair {
+func defaultChairs(p *loop.Policy, s loop.Chairs, scores ...loop.Score) []loop.Chair {
 	var out []loop.Chair
+	if len(scores) > 0 && scores[0].Source != "" {
+		steps := stepChairs(s, scores...)
+		for _, key := range sortedKeys(steps) {
+			for _, chair := range steps[key] {
+				resolved, _ := p.Chair(key, chair, "", 0)
+				out = append(out, resolved)
+			}
+		}
+		return out
+	}
 	for _, key := range loop.StepKeys {
 		for _, chair := range stepChairs(s)[key] {
+			if chair.Provider == "" {
+				continue
+			}
 			resolved, _ := p.Chair(key, chair, "", 0)
 			out = append(out, resolved)
 		}
+	}
+	for _, part := range sortedKeys(s.Parts) {
+		out = append(out, s.Parts[part]...)
 	}
 	return out
 }
@@ -974,6 +1036,8 @@ func firstNonEmpty(values ...string) string {
 }
 
 type ensembleRun struct {
+	Score        loop.Score
+	ScoreFiles   []loop.ScoreFile
 	Members      []ensemble.Member
 	Agents       loop.Agents
 	CAOURL       string
@@ -995,8 +1059,12 @@ type ensembleRun struct {
 }
 
 type ensembleSummary struct {
-	Command string       `json:"command,omitempty"`
-	Tune    *tuneSummary `json:"tune,omitempty"`
+	Score             string           `json:"score,omitempty"`
+	ScoreSource       string           `json:"score_source,omitempty"`
+	ScoreFiles        []loop.ScoreFile `json:"score_files,omitempty"`
+	ScoreFilesChanged []string         `json:"score_files_changed,omitempty"`
+	Command           string           `json:"command,omitempty"`
+	Tune              *tuneSummary     `json:"tune,omitempty"`
 	loop.Result
 	DurationMS int64  `json:"duration_ms"`
 	DiffStat   string `json:"diff_stat"`
@@ -1031,6 +1099,25 @@ func runEnsemble(ctx context.Context, p ensembleRun) (sum ensembleSummary, runEr
 	start := time.Now()
 	origin, _ := gitOutput(p.Config.Worktree, "config", "--get", "remote.origin.url")
 	repository := repositoryOf(origin)
+	scoreBefore := map[string]string{}
+	if p.Tune == nil {
+		for _, file := range p.ScoreFiles {
+			if file.Source == "repository" {
+				scoreBefore[file.Path] = loop.ScoreFileState(filepath.Join(p.Config.Worktree, file.Path))
+			}
+		}
+	}
+	recordScore := func(sum *ensembleSummary) {
+		if p.Tune != nil || p.Score.Source == "" {
+			return
+		}
+		sum.Score, sum.ScoreSource, sum.ScoreFiles = p.Score.Name, p.Score.Source, p.ScoreFiles
+		for _, path := range sortedKeys(scoreBefore) {
+			if loop.ScoreFileState(filepath.Join(p.Config.Worktree, path)) != scoreBefore[path] {
+				sum.ScoreFilesChanged = append(sum.ScoreFilesChanged, path)
+			}
+		}
+	}
 	var res loop.Result
 	resultWritten := false
 	defer func() {
@@ -1054,6 +1141,7 @@ func runEnsemble(ctx context.Context, p ensembleRun) (sum ensembleSummary, runEr
 			}
 			res.Outcome, res.Reason = loop.Failed, reason
 			sum = ensembleSummary{Result: res, DurationMS: time.Since(start).Milliseconds(), Ensemble: p.Ensemble, Repository: repository, Base: base, BaseBranch: p.BaseBranch}
+			recordScore(&sum)
 			if p.Tune != nil {
 				sum.Command, sum.Tune = p.Command, p.TuneSummary
 			}
@@ -1076,10 +1164,13 @@ func runEnsemble(ctx context.Context, p ensembleRun) (sum ensembleSummary, runEr
 		fmt.Fprintf(p.Progress, "  base      %s @ %s\n", p.BaseBranch, base)
 	}
 	fmt.Fprintf(p.Progress, "  state     %s\n", p.StateDir)
-	eng := &loop.Engine{Meter: p.Meter, Watcher: p.Watcher, Config: p.Config, Stepper: p.Stepper, Verify: p.Verify, Records: telemetry, Progress: p.Progress}
+	eng := &loop.Engine{Score: p.Score, Meter: p.Meter, Watcher: p.Watcher, Config: p.Config, Stepper: p.Stepper, Verify: p.Verify, Records: telemetry, Progress: p.Progress}
 	state := initialRunState(p.RunID, firstNonEmpty(p.Command, "run"), p.Config.Worktree, p.Ensemble, p.Config.MaxRounds, start)
 	if p.Tune == nil {
-		score := loop.DefaultScore()
+		score := p.Score
+		if len(score.Steps) == 0 {
+			score = loop.DefaultScore()
+		}
 		outline := score.Outline(p.Config.StrictCommand != "")
 		state.Score = &outline
 		state.Seating = recordSeating(p, score)
@@ -1128,6 +1219,7 @@ func runEnsemble(ctx context.Context, p ensembleRun) (sum ensembleSummary, runEr
 		}
 	}
 	sum = ensembleSummary{Result: res, DurationMS: time.Since(start).Milliseconds(), DiffStat: stat, Ensemble: p.Ensemble, Repository: repository, Base: base, BaseBranch: p.BaseBranch}
+	recordScore(&sum)
 	if head != base {
 		sum.Head, sum.HeadMoved = head, true
 	}
@@ -1206,6 +1298,9 @@ func finishRunDetail(w io.Writer, sum ensembleSummary, detail bool) error {
 	printOutcome(w, sum)
 	printRestores(w, sum.Restores)
 	printStrict(w, sum.Strict)
+	for _, path := range sum.ScoreFilesChanged {
+		fmt.Fprintf(w, "  changed   %s: the run's change touched a score or part file it played; it was read at the base commit\n", path)
+	}
 	for _, r := range sum.VerifyRetried {
 		step := "verify[baseline]"
 		if r.Round > 0 {
@@ -1235,7 +1330,7 @@ func finishRunDetail(w io.Writer, sum ensembleSummary, detail bool) error {
 	switch sum.Outcome {
 	case loop.Approved:
 		return nil
-	case loop.StrictFailed, loop.StrictNotRun, loop.BaselineMismatch:
+	case loop.StrictFailed, loop.StrictNotRun, loop.BaselineMismatch, loop.ChangesRequested:
 		return &exitStatusError{code: outcomeExitStatus(sum.Outcome)}
 	}
 	return errNotApproved
@@ -1245,6 +1340,8 @@ func outcomeExitStatus(outcome string) int {
 	switch outcome {
 	case loop.Approved:
 		return 0
+	case loop.ChangesRequested:
+		return 7
 	case loop.StrictFailed:
 		return 5
 	case loop.StrictNotRun:

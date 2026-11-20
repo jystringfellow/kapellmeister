@@ -15,13 +15,14 @@ import (
 )
 
 type detachedLaunchRecord struct {
-	Command         string `json:"command,omitempty"`
-	Checkout        string `json:"checkout,omitempty"`
-	RunID           string `json:"run_id"`
-	Worktree        string `json:"worktree"`
-	BaseBranch      string `json:"base_branch"`
-	CreatedWorktree string `json:"created_worktree"`
-	Task            string `json:"task"`
+	Score           *loop.LoadedScore `json:"score,omitempty"`
+	Command         string            `json:"command,omitempty"`
+	Checkout        string            `json:"checkout,omitempty"`
+	RunID           string            `json:"run_id"`
+	Worktree        string            `json:"worktree"`
+	BaseBranch      string            `json:"base_branch"`
+	CreatedWorktree string            `json:"created_worktree"`
+	Task            string            `json:"task"`
 }
 
 var detachedLaunchTimeout = 30 * time.Second

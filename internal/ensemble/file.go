@@ -19,6 +19,7 @@ const (
 )
 
 type Spec struct {
+	Score    string
 	Name     string
 	Path     string
 	GateWhen string
@@ -41,6 +42,7 @@ type ChairSpec struct {
 }
 
 type file struct {
+	Score    string `toml:"score"`
 	GateWhen string `toml:"gate_when"`
 	Timeout  string `toml:"timeout"`
 	Sections map[string]struct {
@@ -129,6 +131,10 @@ func load(name, path string, portable bool, agents loop.Agents) (Spec, error) {
 			return fail("gate_when", "%q is not any, all or always", f.GateWhen)
 		}
 	}
+	if md.IsDefined("score") && !validName.MatchString(f.Score) {
+		return fail("score", "invalid name %q", f.Score)
+	}
+	spec.Score = f.Score
 	spec.GateWhen = f.GateWhen
 	if spec.Timeout, err = duration(f.Timeout); err != nil {
 		return fail("timeout", "%v", err)
@@ -151,8 +157,11 @@ func load(name, path string, portable bool, agents loop.Agents) (Spec, error) {
 			}
 			c := raw.Chairs[chairName]
 			chair := ChairSpec{Name: chairName, Part: c.Part, Agents: c.Agents}
-			if !slices.Contains(loop.AllRoles(), c.Part) {
+			if (f.Score == "" || f.Score == "default") && !slices.Contains(loop.AllRoles(), c.Part) {
 				return fail(key+".part", "unknown part %q (want %s); optional parts: %s", c.Part, strings.Join(loop.ChairRoles, ", "), strings.Join(loop.OptionalRoles, ", "))
+			}
+			if f.Score != "" && f.Score != "default" && !validName.MatchString(c.Part) {
+				return fail(key+".part", "invalid name %q", c.Part)
 			}
 			if len(c.Agents) == 0 {
 				return fail(key+".agents", "want at least one agent")
@@ -255,13 +264,22 @@ func firstDuration(ds ...time.Duration) time.Duration {
 	return 0
 }
 
-func ChairsOf(members []Member) (loop.Chairs, error) {
+func ChairsOf(members []Member) (loop.Chairs, error) { return ChairsFor(loop.DefaultScore(), members) }
+
+func ChairsFor(score loop.Score, members []Member) (loop.Chairs, error) {
 	byPart := map[string][]Member{}
 	for _, m := range members {
+		if _, ok := score.Part(m.Part); !ok && m.Part != "classifier" {
+			return loop.Chairs{}, fmt.Errorf("ensemble chair %s.%s plays unknown part %q", m.Section, m.Name, m.Part)
+		}
 		byPart[m.Part] = append(byPart[m.Part], m)
 	}
 	var chairs loop.Chairs
-	score := loop.DefaultScore()
+	for _, step := range score.Steps {
+		if score.Name != "default" && step.Kind != loop.KindProduce && len(byPart[score.Classifier]) == 0 {
+			return loop.Chairs{}, fmt.Errorf("ensemble seats no classifier; step %s needs one", step.Name)
+		}
+	}
 	for _, part := range score.Parts {
 		seated := byPart[part.Name]
 		if len(seated) == 0 {
@@ -275,7 +293,14 @@ func ChairsOf(members []Member) (loop.Chairs, error) {
 		})
 		if review {
 			for _, m := range seated {
-				chairs.Reviewers = append(chairs.Reviewers, m.Chair)
+				if part.Name == "reviewer" {
+					chairs.Reviewers = append(chairs.Reviewers, m.Chair)
+				} else {
+					if chairs.Parts == nil {
+						chairs.Parts = map[string][]loop.Chair{}
+					}
+					chairs.Parts[part.Name] = append(chairs.Parts[part.Name], m.Chair)
+				}
 			}
 			continue
 		}
@@ -298,7 +323,30 @@ func ChairsOf(members []Member) (loop.Chairs, error) {
 			chairs.Classifier = chair
 		case "tester":
 			chairs.Tester = &chair
+		default:
+			if chairs.Parts == nil {
+				chairs.Parts = map[string][]loop.Chair{}
+			}
+			chairs.Parts[part.Name] = []loop.Chair{chair}
 		}
 	}
 	return chairs, nil
+}
+
+func ScoreName(name, home, worktree string) (string, error) {
+	path, _, found := locate(name, home, worktree)
+	if !found {
+		return "", nil
+	}
+	var f struct {
+		Score string `toml:"score"`
+	}
+	md, err := toml.DecodeFile(path, &f)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", path, err)
+	}
+	if md.IsDefined("score") && !validName.MatchString(f.Score) {
+		return "", fmt.Errorf("%s: score: invalid name %q", path, f.Score)
+	}
+	return f.Score, nil
 }

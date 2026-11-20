@@ -161,6 +161,20 @@ func (e *Engine) lessonsFor(step string, chair Chair) string {
 }
 
 func (e *Engine) readLessonBlob(mode, oid string) lessonBlob {
+	blob := e.readTextBlob(mode, oid)
+	if blob.reason != "" {
+		return blob
+	}
+	text := blob.text
+	lower := strings.ToLower(text)
+	if strings.Contains(lower, strings.TrimSuffix(lessonsOpen, ">")) || strings.Contains(lower, strings.TrimSuffix(lessonsClose, ">")) {
+		return lessonBlob{reason: "section marker"}
+	}
+
+	return blob
+}
+
+func (e *Engine) readTextBlob(mode, oid string) lessonBlob {
 	switch mode {
 	case "120000":
 		return lessonBlob{reason: "symbolic link"}
@@ -179,10 +193,6 @@ func (e *Engine) readLessonBlob(mode, oid string) lessonBlob {
 		}
 		if strings.ContainsFunc(text, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\t' }) {
 			return lessonBlob{reason: "control characters"}
-		}
-		lower := strings.ToLower(text)
-		if strings.Contains(lower, strings.TrimSuffix(lessonsOpen, ">")) || strings.Contains(lower, strings.TrimSuffix(lessonsClose, ">")) {
-			return lessonBlob{reason: "section marker"}
 		}
 		return lessonBlob{text: text}
 	default:

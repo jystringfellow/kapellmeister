@@ -47,6 +47,7 @@ type Part struct {
 }
 
 type Score struct {
+	Source     string
 	Name       string
 	Rounds     int
 	Parts      []Part
@@ -233,7 +234,7 @@ type StepOutline struct {
 }
 
 func (s Score) Outline(strict bool) ScoreOutline {
-	out := ScoreOutline{Name: s.Name, Source: "built-in", Rounds: s.Rounds, Steps: []StepOutline{{Name: "verify", Kind: "verify"}}}
+	out := ScoreOutline{Name: s.Name, Source: firstSet(s.Source, "built-in"), Rounds: s.Rounds, Steps: []StepOutline{{Name: "verify", Kind: "verify"}}}
 	for _, step := range s.Steps {
 		next := map[string]string{}
 		for _, exit := range step.Exits {

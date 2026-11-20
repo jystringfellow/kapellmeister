@@ -60,6 +60,7 @@ func rehearseCommand(args []string) error {
 	if err != nil {
 		return err
 	}
+	printScoreFiles(os.Stdout, s.Score.Files)
 	printExcluded(os.Stdout, wt)
 	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
@@ -93,7 +94,7 @@ func rehearseCommand(args []string) error {
 	policy := s.Policy
 	sizeMembers(policy, members)
 	client := newClient(firstNonEmpty(*caoURL, s.CAOURL), s, os.Stdout)
-	if err := ensureProfiles(ctx, client, &policy, stepChairs(chairs)); err != nil {
+	if err := ensureProfiles(ctx, client, &policy, stepChairs(chairs, s.Score.Score)); err != nil {
 		return err
 	}
 	ensembleName := firstNonEmpty(*name, defaultEnsembleName)

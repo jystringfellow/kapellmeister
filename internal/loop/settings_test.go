@@ -709,3 +709,23 @@ func TestTrustFolderBelongsInTheUserConfigAndIsRefusedInTheRepositoryConfig(t *t
 		}
 	}
 }
+
+func TestRepositoryScoresCanBeRefusedOnlyByTheUsersConfig(t *testing.T) {
+	home := writeUserConfig(t, "[run]\nrepository_scores = false\n")
+	s, err := LoadSettings(home, "")
+	if err != nil || s.RepositoryScores {
+		t.Fatalf("settings = %+v, %v", s, err)
+	}
+	wt := t.TempDir()
+	path := filepath.Join(wt, ConfigFile)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("[run]\nrepository_scores = true\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = LoadSettings(home, wt)
+	if err == nil || !strings.Contains(err.Error(), "run.repository_scores belongs in") {
+		t.Fatalf("error = %v", err)
+	}
+}
