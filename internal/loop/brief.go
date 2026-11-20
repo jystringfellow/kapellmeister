@@ -29,7 +29,7 @@ func (e *Engine) brief(spec ScoreStep, h handoff, path string, chair Chair) stri
 		return testPrompt(cfg.Task, h.path(0), h.path(1), h.path(2), cfg.VerifyCommand, h.verify, h.verifyPath, cfg.ScratchDir, path, e.chairTimeout(chair), os.Getpid(), lessons, cfg.CAOURL, cfg.StateDir, e.measurements)
 	}
 	part, _ := e.playingScore().Part(spec.Part)
-	instructions := strings.NewReplacer("{reply}", path, "{inputs}", strings.Join(h.files, ", "), "{plan}", h.path(0), "{verify}", h.verifyPath, "{check}", cfg.CheckCommand, "{scratch}", cfg.ScratchDir).Replace(part.Prompt[spec.Name])
+	instructions := strings.NewReplacer("{reply}", path, "{inputs}", strings.Join(h.files, ", "), "{plan}", h.path(0), "{verify}", h.verifyPath, "{verification}", strings.TrimRight(verifyLine(cfg.VerifyCommand, h.verify, h.verifyPath), "\n"), "{check}", cfg.CheckCommand, "{scratch}", cfg.ScratchDir).Replace(part.Prompt[spec.Name])
 	prompt := preamble(spec.Part) + taskBlock(cfg.Task) + lessons + instructions + "\n"
 	if len(h.files) > 0 {
 		prompt += "Read " + strings.Join(h.files, ", ") + ".\n"

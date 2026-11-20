@@ -298,3 +298,12 @@ func (s Score) PolicyKey(name string) string {
 	}
 	return name
 }
+
+func (s Score) EditsWorktree() bool {
+	for _, step := range s.Steps {
+		if step.Kind == KindProduce && step.Writes != "reply" {
+			return true
+		}
+	}
+	return false
+}

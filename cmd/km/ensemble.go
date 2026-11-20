@@ -23,6 +23,19 @@ func lineUp(s loop.Settings, worktree, name string, roles map[string]*string) (l
 		if name != "" && !inConfig {
 			return s, loop.Chairs{}, nil, unknownEnsemble(s, worktree, name)
 		}
+		s, err = loadSelectedScore(s, worktree, s.ScoreName)
+		if err != nil {
+			return s, loop.Chairs{}, nil, err
+		}
+		if s.Score.Score.Source == "built-in" {
+			for _, part := range loop.AllRoles() {
+				if flag := roles[part]; flag != nil && *flag != "" {
+					if _, ok := s.Score.Score.Part(part); !ok {
+						return s, loop.Chairs{}, nil, fmt.Errorf("-%s: score %s has no %s part", part, s.Score.Score.Name, part)
+					}
+				}
+			}
+		}
 		s, chairs, err := runChairs(s, name, roles)
 		if err != nil {
 			return s, chairs, nil, err
@@ -30,17 +43,18 @@ func lineUp(s loop.Settings, worktree, name string, roles map[string]*string) (l
 		if err := checkPins(s.Policy, chairSpecs(s, roles), chairs); err != nil {
 			return s, chairs, nil, err
 		}
-
 		members := ensemble.MembersOf(chairs)
-		s, err = loadSelectedScore(s, worktree, s.ScoreName)
-		if err != nil {
-			return s, chairs, nil, err
+		if s.Score.Score.Source == "built-in" {
+			members = slices.DeleteFunc(members, func(m ensemble.Member) bool { _, ok := s.Score.Score.Part(m.Part); return !ok })
 		}
 		if _, err := ensemble.ChairsFor(s.Score.Score, members); err != nil {
 			return s, chairs, nil, err
 		}
 		if s.Score.Score.Source != "" {
 			s.GateWhen = ""
+			if s.Score.Score.Source == "built-in" {
+				s.GateWhen = s.Ensembles[name].GateWhen
+			}
 		}
 		return s, chairs, members, nil
 	}

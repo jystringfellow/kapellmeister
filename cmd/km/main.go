@@ -47,6 +47,7 @@ const usage = `usage:
   km preflight -worktree DIR [-agents LIST] [-tier T]       check each agent starts and answers
   km profiles install [-cao URL] [-replace] [AGENT ...]       install embedded base chair profiles
   km mcp                                                    serve run tools over MCP stdio
+  km score show NAME                                        print a built-in score and its part texts
   km version                                                print the version
   km config [-worktree DIR]                                  show the effective settings and the files they come from`
 
@@ -73,6 +74,8 @@ func execute(args []string, stderr io.Writer) int {
 			return 2
 		}
 		printVersion(os.Stdout)
+	case "score":
+		err = scoreCommand(args[1:], os.Stdout)
 	case "profiles":
 		if len(args) < 2 || args[1] != "install" {
 			fmt.Fprintln(stderr, profilesUsage)
@@ -233,8 +236,12 @@ func chairSpecs(s loop.Settings, flags map[string]*string) map[string]string {
 }
 
 func resolveChairs(agents loop.Agents, specs map[string]string) (loop.Chairs, error) {
+	return resolveScoreChairs(agents, specs, loop.ChairRoles, loop.AllRoles())
+}
+
+func resolveScoreChairs(agents loop.Agents, specs map[string]string, required, parts []string) (loop.Chairs, error) {
 	var missing []string
-	for _, role := range loop.ChairRoles {
+	for _, role := range required {
 		if strings.TrimSpace(specs[role]) == "" {
 			missing = append(missing, role)
 		}
@@ -244,7 +251,7 @@ func resolveChairs(agents loop.Agents, specs map[string]string) (loop.Chairs, er
 	}
 	resolved := map[string]loop.Chair{}
 	var reviewers []loop.Chair
-	for _, role := range loop.AllRoles() {
+	for _, role := range parts {
 		if role == "tester" && specs[role] == "" {
 			continue
 		}
@@ -283,7 +290,13 @@ func runChairs(s loop.Settings, ensemble string, roles map[string]*string) (loop
 			return s, loop.Chairs{}, err
 		}
 	}
-	chairs, err := resolveChairs(s.Defined, chairSpecs(s, roles))
+	var chairs loop.Chairs
+	var err error
+	if s.Score.Score.Source == "built-in" {
+		chairs, err = resolveScoreChairs(s.Defined, chairSpecs(s, roles), s.Score.Score.Required(), s.Score.Score.Roles())
+	} else {
+		chairs, err = resolveChairs(s.Defined, chairSpecs(s, roles))
+	}
 	return s, chairs, err
 }
 
@@ -340,7 +353,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 	worktree := fs.String("worktree", "", "use this existing worktree instead of creating one")
 	roles := chairFlags(fs, loop.AllRoles()...)
 	ensemble := fs.String("ensemble", "", ensembleHelp)
-	fs.String("score", "", "score to play with chairs from config")
+	fs.String("score", "", "score to play with role flags or chairs from config")
 	hideFlags(fs, "detached-launch")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -392,6 +405,9 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 	scoreName, err := ensembleScoreName(*ensemble, firstNonEmpty(*worktree, *c.repo))
 	if err != nil {
 		return err
+	}
+	if selected, ok := loop.BuiltinScore(firstNonEmpty(userSettings.ScoreName, scoreName)); ok && !selected.EditsWorktree() && *worktree == "" && *detachedLaunch == "" {
+		return fmt.Errorf("score %s reviews the uncommitted change in an existing worktree; pass -worktree DIR (with -repo the run starts from a clean checkout and has nothing to review)", selected.Name)
 	}
 	if userSettings.ScoreName == "" && scoreName == "" {
 		if _, _, _, err := lineUp(userSettings, firstNonEmpty(*worktree, *c.repo), *ensemble, roles); err != nil {
@@ -454,6 +470,15 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 	s, chairs, members, err := lineUp(s, wt, *ensemble, roles)
 	if err != nil {
 		return err
+	}
+	if s.Score.Score.Source == "built-in" && !s.Score.Score.EditsWorktree() {
+		status, err := gitOutput(wt, "status", "--porcelain=v1", "--untracked-files=all")
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(status) == "" {
+			return fmt.Errorf("score %s: the worktree has no uncommitted change to review", s.Score.Score.Name)
+		}
 	}
 	seated, err := addressedChairs(wt, *ensemble, chairs, members, s.Score.Score)
 	if err != nil {

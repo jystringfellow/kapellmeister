@@ -44,6 +44,10 @@ func scoreKeys(path, subject string, raw map[string]any, allowed ...string) erro
 	return nil
 }
 func decodeScore(text, path, name string) (Score, error) {
+	return decodeScoreWithPartText(text, path, name, false)
+}
+
+func decodeScoreWithPartText(text, path, name string, ownPartText bool) (Score, error) {
 	var raw map[string]any
 	if _, err := toml.Decode(text, &raw); err != nil {
 		return Score{}, scoreError(path, "", "%v", err)
@@ -202,7 +206,7 @@ func decodeScore(text, path, name string) (Score, error) {
 				return Score{}, scoreError(path, subject, "reads unknown step %q", read)
 			}
 		}
-		if built, ok := DefaultScore().Part(step.Part); ok {
+		if built, ok := DefaultScore().Part(step.Part); ok && !ownPartText {
 			matched := false
 			for _, original := range DefaultScore().StepsOf(built.Name) {
 				if original.Kind != step.Kind {
