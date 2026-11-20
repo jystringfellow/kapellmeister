@@ -64,25 +64,13 @@ func (e *Engine) walkScore(ctx context.Context, res Result, verify VerifyResult,
 		backgroundDone = nil
 		return err
 	}
+	defer e.releaseKept(ctx)
 	defer func() {
 		if cancelBackground != nil {
 			cancelBackground()
 		}
 		if backgroundDone != nil {
 			<-backgroundDone
-		}
-	}()
-	type keptChair struct {
-		terminal string
-		chair    Chair
-	}
-	kept := map[string]keptChair{}
-	var keptOrder []string
-	defer func() {
-		for _, part := range keptOrder {
-			if seat := kept[part]; seat.terminal != "" {
-				_ = e.Stepper.Release(context.WithoutCancel(ctx), seat.terminal)
-			}
 		}
 	}()
 	handoffFor := func(spec ScoreStep) handoff {
@@ -144,24 +132,7 @@ func (e *Engine) walkScore(ctx context.Context, res Result, verify VerifyResult,
 			step := Step{Name: spec.Name, Round: round, Chair: chair, ReplyPath: path, Prompt: e.brief(spec, hand, path, chair)}
 			switch spec.Kind {
 			case KindProduce:
-				step.KeepTerminal = score.Resumes(spec.Name)
-				seat := kept[spec.Part]
-				resolved, _ := e.resolve(spec.Name, chair)
-				if step.KeepTerminal {
-					if !slices.Contains(keptOrder, spec.Part) {
-						keptOrder = append(keptOrder, spec.Part)
-					}
-					if seat.terminal != "" && seat.chair != resolved {
-						_ = e.Stepper.Release(context.WithoutCancel(ctx), seat.terminal)
-						seat.terminal = ""
-						kept[spec.Part] = seat
-					}
-					step.ReuseTerminal = seat.terminal
-				}
-				out, err := e.step(ctx, step)
-				if step.KeepTerminal && out.TerminalID != "" {
-					kept[spec.Part] = keptChair{out.TerminalID, resolved}
-				}
+				_, err := e.step(ctx, step)
 				if err != nil {
 					return e.fail(res, err), nil
 				}

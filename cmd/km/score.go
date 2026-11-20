@@ -13,12 +13,13 @@ func scoreCommand(args []string, out io.Writer) error {
 		return &exitStatusError{code: 2, err: fmt.Errorf("usage: km score show NAME")}
 	}
 	name := args[1]
+	if name == "default" {
+		_, err := io.WriteString(out, loop.DefaultScore().File())
+		return err
+	}
 	text, ok := loop.BuiltinScoreText(name)
 	if !ok {
-		if name == "default" {
-			return fmt.Errorf("score default has no file form yet; printable built-ins: %s", strings.Join(loop.BuiltinScoreNames(), ", "))
-		}
-		return fmt.Errorf("unknown printable score %q; printable built-ins: %s", name, strings.Join(loop.BuiltinScoreNames(), ", "))
+		return fmt.Errorf("unknown printable score %q; printable built-ins: %s", name, strings.Join(append([]string{"default"}, loop.BuiltinScoreNames()...), ", "))
 	}
 	fmt.Fprintf(out, "==> scores/%s.toml <==\n%s", name, text)
 	score, _ := loop.BuiltinScore(name)

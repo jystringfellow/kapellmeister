@@ -76,6 +76,9 @@ type Chairs struct {
 }
 
 type Step struct {
+	MemoryKey     string
+	Memory        string
+	MemoryReason  string
 	Retry         int
 	ChairName     string
 	Name          string
@@ -93,6 +96,7 @@ type Step struct {
 }
 
 type StepResult struct {
+	usage         *Usage
 	TerminalID    string
 	Status        string
 	LastMessage   string
@@ -163,6 +167,8 @@ type Config struct {
 }
 
 type Record struct {
+	Memory        string         `json:"memory,omitempty"`
+	MemoryReason  string         `json:"memory_reason,omitempty"`
 	Part          string         `json:"part,omitempty"`
 	Kept          bool           `json:"kept,omitempty"`
 	Retry         int            `json:"retry,omitempty"`
@@ -264,6 +270,8 @@ type ActiveStep struct {
 }
 
 type Engine struct {
+	kept            map[string]*keptChair
+	keptOrder       []string
 	Score           Score
 	score           Score
 	Now             func() time.Time
@@ -317,6 +325,7 @@ func (e *Engine) Run(ctx context.Context) (res Result, err error) {
 	defer func() { res.Restores, res.VerifyRetried = e.restores, e.verifyRetried }()
 	e.mu.Lock()
 	e.usage = Usage{}
+	e.kept, e.keptOrder = map[string]*keptChair{}, nil
 	e.mu.Unlock()
 	defer func() {
 		if e.Meter != nil {
@@ -589,7 +598,21 @@ func (e *Engine) step(ctx context.Context, s Step) (StepResult, error) {
 	if s.Timeout == 0 {
 		s.Timeout = e.Config.StepTimeout
 	}
+	if e.playingScore().Resumes(s.Name) {
+		s.MemoryKey = e.playingScore().StepPart(s.Name)
+	}
+	seat := e.prepareMemory(ctx, &s)
 	out, err := e.attempt(ctx, s)
+	if s.ReuseTerminal != "" && errors.Is(err, ErrReuseRefused) && ctx.Err() == nil && seat != nil {
+		old := s.ReuseTerminal
+		_ = e.Stepper.Release(context.WithoutCancel(ctx), old)
+		s.ReuseTerminal, s.Memory = "", string(MemoryFresh)
+		s.MemoryReason = fmt.Sprintf("terminal %s could not be reused: %s", old, err)
+		e.mu.Lock()
+		seat.terminal = ""
+		e.mu.Unlock()
+		out, err = e.attempt(ctx, s)
+	}
 	if err != nil && out.TerminalID != "" && errors.Is(err, errNoReply) {
 		nudge := s
 		nudge.Name, nudge.ReuseTerminal = s.Name+"-nudge", out.TerminalID
@@ -599,9 +622,22 @@ func (e *Engine) step(ctx context.Context, s Step) (StepResult, error) {
 		if nudged.TerminalID != "" {
 			out.TerminalID = nudged.TerminalID
 		}
+		if out.usage != nil && nudged.usage != nil {
+			combined := *out.usage
+			if combined.Tokens != nil && nudged.usage.Tokens != nil {
+				tokens := combined.Tokens.add(*nudged.usage.Tokens)
+				combined.Tokens = &tokens
+			}
+			combined.Known = combined.Known && nudged.usage.Known
+			out.usage = &combined
+		}
 		if err == nil {
 			out.Status, out.LastMessage = nudged.Status, nudged.LastMessage
 		}
+	}
+	if seat != nil {
+		e.finishMemory(ctx, s, seat, out, err)
+		return out, err
 	}
 	if out.TerminalID != "" && (!s.KeepTerminal || err != nil) && s.ReuseTerminal == "" {
 		_ = e.Stepper.Release(context.WithoutCancel(ctx), out.TerminalID)
@@ -639,7 +675,7 @@ var errNoReply = errors.New("no reply file")
 
 func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 	chair := s.Chair
-	rec := Record{Part: e.playingScore().StepPart(s.Name), Retry: s.Retry, RunID: e.Config.RunID, Round: s.Round, Step: s.Name, ChairName: s.ChairName, Chair: &chair, Reply: s.ReplyPath,
+	rec := Record{Memory: s.Memory, MemoryReason: s.MemoryReason, Part: e.playingScore().StepPart(s.Name), Retry: s.Retry, RunID: e.Config.RunID, Round: s.Round, Step: s.Name, ChairName: s.ChairName, Chair: &chair, Reply: s.ReplyPath,
 		Tier: s.Assignment.Tier, Effort: s.Assignment.Effort, TierSource: s.Assignment.Source}
 	retryNote := ""
 	if s.Retry > 0 {
@@ -676,6 +712,10 @@ func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 	if closeUsage != nil {
 		usage := closeUsage()
 		rec.Usage = &usage
+		out.usage = &usage
+	}
+	if s.ReuseTerminal != "" && errors.Is(err, ErrReuseRefused) && ctx.Err() == nil && s.MemoryKey != "" && e.playingScore().Index(s.Name) >= 0 {
+		return out, err
 	}
 	if err != nil {
 		rec.Error = cancellationReason(ctx, err)
