@@ -104,9 +104,9 @@ func (e *Engine) startWatcher(ctx context.Context) func() {
 
 func (e *Engine) watchStep(s Step) func() {
 	if s.ChairName == "" {
-		s.ChairName = firstSet(s.Chair.Address, stepRoles[s.Name])
+		s.ChairName = firstSet(s.Chair.Address, e.playingScore().StepPart(s.Name))
 		if s.ChairName == "" && strings.HasPrefix(s.Name, "classify-") {
-			s.ChairName = DefaultScore().Classifier
+			s.ChairName = e.playingScore().Classifier
 		}
 	}
 	e.watch.Lock()
