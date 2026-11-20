@@ -319,7 +319,7 @@ func TestStatusJSONScoreStepsListVerifyAndStrictWhereTheyRunAndStrictOnlyWithASt
 					t.Fatal(steps)
 				}
 			}}
-			_, err := runEnsemble(context.Background(), ensembleRun{RunID: "outline", StateDir: dir, Stepper: stepper, Progress: io.Discard, Config: loop.Config{RunID: "outline", Worktree: standing.Worktree, Task: "probe", Chairs: plainChairs(), MaxRounds: 1, StrictCommand: strict}})
+			_, err := runEnsemble(context.Background(), ensembleRun{RunID: "outline", StateDir: dir, Stepper: stepper, Progress: io.Discard, Config: loop.Config{RunID: "outline", Worktree: standing.Worktree, Task: "probe", Chairs: plainChairs(), MaxRounds: 1, VerifyCommand: "true", StrictCommand: strict}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -387,7 +387,7 @@ func TestStatusJSONAttributesARecordedPartBeforeANameThatBelongsToTheSubject(t *
 }
 
 func TestStatusJSONScorePlacesVerifyBeforeTheScoreAndAfterWorktreeChanges(t *testing.T) {
-	outline := loop.DefaultScore().Outline(true)
+	outline := loop.DefaultScore().Outline(true, true)
 	var names []string
 	for _, step := range outline.Steps {
 		names = append(names, step.Name)

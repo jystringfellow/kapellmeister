@@ -2216,6 +2216,9 @@ Use `km wait RUN` to wait for one and receive its final summary and exit status,
 it searches `<state>/runs` plus the user config's [`[report] dirs`](#report). Named directories
 replace both without reading the user config. Configured searches skip missing
 directories and add the same `searched:` lines, JSON fields and stderr diagnostics as report.
+A `km run` is listed from the moment it starts checking that its chairs can play: until that
+preflight passes, its `current` is one entry with the step `preflight` and no chairs. A run whose
+preflight fails in the foreground leaves no record, so it is in neither `km status` nor `km report`.
 It shares report's search, limits (`-max-depth`, `-max-entries`, same
 defaults), handling of copies and safe record reading. A run is not listed when any copy of it has
 a result, even one that disagrees with the copy in progress. Among copies still in progress, status
@@ -2241,8 +2244,9 @@ Each chair includes `address`, `name`, `part`, `agent`, `provider`, `model`, `ti
 `state`, `step`, `since`, `terminal`, `needs_input` and `usage`. State is `waiting`, `playing`,
 `done` or `unknown`; a prompt waiting for a person is a separate `needs_input: {count, reason}`.
 `terminal` is empty when no occupant is seated. While a fresh chair plays, its occupant's id
-appears within one blocker poll of the terminal existing, matched by the step's terminal label.
-That poll is 20 seconds unless `[run] blocker_poll` says otherwise.
+appears a few seconds after its step starts, matched by the step's terminal label: km lists the
+session's terminals 2, 5 and 10 seconds in, without reading any screen, and stops once it has the id.
+After that the blocker poll (20 seconds unless `[run] blocker_poll` says otherwise) still records it.
 Ids returned by earlier steps are excluded from fresh assignments. The watcher leaves it empty
 when several playing steps or remaining listed terminals share that label (for example,
 concurrent classifiers), or when watching is disabled. Existing prompt records can
@@ -2251,7 +2255,7 @@ empty again. A resumed or standing chair keeps its terminal.
 
 `score` includes its `name`, `source`, `rounds` and ordered `steps`, each with a `name`, `kind`,
 optional `part` and an exit-to-next-step map `next`. Verify appears before the score and after
-steps that may change the worktree. Strict appears last only when a strict command is configured.
+steps that may change the worktree, only when the run has a verify command. Strict appears last only when a strict command is configured.
 `current` groups the chairs playing each step and round, with their earliest `started` time;
 parallel chairs and the background step can appear together. An abandoned run has an empty
 `current` and every chair's state is `unknown`; the existing `playing` field keeps the last
