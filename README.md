@@ -900,6 +900,12 @@ flaky`), and the JSON summary lists it under `verify_retried` (`round`, `attempt
 the baseline). A change that makes a test fail now and then can pass this way, so read that line
 as a warning.
 
+Each verify in a run gets `[test] verify_timeout`, or `[run] timeout` (`60m` by default) when the
+key is not set. km stops a verify that passes the limit, together with every process it started;
+it counts as a failed verify, its output ends with `km: the command did not finish within 20m`,
+and it is not run again. An interrupt stops a running verify, strict or probe and its processes
+the same way.
+
 Snapshot objects and an index copy live in a private temporary directory, referenced by
 a temporary snapshot manifest in the run record. km removes both when the run ends,
 including failure and handled interruption. If restoration cannot be confirmed, km fails
@@ -943,10 +949,11 @@ because Codex saves trust on that first attempt. This is reported upstream as
 verify = "scripts/verify"           # kapellmeister runs this before planning and after each round
 check  = "scripts/check {args}"     # implementers use this for targeted, failures-only runs
 verify_required = ["unit", "integration"]  # suites verify must run, each a run step in scripts/verify; default none
-verify_timeout = "20m"              # limit for each verify run in km prove and km tune verify; saved by tune when it raises it
+verify_timeout = "20m"              # limit for each verify run in km prove, km tune verify and a run; saved by tune when it raises it
 verify_time_bounded = true          # allow tune to cut what does not fit two minutes; default false
 strict = "scripts/strict"           # optional third level: runs once after the gate (and tester) approve
 strict_ready = "scripts/strict-ready"  # optional probe run before strict; non-zero means "strict not run"
+strict_timeout = "45m"              # optional limit for strict and for its probe; default [run] timeout in a run
 verify_known_failures = ["legacy export"]  # labels of known_failure steps: verify passes while they fail, and every summary names them
 
 [[test.excluded]]                   # a suite left out of verify; written by km tune verify, not by hand or by a chair
@@ -1182,7 +1189,7 @@ one verify per proved round, plus up to three for each suite it excludes.
 The `[test] verify_*` keys, `verify_known_failures` included, and `[[test.excluded]]` are new. A km built before them rejects
 a config that contains any of them as an unknown key, for every command including `km run`, so
 update km on every machine and CI job that reads the repository's config before committing them. The same
-holds for `strict` and `strict_ready`.
+holds for `strict`, `strict_ready` and `strict_timeout`.
 
 The writer keeps the bounded-output wrapper and writes at least two break patches outside the
 checkout: one breaks covered source code and one breaks a test expectation. Work takes place in
@@ -1330,7 +1337,7 @@ that raised it, and the JSON carries `timeout_ms` and `break_timeout_ms`.
 | 17 | `-level strict` only: the `strict_ready` probe failed, so strict was not run |
 | 18 | Only in a `km tune verify` round: the run without network did not pass (`needs_network` or `no_network_*`) |
 
-`-level` chooses the command to prove: `verify` (the default) or `strict`. `-timeout D` is a positive limit per verify run; it defaults to `[test] verify_timeout`, then `10m`, and a timeout names the limit that applied (the longer break timeout when a break run timed out) and both ways to raise it. Output names each clean run and
+`-level` chooses the command to prove: `verify` (the default) or `strict`. `-timeout D` is a positive limit per run of the command; it defaults to `[test] verify_timeout`, then `10m` (at `-level strict`, `[test] strict_timeout` comes first), and a timeout names the limit that applied (the longer break timeout when a break run timed out) and both ways to raise it. Output names each clean run and
 patch, reports exit codes and durations, and bounds verify output to 40 lines of 300 characters.
 `-json` carries the same facts in `worktree`, `command`, `status`, `exit_status`, `reason`, `runs`
 and `breaks`, including failures and skipped patches, with each run's `steps` (label and
@@ -1364,6 +1371,11 @@ after approval. It is not retried and no round follows it.
 - **Did not finish:** when the run is interrupted during strict or its probe, the outcome is
   `strict_not_run` and the summary says `strict    not run: strict did not finish: interrupted by
   SIGINT`, not a plain failure.
+- **Past its limit:** strict and its probe each get `[test] strict_timeout`, or `[run] timeout`
+  (`60m` by default) when the key is not set. km stops a command that passes the limit, together
+  with every process it started. Strict past its limit is a failure: the outcome is
+  `strict_failed`, the summary says `strict    failed: did not finish within 45m: COMMAND`, and
+  the JSON has `strict.timed_out`. A probe past the limit is `strict_not_run`.
 - **Not reached:** when the gate approves and the tester is interrupted or times out, the outcome
   stays `untested` and the summary adds `strict    not reached: the tester did not finish`. A
   failed run and one that used up its rounds say nothing about strict.
@@ -1384,7 +1396,7 @@ is there because a chair can otherwise make strict pass by rewriting it. A comma
 path, such as `make strict`, or whose first word uses a variable or a glob, is not tracked this
 way, and km makes no claim about whether its probe script exists.
 
-`strict_ready` without `strict` is a config error. So is a `verify`, `check`, `strict` or
+`strict_ready` or `strict_timeout` without `strict` is a config error. So is a `verify`, `check`, `strict` or
 `strict_ready` that holds only spaces or comments: the config is refused when it loads, because
 such a command exits 0 and would read as a pass. Leave the key out instead.
 

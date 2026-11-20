@@ -28,6 +28,7 @@ type StrictResult struct {
 	Reply      string   `json:"reply,omitempty"`
 	Reason     string   `json:"reason,omitempty"`
 	Changed    []string `json:"changed,omitempty"`
+	TimedOut   bool     `json:"timed_out,omitempty"`
 }
 
 var assignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
@@ -212,9 +213,13 @@ func (e *Engine) strict(ctx context.Context, res Result) Result {
 			return res
 		}
 		e.progress("→ strict-ready %s", cfg.StrictReadyCommand)
-		v, err := CommandVerifier(cfg.StrictReadyCommand)(ctx, cfg.Worktree)
+		v, err := CommandVerifierWithin(cfg.StrictReadyCommand, cfg.StrictTimeout)(ctx, cfg.Worktree)
 		if err := settle("strict-ready", v, err); err != nil {
 			return notRun("the strict_ready probe did not finish: " + cancellationReason(ctx, err))
+		}
+		if v.TimedOut {
+			strict.TimedOut = true
+			return notRun(fmt.Sprintf("the strict_ready probe did not finish within %s", cfg.StrictTimeout))
 		}
 		if v.ExitCode != 0 {
 			strict.Status = "not_run"
@@ -226,9 +231,17 @@ func (e *Engine) strict(ctx context.Context, res Result) Result {
 		start = time.Now()
 	}
 	e.progress("→ strict %s", cfg.StrictCommand)
-	v, err := CommandVerifier(cfg.StrictCommand)(ctx, cfg.Worktree)
+	v, err := CommandVerifierWithin(cfg.StrictCommand, cfg.StrictTimeout)(ctx, cfg.Worktree)
 	if err := settle("strict", v, err); err != nil {
 		return notRun("strict did not finish: " + cancellationReason(ctx, err))
+	}
+	if v.TimedOut {
+		strict.Status, strict.TimedOut = "failed", true
+		strict.Reason = fmt.Sprintf("strict did not finish within %s", cfg.StrictTimeout)
+		res.Outcome = StrictFailed
+		res.Reason = fmt.Sprintf("change approved by the gate, but %s and km stopped it; see %s; make strict faster or raise [test] strict_timeout; the approved change is left in place", strict.Reason, reply)
+		e.progress("  %s; km stopped it and every process it started", strict.Reason)
+		return res
 	}
 	if v.ExitCode == 0 {
 		var ran []string

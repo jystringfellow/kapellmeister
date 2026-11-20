@@ -542,10 +542,10 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		Config: loop.Config{
 			ScratchDir: scratch, MinFreeMB: s.MinFreeMB, CAOURL: s.CAOURL, StateDir: loop.StateDir(), RunID: runID, Task: text, Worktree: wt, Chairs: seated, GateWhen: s.GateWhen,
 			Lessons: s.Lessons, LessonsTimeout: s.LessonsTimeout,
-			LearnedBudget: s.LearnedBudget, BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, KnownFailures: tested.VerifyKnownFailures, CheckCommand: checkCmd, StrictCommand: tested.Strict, StrictReadyCommand: tested.StrictReady, Policy: &policy,
+			LearnedBudget: s.LearnedBudget, BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, KnownFailures: tested.VerifyKnownFailures, CheckCommand: checkCmd, StrictCommand: tested.Strict, StrictReadyCommand: tested.StrictReady, StrictTimeout: tested.StrictLimit(s.Timeout), Policy: &policy,
 		},
 		Watcher: loop.CAOWatcher{Client: client, Session: podium.SessionName},
-		Stepper: loop.CAOStepper{Client: client, Session: podium.SessionName}, Verify: loop.Retrying(loop.CommandVerifier(verifyCmd), s.VerifyRetries), Progress: stdout,
+		Stepper: loop.CAOStepper{Client: client, Session: podium.SessionName}, Verify: loop.Retrying(loop.CommandVerifierWithin(verifyCmd, tested.Timeout(s.Timeout)), s.VerifyRetries), Progress: stdout,
 	})
 	if err != nil {
 		return err
@@ -1248,6 +1248,8 @@ func printStrict(w io.Writer, s *loop.StrictResult) {
 	switch {
 	case s.Status == "passed":
 		fmt.Fprintf(w, "  strict    passed: %s\n", s.Command)
+	case s.Status == "failed" && s.TimedOut:
+		fmt.Fprintf(w, "  strict    failed: %s: %s\n", strings.TrimPrefix(s.Reason, "strict "), s.Command)
 	case s.Status == "failed":
 		fmt.Fprintf(w, "  strict    failed (exit %d): %s\n", s.ExitCode, s.Command)
 	case s.Status == "not_reached":
@@ -1257,7 +1259,7 @@ func printStrict(w io.Writer, s *loop.StrictResult) {
 	default:
 		fmt.Fprintf(w, "  strict    not run: %s exited %d\n", s.Ready, s.ExitCode)
 	}
-	if s.Reason != "" && (s.Status == "passed" || s.Status == "failed") {
+	if s.Reason != "" && !s.TimedOut && (s.Status == "passed" || s.Status == "failed") {
 		fmt.Fprintf(w, "  strict    %s\n", s.Reason)
 	}
 	if len(s.Changed) > 0 {

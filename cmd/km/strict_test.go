@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jystringfellow/kapellmeister/internal/initrepo"
 	"github.com/jystringfellow/kapellmeister/internal/loop"
@@ -258,5 +259,27 @@ func TestWaitExitsSixteenForARunThatEndedOnABaselineMismatchAlsoAsJSON(t *testin
 	var status *exitStatusError
 	if !errors.As(err, &status) || status.code != 16 || !strings.Contains(out.String(), `"exit_status":16`) {
 		t.Fatal(err, out.String())
+	}
+}
+
+func TestARunWhoseStrictPassesItsLimitFailsAndTheSummaryNamesTheLimit(t *testing.T) {
+	code, out, result := strictRun(t, "strict = 'sleep 30'\nstrict_timeout = '300ms'\n")
+	strict, _ := result["strict"].(map[string]any)
+	if code != 5 || result["outcome"] != loop.StrictFailed || strict["timed_out"] != true {
+		t.Fatalf("exit %d %v\n%s", code, result, out)
+	}
+	if !strings.Contains(out, "  strict    failed: did not finish within 300ms: sleep 30\n") || strings.Contains(out, "exit -1") {
+		t.Fatal(out)
+	}
+}
+
+func TestProveAtTheStrictLevelUsesTheStrictTimeoutAndNamesItsKey(t *testing.T) {
+	root := strictProofFixture(t, "strict = 'scripts/strict'\nstrict_timeout = '100ms'\nverify_timeout = '9m'\n", "slow")
+	report := proofJSON(t, root, "-level", "strict")
+	if report.ExitStatus != 3 || report.TimeoutMS != 100 || !strings.Contains(report.Reason, "set [test] strict_timeout, to give strict longer") {
+		t.Fatal(report)
+	}
+	if report := proofJSON(t, root); report.TimeoutMS != (9 * time.Minute).Milliseconds() {
+		t.Fatal(report)
 	}
 }
