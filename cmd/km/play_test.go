@@ -59,17 +59,26 @@ func savePlayStanding(t *testing.T, s ensemble.Standing) {
 }
 
 type playCAO struct {
-	afterReply  func(worktree, name string)
-	mu          sync.Mutex
-	requests    []cao.StepRequest
-	replies     []string
-	checked     []string
-	unexpected  []string
-	released    []string
-	missing     map[string]int
-	failPart    string
-	noReplyPart string
-	changes     bool
+	afterBriefing func(terminal string) bool
+	afterReply    func(worktree, name string)
+	mu            sync.Mutex
+	requests      []cao.StepRequest
+	replies       []string
+	checked       []string
+	unexpected    []string
+	released      []string
+	missing       map[string]int
+	failPart      string
+	noReplyPart   string
+	changes       bool
+	created       int
+	deleted       []string
+	sent          []string
+	failBoot      int
+	briefings     []string
+	launches      []map[string]string
+	reviewReady   chan struct{}
+	reviewWaiting int
 }
 
 var playReplyPath = regexp.MustCompile(`\.kapellmeister/runs/[^\s,:;]+\.(?:md|verdict|json)`)
@@ -82,9 +91,41 @@ func (f *playCAO) serve(t *testing.T) *httptest.Server {
 		switch {
 		case r.Method == http.MethodPatch && strings.HasSuffix(r.URL.Path, "/description"):
 			w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/sessions/") && strings.HasSuffix(r.URL.Path, "/terminals"):
+			f.created++
+			if f.created == f.failBoot {
+				http.Error(w, "boot refused", 500)
+				return
+			}
+			id := fmt.Sprintf("reseated-%d", f.created)
+			f.sent = append(f.sent, "create "+id)
+			f.launches = append(f.launches, map[string]string{"provider": r.URL.Query().Get("provider"), "profile": r.URL.Query().Get("agent_profile"), "model": r.URL.Query().Get("model")})
+			session := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/sessions/"), "/terminals")
+			_ = json.NewEncoder(w).Encode(cao.Terminal{ID: id, SessionName: session})
+		case r.Method == http.MethodPatch && (strings.HasSuffix(r.URL.Path, "/group") || strings.HasSuffix(r.URL.Path, "/metadata")):
+			fmt.Fprint(w, `{}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/output"):
+			fmt.Fprint(w, `{"output":""}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/inbox/messages"):
+			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/terminals/"), "/inbox/messages")
+			message := r.URL.Query().Get("message")
+			f.briefings = append(f.briefings, message)
+			match := regexp.MustCompile(`'([^']+)' cue done -queue '([^']+)' (\S+)`).FindStringSubmatch(message)
+			if match == nil {
+				t.Error("briefing lacks closure command")
+			} else if f.afterBriefing == nil || f.afterBriefing(id) {
+				if err := ensemble.Close(match[2], match[3], id, ""); err != nil {
+					t.Error(err)
+				}
+			}
+			fmt.Fprint(w, `{}`)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/terminals/"):
 			id := strings.TrimPrefix(r.URL.Path, "/terminals/")
 			f.checked = append(f.checked, id)
+			if slices.Contains(f.deleted, id) {
+				http.NotFound(w, r)
+				return
+			}
 			if status := f.missing[id]; status != 0 {
 				w.WriteHeader(status)
 				return
@@ -107,6 +148,20 @@ func (f *playCAO) serve(t *testing.T) *httptest.Server {
 			f.requests = append(f.requests, req)
 			f.replies = append(f.replies, filepath.Base(path))
 			part := playReplyPart(filepath.Base(path))
+			f.sent = append(f.sent, "step "+filepath.Base(path))
+			if part == "reviewer" && f.reviewReady != nil {
+				f.reviewWaiting++
+				if f.reviewWaiting == 2 {
+					close(f.reviewReady)
+				}
+				f.mu.Unlock()
+				select {
+				case <-f.reviewReady:
+				case <-time.After(5 * time.Second):
+					t.Error("review chairs did not play together")
+				}
+				f.mu.Lock()
+			}
 			if f.failPart == part || (filepath.Base(path) == "lessons-reply.json" && f.failPart == "lessons") {
 				http.Error(w, `{"detail":{"terminal_id":"unexpected-terminal"}}`, 500)
 				return
@@ -137,6 +192,11 @@ func (f *playCAO) serve(t *testing.T) *httptest.Server {
 		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/terminals/step-"):
 			f.released = append(f.released, strings.TrimPrefix(r.URL.Path, "/terminals/"))
 			w.Write([]byte(`{}`))
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/terminals/"):
+			id := strings.TrimPrefix(r.URL.Path, "/terminals/")
+			f.deleted = append(f.deleted, id)
+			f.sent = append(f.sent, "delete "+id)
+			fmt.Fprint(w, `{}`)
 		default:
 			f.unexpected = append(f.unexpected, r.Method+" "+r.URL.Path)
 			http.NotFound(w, r)
@@ -284,7 +344,7 @@ func TestPlayReportsCAOErrorsWithoutCallingTheOccupantsMissing(t *testing.T) {
 	}
 }
 
-func TestPlayRunsEveryStepInItsChairsStandingOccupantAndDeletesNothing(t *testing.T) {
+func TestPlayKeepsNonReviewOccupantsAndReleasesOnlyTheOldReviewOccupants(t *testing.T) {
 	s := playStanding(t)
 	fake := &playCAO{}
 	srv := fake.serve(t)
@@ -296,6 +356,9 @@ func TestPlayRunsEveryStepInItsChairsStandingOccupantAndDeletesNothing(t *testin
 		t.Fatalf("run-step calls = %d, replies = %v", len(fake.requests), fake.replies)
 	}
 	requirePlayBindings(t, s, fake)
+	if !slices.Equal(fake.deleted, []string{s.Chairs[2].TerminalID, s.Chairs[3].TerminalID}) {
+		t.Fatalf("deleted = %v", fake.deleted)
+	}
 	requirePlayStillStanding(t, s, fake, out)
 	entries, err := os.ReadDir(filepath.Join(loop.StateDir(), "runs"))
 	if err != nil || len(entries) != 1 {
@@ -333,6 +396,13 @@ func requirePlayBindings(t *testing.T, s ensemble.Standing, fake *playCAO) {
 			want = s.Chairs[3]
 		}
 		terminal := want.TerminalID
+		if part == "reviewer" {
+			var round, ordinal int
+			if _, err := fmt.Sscanf(path, "review-%d-%d.md", &round, &ordinal); err != nil {
+				t.Fatal(err)
+			}
+			terminal = fmt.Sprintf("reseated-%d", (round-1)*2+ordinal)
+		}
 		if path == "lessons-reply.json" {
 			terminal = ""
 		}

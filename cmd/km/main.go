@@ -1074,6 +1074,7 @@ func firstNonEmpty(values ...string) string {
 }
 
 type ensembleRun struct {
+	Reseater     loop.Reseater
 	Score        loop.Score
 	ScoreFiles   []loop.ScoreFile
 	Members      []ensemble.Member
@@ -1213,7 +1214,7 @@ func runEnsemble(ctx context.Context, p ensembleRun) (sum ensembleSummary, runEr
 		fmt.Fprintf(p.Progress, "  base      %s @ %s\n", p.BaseBranch, base)
 	}
 	fmt.Fprintf(p.Progress, "  state     %s\n", p.StateDir)
-	eng := &loop.Engine{Score: p.Score, Meter: p.Meter, Watcher: p.Watcher, Config: p.Config, Stepper: p.Stepper, Verify: p.Verify, Records: telemetry, Progress: p.Progress}
+	eng := &loop.Engine{Reseater: p.Reseater, Score: p.Score, Meter: p.Meter, Watcher: p.Watcher, Config: p.Config, Stepper: p.Stepper, Verify: p.Verify, Records: telemetry, Progress: p.Progress}
 	state := initialRunState(p.RunID, firstNonEmpty(p.Command, "run"), p.Config.Worktree, p.Ensemble, p.Config.MaxRounds, start)
 	if p.Tune == nil {
 		describeRun(&state, p)

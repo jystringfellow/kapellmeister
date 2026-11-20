@@ -66,8 +66,10 @@ func (f *runCAO) serve(t *testing.T) *httptest.Server {
 			f.mu.Lock()
 			f.terminalDeletes = append(f.terminalDeletes, r.URL.Path)
 			f.mu.Unlock()
-			w.Write([]byte(`{}`))
-			return
+			if strings.HasPrefix(r.URL.Path, "/terminals/step-") {
+				w.Write([]byte(`{}`))
+				return
+			}
 		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/sessions/"):
 			f.mu.Lock()
 			f.polled++
@@ -79,7 +81,7 @@ func (f *runCAO) serve(t *testing.T) *httptest.Server {
 				f.once.Do(func() { close(f.poll) })
 			}
 			return
-		case strings.HasSuffix(r.URL.Path, "/output"):
+		case r.URL.Path == "/terminals/blocked-chair/output":
 			json.NewEncoder(w).Encode(map[string]string{"output": "Permission rule Bash(cp*) requires confirmation for this command.\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\nEsc to cancel · Tab to amend"})
 			return
 		case r.Method == "POST" && r.URL.Path == "/terminals/run-step":
@@ -286,7 +288,7 @@ func TestPlayPollsTheStandingSessionAndNeverDeletesIt(t *testing.T) {
 	}
 	for _, deleted := range f.terminalDeletes {
 		for _, chair := range s.Chairs {
-			if strings.HasSuffix(deleted, "/"+chair.TerminalID) {
+			if chair.Part != "reviewer" && strings.HasSuffix(deleted, "/"+chair.TerminalID) {
 				t.Fatalf("deleted the standing occupant %s", deleted)
 			}
 		}

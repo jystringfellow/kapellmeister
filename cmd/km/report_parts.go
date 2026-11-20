@@ -220,7 +220,7 @@ func (run *reportPartRun) recordPart(record reportPartRecord) (part, kind string
 		return "", ""
 	}
 	switch record.Step {
-	case "escalate", "blocked", "unblocked", "start", "verify", "strict":
+	case "reseat", "escalate", "blocked", "unblocked", "start", "verify", "strict":
 		return "", ""
 	}
 	part, kind = run.step(record.Step)

@@ -118,8 +118,18 @@ func playCommand(args []string) error {
 		members = append(members, ensemble.Member{Section: chair.Section, Name: chair.Name, Part: chair.Part, Chair: chair.Binding})
 		terminals[chair.Address] = chair.TerminalID
 	}
+	km, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	stepper := ensemble.NewOccupantStepper(loop.CAOStepper{Client: client, Session: standing.Session}, standing)
+	reseater := &ensemble.ReviewReseater{
+		Client: client, Standing: standing, Stepper: stepper, Timeout: s.PreflightTimeout,
+		KM: km, Task: text, StateDir: filepath.Join(loop.StateDir(), "ensembles"),
+	}
 	sum, err := runEnsemble(ctx, ensembleRun{
-		Score: s.Score.Score, ScoreFiles: s.Score.Files, Members: members, Agents: s.Defined, CAOURL: client.BaseURL, Terminals: terminals,
+		Reseater: reseater,
+		Score:    s.Score.Score, ScoreFiles: s.Score.Files, Members: members, Agents: s.Defined, CAOURL: client.BaseURL, Terminals: terminals,
 		Command: "play", RunID: runID, StateDir: runDir, Ensemble: standing.Ensemble, Meter: loop.NewLogMeter(),
 		Config: loop.Config{
 			ScratchDir: scratch, MinFreeMB: s.MinFreeMB, CAOURL: s.CAOURL, StateDir: loop.StateDir(), RunID: runID, Task: text, Worktree: standing.Worktree, Chairs: chairs, GateWhen: firstNonEmpty(standing.GateWhen, s.GateWhen),
@@ -127,7 +137,7 @@ func playCommand(args []string) error {
 			LearnedBudget: s.LearnedBudget, BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, KnownFailures: tested.VerifyKnownFailures, CheckCommand: checkCmd, StrictCommand: tested.Strict, StrictReadyCommand: tested.StrictReady, StrictTimeout: tested.StrictLimit(s.Timeout),
 		},
 		Watcher: loop.CAOWatcher{Client: client, Session: standing.Session},
-		Stepper: ensemble.NewOccupantStepper(loop.CAOStepper{Client: client, Session: standing.Session}, standing),
+		Stepper: stepper,
 		Verify:  loop.Retrying(loop.CommandVerifierWithin(verifyCmd, tested.Timeout(s.Timeout)), s.VerifyRetries), Progress: os.Stdout,
 	})
 	if err != nil {

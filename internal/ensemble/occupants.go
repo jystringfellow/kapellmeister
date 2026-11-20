@@ -3,11 +3,13 @@ package ensemble
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/jystringfellow/kapellmeister/internal/loop"
 )
 
 type OccupantStepper struct {
+	mu     sync.RWMutex
 	inner  loop.Stepper
 	chairs map[string]StandingChair
 	slots  map[string]chan struct{}
@@ -24,8 +26,29 @@ func NewOccupantStepper(inner loop.Stepper, standing Standing) *OccupantStepper 
 	return s
 }
 
+func (s *OccupantStepper) Seat(address, terminalID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	chair := s.chairs[address]
+	old := chair.TerminalID
+	chair.TerminalID = terminalID
+	s.chairs[address] = chair
+	if s.slots[terminalID] == nil {
+		s.slots[terminalID] = make(chan struct{}, 1)
+	}
+	for _, other := range s.chairs {
+		if other.TerminalID == old {
+			return
+		}
+	}
+	delete(s.slots, old)
+}
+
 func (s *OccupantStepper) Run(ctx context.Context, step loop.Step) (loop.StepResult, error) {
+	s.mu.RLock()
 	c, ok := s.chairs[step.Chair.Address]
+	slot := s.slots[c.TerminalID]
+	s.mu.RUnlock()
 	if !ok {
 		return loop.StepResult{}, fmt.Errorf("step %s has no standing chair at address %q", step.Name, step.Chair.Address)
 	}
@@ -37,7 +60,6 @@ func (s *OccupantStepper) Run(ctx context.Context, step loop.Step) (loop.StepRes
 	if step.FreshTerminal {
 		return s.inner.Run(ctx, step)
 	}
-	slot := s.slots[c.TerminalID]
 	select {
 	case slot <- struct{}{}:
 		defer func() { <-slot }()
@@ -54,7 +76,10 @@ func (s *OccupantStepper) Run(ctx context.Context, step loop.Step) (loop.StepRes
 }
 
 func (s *OccupantStepper) Release(ctx context.Context, terminalID string) error {
-	if _, ok := s.slots[terminalID]; ok {
+	s.mu.RLock()
+	_, ok := s.slots[terminalID]
+	s.mu.RUnlock()
+	if ok {
 		return nil
 	}
 	return s.inner.Release(ctx, terminalID)

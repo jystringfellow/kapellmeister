@@ -243,6 +243,11 @@ func addStatusData(run *statusRun, recorded reportRun) {
 		case "unblocked":
 			delete(blocked, record.TerminalID)
 			continue
+		case "reseat":
+			if chair != nil {
+				chair.Terminal = record.TerminalID
+			}
+			continue
 		case "escalate":
 			if chair != nil {
 				chair.Terminal = ""
