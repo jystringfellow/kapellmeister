@@ -124,7 +124,21 @@ func (f *fakeStepper) pop(subject string) string {
 
 func (f *fakeStepper) write(rel, content string) {
 	f.t.Helper()
-	if err := os.WriteFile(filepath.Join(f.dir, rel), []byte(content), 0o644); err != nil {
+	path := filepath.Join(f.dir, rel)
+	draft, err := os.CreateTemp(filepath.Dir(path), ".reply-*")
+	if err == nil {
+		_, err = draft.WriteString(content)
+		if closeErr := draft.Close(); err == nil {
+			err = closeErr
+		}
+		if err == nil {
+			err = os.Chmod(draft.Name(), 0o644)
+		}
+		if err == nil {
+			err = os.Rename(draft.Name(), path)
+		}
+	}
+	if err != nil {
 		f.t.Error(err)
 	}
 }
