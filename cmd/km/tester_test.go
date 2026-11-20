@@ -140,7 +140,7 @@ func TestPreflightAndEffortProfilesCoverTheTester(t *testing.T) {
 	}
 	var found bool
 	for _, variant := range s.Policy.EffortVariants(steps) {
-		if variant.Name() == "km-claude-xhigh" {
+		if variant.Name() == "km-claude-high" {
 			found = true
 		}
 	}

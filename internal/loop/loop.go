@@ -315,6 +315,13 @@ func (e *Engine) Run(ctx context.Context) (res Result, err error) {
 	if len(e.score.Steps) == 0 {
 		e.score = DefaultScore()
 	}
+	if e.Config.Policy != nil {
+		policy, bindErr := e.Config.Policy.ForScore(e.score)
+		if bindErr != nil {
+			return res, bindErr
+		}
+		e.Config.Policy = &policy
+	}
 	defer e.cleanupSnapshot()
 	e.restores, e.verifyRetried, e.knownFailures = nil, nil, nil
 	defer func() {
@@ -524,7 +531,7 @@ func (e *Engine) decideSize(ctx context.Context, planPath string) {
 		}
 	case DeciderCommand:
 		plan, _ := e.readReply(planPath)
-		d.Size, d.Reason, err = CommandSize(ctx, sizing.Command, e.Config.Worktree, SizeRequest{Task: e.Config.Task, Plan: plan, Tiers: TierNames})
+		d.Size, d.Reason, err = CommandSize(ctx, sizing.Command, e.Config.Worktree, SizeRequest{Task: e.Config.Task, Plan: plan, Tiers: SizeNames})
 	}
 	if err != nil {
 		d.Error = err.Error()
@@ -585,6 +592,9 @@ func (e *Engine) escalate(round, misses int) {
 func (e *Engine) step(ctx context.Context, s Step) (StepResult, error) {
 	if s.Assignment == (Assignment{}) {
 		s.Chair, s.Assignment = e.resolve(s.Name, s.Chair)
+	}
+	if s.Assignment.Tier != "" && s.Chair.Model == "" {
+		return StepResult{}, fmt.Errorf("[tiers.%s] has no %s tier to pin against", s.Chair.Provider, s.Assignment.Tier)
 	}
 	s.Dir = e.Config.Worktree
 	labelName := firstSet(s.ChairName, s.Name)

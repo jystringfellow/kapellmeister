@@ -35,6 +35,7 @@ type Section struct {
 }
 
 type ChairSpec struct {
+	Tier    string
 	Name    string
 	Part    string
 	Agents  []string
@@ -49,6 +50,7 @@ type file struct {
 		Timeout string `toml:"timeout"`
 		Chairs  map[string]struct {
 			Part    string   `toml:"part"`
+			Tier    string   `toml:"tier"`
 			Agents  []string `toml:"agents"`
 			Timeout string   `toml:"timeout"`
 		} `toml:"chairs"`
@@ -156,7 +158,7 @@ func load(name, path string, portable bool, agents loop.Agents) (Spec, error) {
 				return fail(key, "want a lowercase name of letters, digits and dashes")
 			}
 			c := raw.Chairs[chairName]
-			chair := ChairSpec{Name: chairName, Part: c.Part, Agents: c.Agents}
+			chair := ChairSpec{Name: chairName, Part: c.Part, Agents: c.Agents, Tier: c.Tier}
 			if (f.Score == "" || f.Score == "default") && !slices.Contains(loop.AllRoles(), c.Part) {
 				return fail(key+".part", "unknown part %q (want %s); optional parts: %s", c.Part, strings.Join(loop.ChairRoles, ", "), strings.Join(loop.OptionalRoles, ", "))
 			}
@@ -166,7 +168,18 @@ func load(name, path string, portable bool, agents loop.Agents) (Spec, error) {
 			if len(c.Agents) == 0 {
 				return fail(key+".agents", "want at least one agent")
 			}
+			if md.IsDefined("sections", sectionName, "chairs", chairName, "tier") && !slices.Contains(loop.TierNames, c.Tier) {
+				return fail(key+".tier", "unknown tier %q (want %s)", c.Tier, strings.Join(loop.TierNames, ", "))
+			}
 			for _, agent := range c.Agents {
+				_, pin, err := loop.SplitTier(agent)
+				if err == nil && c.Tier != "" && pin != "" && pin != c.Tier {
+					return fail(key+".tier", "tier %q conflicts with agent pin %q", c.Tier, pin)
+				}
+				if c.Tier != "" && err == nil && pin == "" {
+					agent += "@" + c.Tier
+				}
+
 				if err := checkAgent(agent, portable, agents); err != nil {
 					return fail(key+".agents", "%v", err)
 				}
@@ -207,7 +220,7 @@ func checkAgent(agent string, portable bool, agents loop.Agents) error {
 		return err
 	}
 	if portable && !slices.Contains(agents.Names(), base) {
-		return fmt.Errorf("%q is not an agent (%s); a repository ensemble names agents, with optional @small|@medium|@large", agent, strings.Join(agents.Names(), ", "))
+		return fmt.Errorf("%q is not an agent (%s); a repository ensemble names agents, with optional @small|@medium|@large|@xlarge", agent, strings.Join(agents.Names(), ", "))
 	}
 	_, err = agents.ResolveChair(agent)
 	return err
@@ -232,6 +245,12 @@ func (s Spec) Bind(agents loop.Agents, available []string) ([]Member, error) {
 			agent, ok := firstAvailable(c.Agents, available)
 			if !ok {
 				return nil, fmt.Errorf("%s: %s: none of %s is in [agents] available (%s)", s.Path, m.Address(s.Name), strings.Join(c.Agents, ", "), strings.Join(available, ", "))
+			}
+			if c.Tier != "" {
+				_, pin, _ := loop.SplitTier(agent)
+				if pin == "" {
+					agent += "@" + c.Tier
+				}
 			}
 			chair, err := agents.ResolveChair(agent)
 			if err != nil {

@@ -355,7 +355,7 @@ func TestRepositoryPartsMustBeRegularReadableTextAtTheBaseCommit(t *testing.T) {
 	}
 }
 
-func TestAFileScoreHonoursItsReviewPolicyWithoutEscalatingStepsThatHaveNoPolicy(t *testing.T) {
+func TestAFileScoreHonoursItsReviewPolicyWithoutEscalatingChairsOfUntieredProviders(t *testing.T) {
 	for _, override := range []string{"", "any"} {
 		t.Run(override, func(t *testing.T) {
 			loaded, err := LoadScore("small", scoreFileSource(t))

@@ -54,7 +54,7 @@ func printConfigPermissions(ctx context.Context, w io.Writer, client *cao.Client
 	unguarded := 0
 	reviewerIndex := 0
 	for _, member := range ensemble.MembersOf(chairs) {
-		resolved, assignment := s.Policy.Chair(roleSteps[member.Part], member.Chair, "", 0)
+		resolved, assignment := s.Policy.Chair(s.Policy.PartPolicyKey(member.Part), member.Chair, "", 0)
 		if assignment.Effort != "" && assignment.Effort != loop.InheritEffort {
 			resolved = member.Chair
 		}

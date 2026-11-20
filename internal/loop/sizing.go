@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -63,8 +64,8 @@ func CommandSize(ctx context.Context, command, dir string, req SizeRequest) (siz
 		return "", "", fmt.Errorf("sizing command: want JSON {\"size\", \"reason\"} on stdout: %w", err)
 	}
 	size = strings.ToLower(strings.TrimSpace(answer.Size))
-	if tierIndex(size) < 0 {
-		return "", "", fmt.Errorf("sizing command answered %q, not one of %s", answer.Size, strings.Join(TierNames, ", "))
+	if !slices.Contains(SizeNames, size) {
+		return "", "", fmt.Errorf("sizing command answered %q, not one of %s", answer.Size, strings.Join(SizeNames, ", "))
 	}
 	return size, strings.TrimSpace(answer.Reason), nil
 }

@@ -127,7 +127,7 @@ otherwise km refuses before contacting CAO and names the user config to edit.
 
 Override any chair with `-planner`, `-implementer`, `-reviewer`, `-gate`, `-classifier` or the optional
 `-tester`, as a built-in or user-defined agent, or `provider:profile[:model]`. Append `@small`,
-`@medium` or `@large` to pin a chair's tier, for example `-reviewer claude@large`. A chair with an
+`@medium`, `@large` or `@xlarge` to pin a chair's tier, for example `-reviewer claude@large`. A chair with an
 explicit model always runs that model and cannot also use `@tier`.
 
 The reviewer role can have several chairs. Use `-reviewer copilot,claude@large` to replace the
@@ -582,10 +582,11 @@ and chairs keep their order within a section.
 
 A chair plays the first of its `agents` that is in your `[agents] available`, which has no default.
 A repository's file names only agents defined on your machine, built-in or user-defined, each with
-an optional `@tier`, because profiles and models depend on your machine. An undefined agent is an
-error even if a later preference is available. Your own files may also name
-`provider:profile[:model]`. A chair's `timeout` wins over its section's, which wins over the
-file's, which wins over `[run] timeout`. Role flags cannot override an ensemble file; copy it to
+an optional `@small`, `@medium`, `@large` or `@xlarge`, because profiles and models depend on your
+machine. An undefined agent is an error even if a later preference is available. Your own files may also name
+`provider:profile[:model]`. A chair may instead set `tier = "xlarge"` (or another tier)
+to pin whichever agent is selected; an agent pin must agree with that key. A chair's `timeout`
+wins over its section's, which wins over the file's, which wins over `[run] timeout`. Role flags cannot override an ensemble file; copy it to
 `~/.kapellmeister/ensembles/` and edit that instead. A name defined both as a file and in
 `[ensembles]` is an error. `km config` lists the ensemble files it finds and where each is from.
 
@@ -667,7 +668,8 @@ The copy plays the same steps with the same prompts, subject to these file-forma
   later steps (`sizes` and `sized` in the built-in).
 - Lesson proposals have no `lessons_by` key: the copy writes none, while the built-in asks the gate.
 - Tier aliases have no `tier` key: the built-in `test-plan` uses the `test` tier policy; the copy
-  uses a policy only under its own step name, `test-plan`.
+  uses a policy under its own step name, `test-plan`. Configure the built-in through
+  `[steps.test]`; `[steps.test-plan]` is refused for the built-in.
 - File parts keep their existing alphabetical order, with the classifier last; the built-in has
   its own order. Part report rows can therefore appear in a different order.
 
@@ -809,9 +811,22 @@ Other kinds are refused. Reads are handed positionally as in
 those prompts: implement needs plan; review needs plan and implementation summary; gate needs
 plan, summary and reviews; test needs plan, test plan and summary; test-plan needs plan. At least
 that many reads are required. Planner and tester's produce steps need `writes = "reply"`.
-File scores do not request sizing; a step receives a tier policy only when its name is an existing
-policy key. Custom step names have no sizing or tier configuration, and a tier pin on a chair of
-a custom part is refused. Takeover by another non-review chair is not supported yet.
+File scores do not request or apply sizing. Steps whose names match a default policy key keep
+that policy. Other steps get a policy by kind:
+
+| Kind | default | bounds |
+|---|---|---|
+| produce | medium | small–large, or small–xlarge with `escalate = true` |
+| review | medium | small–large |
+| decide | medium | medium–large |
+| test | medium | medium–large |
+
+`[steps.NAME]` may configure `tier`, `min` and `max` for a step of the score being played, as well
+as the default policy keys. Any other name is refused. Chairs of custom parts honour tier pins,
+within the step's bounds. Unpinned chairs of custom parts now play on the user's `medium` tier
+instead of the agent's default model; this deliberately changes existing file-score runs.
+A produce step with `escalate = true` moves its chair up one tier after each `escalate_after`
+rounds without approval, within its bounds. Takeover by another non-review chair is not supported yet.
 
 Before any chair is seated, loading refuses unknown keys, kinds, parts, reads, writes, memory,
 approval policies, exit names, targets or placeholders; missing exits; invalid, duplicate or
@@ -1226,12 +1241,12 @@ evidence = "exit 7: could not resolve host"
 run      = "make e2e"               # how to run it by hand
 
 [tiers.claude_code]                 # override any provider's tier model or effort
-large = { model = "claude-fable-5-1" }
+xlarge = { model = "claude-fable-5-2" }
 
 [steps.implement]                   # a step's default tier and the bounds sizing stays within
 tier = "medium"
 min  = "medium"
-max  = "large"
+max  = "xlarge"
 
 [sizing]
 mode = "shadow"                     # off, shadow (record only) or on (apply)
@@ -1733,20 +1748,26 @@ lists the suites under `strict_missing`.
 
 ### Tiers
 
-Each step runs on a tier (`small`, `medium` or `large`). `km config` prints the full table; the
-defaults are:
+Each step runs on a tier (`small`, `medium`, `large` or `xlarge`, in that order). `km config` prints
+the full table; the defaults are:
 
-| Provider | small | medium | large |
-|---|---|---|---|
-| claude_code | claude-haiku-5-5, medium effort | claude-sonnet-5-5, high | claude-opus-5-5, xhigh |
-| codex | gpt-6-luna, medium | gpt-6.1-sol, high | gpt-6-astra, high |
-| copilot_cli | claude-haiku-5.5 | claude-sonnet-5.5 | claude-opus-5.5 |
-| antigravity_cli | gemini-3.8-flash-low | gemini-3.8-flash-high | gemini-4-argon-high |
+| Provider | small | medium | large | xlarge |
+|---|---|---|---|---|
+| claude_code | claude-haiku-5-5, medium | claude-sonnet-5-5, high | claude-opus-5-5, high | claude-fable-5-2, high |
+| codex | gpt-6-luna, medium | gpt-6.1-terra, high | gpt-6.1-sol, high | gpt-6-astra, high |
+| copilot_cli | claude-haiku-5.5 | claude-sonnet-5.5 | claude-opus-5.5 | claude-fable-5.2 |
+| antigravity_cli | gemini-3.8-flash-high | gemini-4-hydrogen-high | gemini-4-neon-high | gemini-4-argon-high |
+
+The tiers align model classes across providers. Efforts are aligned: `small` uses medium effort
+and the other three use high effort on providers with an effort setting. Copilot has no effort
+setting. Antigravity carries effort in the model ID's suffix.
+A configured tier keeps the fields it sets; omitted fields and tiers take the shipped defaults.
+Existing three-tier tables need no edit and produce no warning.
 
 | Step | default | bounds |
 |---|---|---|
 | plan | medium | medium–large |
-| implement | medium | small–large |
+| implement | medium | small–xlarge |
 | review | medium | small–large |
 | gate | medium | medium–large |
 | test | medium | medium–large |
@@ -1771,9 +1792,10 @@ also need no variants.
 
 ### Sizing
 
-After planning, a decider rates the task `small`, `medium` or `large`:
+After planning, a decider rates the task `small`, `medium` or `large`. Sizing never picks
+`xlarge`; escalation and pins do. The command receives only those three sizes in `tiers`:
 
-- `planner`: the planner ends its plan with `Size: <tier> — <reason>`.
+- `planner`: the planner ends its plan with `Size: <size> — <reason>`.
 - `command`: kapellmeister runs the command in the worktree with `{"task", "plan", "tiers"}` as JSON on
   stdin, and reads `{"size", "reason"}` from stdout. This is how an external decider, such as a
   CAO `model.route` package, plugs in. The command sees the task and plan, so point it only at a

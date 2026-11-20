@@ -59,6 +59,14 @@ func reseatCommand(args []string) error {
 	if err != nil {
 		return err
 	}
+	scoreName, err := ensemble.ScoreName(standing.Ensemble, loop.Home(), standing.Worktree)
+	if err != nil {
+		return err
+	}
+	s, err = loadSelectedScore(s, standing.Worktree, scoreName)
+	if err != nil {
+		return err
+	}
 	if *timeout == 0 {
 		*timeout = s.PreflightTimeout
 	}

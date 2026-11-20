@@ -223,12 +223,6 @@ func TestAScoreFlagCannotOverrideAnEnsembleFile(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
-func TestATierPinOnAChairOfACustomPartIsRefused(t *testing.T) {
-	err := checkPin(loop.DefaultPolicy(), "drafter", "strings.first", "codex@small", loop.Chair{Provider: "codex", Tier: "small"})
-	if err == nil || err.Error() != "part drafter has no tier policy; name the agent without @tier" {
-		t.Fatalf("error = %v", err)
-	}
-}
 
 const builtInFileScore = `[[steps]]
 name = "plan"
@@ -367,29 +361,36 @@ func TestALoadedScoreIsCarriedIntoTheDetachedRunWithoutReadingItsFilesAgain(t *t
 	}
 }
 
-func TestAChairOfACustomPartIsCheckedOnceWithoutATierPolicy(t *testing.T) {
-	chairs := loop.Chairs{Parts: map[string][]loop.Chair{"review": {{Provider: "codex", Profile: "km-codex"}}}}
-	policy := loop.DefaultPolicy()
-	got := defaultChairs(&policy, chairs)
-	if len(got) != 1 || got[0].Model != "" || got[0].Tier != "" {
-		t.Fatalf("chairs = %+v", got)
+func TestAChairOfACustomPartIsCheckedOnItsStepsTier(t *testing.T) {
+	chairs := loop.Chairs{Parts: map[string][]loop.Chair{"drafter": {{Provider: "codex", Profile: "km-codex"}}}}
+	score := loop.Score{Source: "user", Steps: []loop.ScoreStep{{Name: "draft", Kind: loop.KindProduce, Part: "drafter"}}}
+	policy, err := loop.DefaultPolicy().ForScore(score)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if variants := policy.EffortVariants(stepChairs(chairs)); len(variants) != 0 {
-		t.Fatalf("variants = %+v", variants)
+	got := defaultChairs(&policy, chairs, score)
+	if len(got) != 1 || got[0].Model != policy.Tiers["codex"]["medium"].Model || got[0].Profile != "km-codex-high" {
+		t.Fatal(got)
+	}
+	if variants := policy.EffortVariants(stepChairs(chairs, score)); len(variants) != 2 {
+		t.Fatal(variants)
 	}
 }
 
 func TestAFileScoresProfilesAndPreflightFollowItsStepsInsteadOfBuiltInRoleNames(t *testing.T) {
 	chairs := loop.Chairs{Parts: map[string][]loop.Chair{"drafter": {{Provider: "codex", Profile: "km-codex", Address: "strings.first"}}}, Reviewers: []loop.Chair{{Provider: "codex", Profile: "km-codex", Address: "strings.second"}}}
-	score := loop.Score{Source: "user", Steps: []loop.ScoreStep{{Name: "implement", Part: "drafter"}, {Name: "inspect", Part: "reviewer"}}}
+	score := loop.Score{Source: "user", Steps: []loop.ScoreStep{{Name: "implement", Kind: loop.KindProduce, Part: "drafter"}, {Name: "inspect", Kind: loop.KindReview, Part: "reviewer"}}}
 	steps := stepChairs(chairs, score)
 	if len(steps["implement"]) != 1 || len(steps["inspect"]) != 1 || len(steps["review"]) != 0 {
-		t.Fatalf("steps = %+v", steps)
+		t.Fatal(steps)
 	}
-	policy := loop.DefaultPolicy()
+	policy, err := loop.DefaultPolicy().ForScore(score)
+	if err != nil {
+		t.Fatal(err)
+	}
 	got := defaultChairs(&policy, chairs, score)
-	if len(got) != 2 || got[0].Address != "strings.first" || got[0].Model == "" || got[1].Address != "strings.second" || got[1].Model != "" {
-		t.Fatalf("chairs = %+v", got)
+	if len(got) != 2 || got[0].Address != "strings.first" || got[0].Model == "" || got[1].Address != "strings.second" || got[1].Model == "" {
+		t.Fatal(got)
 	}
 }
 

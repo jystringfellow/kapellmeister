@@ -214,10 +214,10 @@ func TestEveryPendingProfileIsCheckedBeforeAnyVariantIsWrittenOrInstalled(t *tes
 	s.PID = child.Process.Pid
 	s.ProcessStart, _ = processStart(s.PID)
 	saveStatusFixture(t, filepath.Join(loop.StateDir(), "runs"), s.RunID, s)
-	writeFile(t, filepath.Join(home, "agent-store/km-claude-xhigh.md"), "keep\n")
+	writeFile(t, filepath.Join(home, "agent-store/km-claude-high.md"), "keep\n")
 	p := loop.DefaultPolicy()
 	err := ensureProfiles(context.Background(), cao.NewClient(safetyProfiles(t, home, 0).URL), &p, map[string][]loop.Chair{"implement": {{Provider: "claude_code", Profile: "km-claude"}}})
-	if err == nil || !strings.Contains(err.Error(), "km-claude-xhigh") {
+	if err == nil || !strings.Contains(err.Error(), "km-claude-high") {
 		t.Fatalf("refusal = %v", err)
 	}
 	if _, err := os.Stat(args); !os.IsNotExist(err) {

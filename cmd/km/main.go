@@ -217,7 +217,7 @@ func chairFlags(fs *flag.FlagSet, roles ...string) map[string]*string {
 		if role == "reviewer" {
 			listHelp = "; accepts a comma-separated list replacing all configured reviewers"
 		}
-		out[role] = fs.String(role, "", role+" chair: an agent from km config, or provider:profile[:model], with optional @small|@medium|@large (default [chairs] "+role+" in "+loop.UserConfigPath(loop.Home())+")"+listHelp)
+		out[role] = fs.String(role, "", role+" chair: an agent from km config, or provider:profile[:model], with optional @small|@medium|@large|@xlarge (default [chairs] "+role+" in "+loop.UserConfigPath(loop.Home())+")"+listHelp)
 	}
 	return out
 }
@@ -300,11 +300,9 @@ func runChairs(s loop.Settings, ensemble string, roles map[string]*string) (loop
 	return s, chairs, err
 }
 
-var roleSteps = map[string]string{"planner": "plan", "implementer": "implement", "reviewer": "review", "gate": "gate", "classifier": "classify", "tester": "test"}
-
 func checkPins(policy loop.Policy, specs map[string]string, chairs loop.Chairs) error {
 	for _, role := range loop.AllRoles() {
-		group := stepChairs(chairs)[roleSteps[role]]
+		group := stepChairs(chairs)[policy.PartPolicyKey(role)]
 		list := []string{specs[role]}
 		if role == "reviewer" {
 			list = loop.ChairList(specs[role])
@@ -323,17 +321,14 @@ func checkPins(policy loop.Policy, specs map[string]string, chairs loop.Chairs) 
 }
 
 func checkPin(policy loop.Policy, part, name, spec string, chair loop.Chair) error {
-	if chair.Tier == "" {
+	_, assigned := policy.Chair(policy.PartPolicyKey(part), chair, "", 0)
+	if chair.Tier == "" && assigned.Tier == "" {
 		return nil
-	}
-	if roleSteps[part] == "" {
-		return fmt.Errorf("part %s has no tier policy; name the agent without @tier", part)
 	}
 	tiers := policy.Tiers[chair.Provider]
 	if len(tiers) == 0 {
 		return fmt.Errorf("%s: chair %q: no [tiers.%s] to pin a tier against", name, spec, chair.Provider)
 	}
-	_, assigned := policy.Chair(roleSteps[part], chair, "", 0)
 	if _, ok := tiers[assigned.Tier]; !ok {
 		return fmt.Errorf("%s: chair %q: [tiers.%s] has no %s tier to pin against", name, spec, chair.Provider, assigned.Tier)
 	}
@@ -615,7 +610,7 @@ func preflightCommand(args []string) error {
 	worktree := fs.String("worktree", "", "git worktree to start the chairs in")
 	agents := fs.String("agents", "", "agents to check (default [agents] available in the user config)")
 	timeout := fs.Duration("timeout", 0, "how long each chair gets to answer (default [run] preflight_timeout, else 4m)")
-	tier := fs.String("tier", "", "check each agent on this tier's model and effort (small, medium or large) instead of its profile's own")
+	tier := fs.String("tier", "", "check each agent on this tier's model and effort (small, medium, large or xlarge) instead of its profile's own")
 	caoURL := fs.String("cao", "", "cao-server URL (default $CAO_API_BASE_URL, then [cao] url, else http://127.0.0.1:9889)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -652,6 +647,11 @@ func preflightCommand(args []string) error {
 		pinned := loop.Policy{Tiers: s.Policy.Tiers, Steps: map[string]loop.StepPolicy{"plan": {Tier: *tier, Min: *tier, Max: *tier}}, Sizing: s.Policy.Sizing}
 		if err := pinned.Validate(); err != nil {
 			return err
+		}
+		for _, chair := range chairs {
+			if _, ok := pinned.Tiers[chair.Provider][*tier]; !ok {
+				return fmt.Errorf("[tiers.%s] has no %s tier to pin against", chair.Provider, *tier)
+			}
 		}
 		if err := ensureProfiles(ctx, client, &pinned, map[string][]loop.Chair{"plan": chairs}); err != nil {
 			return err

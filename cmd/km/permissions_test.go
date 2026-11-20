@@ -338,7 +338,7 @@ func TestEnsureProfilesReadsEachBaseOnceForAllItsEfforts(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	for _, name := range []string{"km-claude", "km-claude-medium", "km-claude-high", "km-claude-xhigh"} {
+	for _, name := range []string{"km-claude", "km-claude-medium", "km-claude-high"} {
 		if reads["/agents/profiles/"+name] != 1 {
 			t.Errorf("profile reads = %v", reads)
 		}

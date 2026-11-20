@@ -392,7 +392,7 @@ func TestPreflightAndEffortProfilesCoverEveryReviewer(t *testing.T) {
 	for _, v := range variants {
 		names = append(names, v.Name())
 	}
-	for _, name := range []string{"km-claude-xhigh", "km-codex-medium"} {
+	for _, name := range []string{"km-claude-high", "km-codex-medium"} {
 		if !slices.Contains(names, name) {
 			t.Fatalf("missing %s: %v", name, names)
 		}

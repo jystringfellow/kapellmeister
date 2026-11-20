@@ -55,7 +55,7 @@ func (defined Agents) ResolveChair(spec string) (Chair, error) {
 	if !strings.Contains(base, ":") {
 		agents, err := defined.Select(base)
 		if err != nil || len(agents) != 1 {
-			return Chair{}, fmt.Errorf("chair %q: want an agent (%s) or provider:profile[:model], with optional @small|@medium|@large", spec, strings.Join(defined.Names(), ", "))
+			return Chair{}, fmt.Errorf("chair %q: want an agent (%s) or provider:profile[:model], with optional @small|@medium|@large|@xlarge", spec, strings.Join(defined.Names(), ", "))
 		}
 		chair := agents[0].Chair
 		chair.Tier = tier
