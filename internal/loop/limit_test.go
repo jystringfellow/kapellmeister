@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -114,5 +115,82 @@ func TestStrictTimeoutIsAPositiveDurationThatNeedsAStrictCommand(t *testing.T) {
 	}
 	if _, err := strictConfig(t, "strict_timeout = \"45m\"\n"); err == nil || !strings.Contains(err.Error(), "test.strict_timeout: needs test.strict") {
 		t.Fatal(err)
+	}
+}
+
+func TestAShellThatExitsWhileItsChildHoldsTheOutputLeavesNoProcessBehind(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	start := time.Now()
+	v, err := CommandVerifier("sleep 30 & echo $! >"+pidFile+"; echo done")(context.Background(), t.TempDir())
+	if err != nil || v.ExitCode != 0 || !strings.Contains(v.Output, "done") || time.Since(start) > 10*time.Second {
+		t.Fatalf("got %+v %v after %s", v, err, time.Since(start))
+	}
+	if !childStopped(t, pidFile) {
+		t.Fatal("the background process outlived the command")
+	}
+}
+
+func TestAFailingShellThatLeavesAChildRunningLeavesNoProcessBehindAndKeepsItsExitCode(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	start := time.Now()
+	v, err := CommandVerifier("sleep 30 & echo $! >"+pidFile+"; echo failing; exit 3")(context.Background(), t.TempDir())
+	if err != nil || v.ExitCode != 3 || v.TimedOut || !strings.Contains(v.Output, "failing") || time.Since(start) > 10*time.Second {
+		t.Fatalf("got %+v %v after %s", v, err, time.Since(start))
+	}
+	if !childStopped(t, pidFile) {
+		t.Fatal("the background process outlived the failing command")
+	}
+}
+
+func TestAChildThatRedirectedItsOwnOutputDoesNotOutliveTheShell(t *testing.T) {
+	for _, exit := range []int{0, 3} {
+		pidFile := filepath.Join(t.TempDir(), "pid")
+		start := time.Now()
+		v, err := CommandVerifier("sleep 30 >/dev/null 2>&1 & echo $! >"+pidFile+"; echo done; exit "+strconv.Itoa(exit))(context.Background(), t.TempDir())
+		if err != nil || v.ExitCode != exit || !strings.Contains(v.Output, "done") || time.Since(start) > 10*time.Second {
+			t.Fatalf("exit %d: got %+v %v after %s", exit, v, err, time.Since(start))
+		}
+		if !childStopped(t, pidFile) {
+			t.Fatalf("exit %d: the background process outlived the command", exit)
+		}
+	}
+}
+
+func slow(limit time.Duration) Verifier {
+	return CommandVerifierWithin("echo started; sleep 30", limit)
+}
+
+func TestChairsAreToldAVerifyRanOutOfTimeNotThatItExited(t *testing.T) {
+	e, f, _ := newEngine(t, passing)
+	calls := 0
+	e.Verify = func(ctx context.Context, dir string) (VerifyResult, error) {
+		if calls++; calls == 1 {
+			return passing(ctx, dir)
+		}
+		return slow(300*time.Millisecond)(ctx, dir)
+	}
+	e.Config.MaxRounds = 1
+	var progress bytes.Buffer
+	e.Progress = &progress
+	run(t, e)
+	var review string
+	for _, s := range f.steps {
+		if s.Name == "review" {
+			review = s.Prompt
+		}
+	}
+	if !strings.Contains(review, "it did not finish within 300ms and kapellmeister stopped it: it ran out of time, which says nothing about whether the tests pass") || strings.Contains(review, "exited -1") {
+		t.Fatal(review)
+	}
+	if !strings.Contains(progress.String(), "  did not finish within 300ms; stopped after ") || strings.Contains(progress.String(), "exit -1") {
+		t.Fatal(progress.String())
+	}
+}
+
+func TestABaselineVerifyThatRanOutOfTimeSaysSoAndNamesTheLimit(t *testing.T) {
+	e, _, _ := newEngine(t, slow(300*time.Millisecond))
+	res := run(t, e)
+	if res.Outcome != Failed || !strings.Contains(res.Reason, "verify did not finish within 300ms before any change, so km stopped it: make verify faster or raise [test] verify_timeout") || strings.Contains(res.Reason, "exit -1") {
+		t.Fatalf("got %+v", res)
 	}
 }

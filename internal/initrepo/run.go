@@ -2,13 +2,12 @@ package initrepo
 
 import (
 	"context"
-	"errors"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
+
+	"github.com/jystringfellow/kapellmeister/internal/loop"
 )
 
 type VerifyResult struct {
@@ -77,46 +76,23 @@ func (w *tailWriter) String() string {
 
 func Run(parent context.Context, root, command string, timeout time.Duration) VerifyResult {
 	start := time.Now()
-	ctx, cancel := context.WithTimeout(parent, timeout)
-	defer cancel()
 	result := VerifyResult{Command: command, Status: "passed"}
-	cmd := exec.CommandContext(ctx, "sh", "-c", "unset "+SkipEnv+"\n"+command)
-	cmd.Dir = root
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		if errors.Is(err, syscall.ESRCH) {
-			return os.ErrProcessDone
-		}
-		return err
-	}
-	cmd.WaitDelay = 200 * time.Millisecond
 	var tail tailWriter
-	cmd.Stdout = &tail
-	cmd.Stderr = &tail
-	err := cmd.Run()
-	if errors.Is(err, exec.ErrWaitDelay) && cmd.Process != nil {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	ran := loop.RunShell(parent, root, command, nil, timeout, &tail)
+	result.ExitCode = ran.ExitCode
+	switch {
+	case ran.TimedOut || parent.Err() != nil:
+		result.Status = "timed_out"
+	case ran.Err != nil:
+		result.Status = "failed"
+		_, _ = tail.Write([]byte("\n" + ran.Err.Error()))
+	case ran.Orphaned:
+		result.Status, result.ExitCode = "failed", -1
+		_, _ = tail.Write([]byte("\n" + exec.ErrWaitDelay.Error()))
+	case ran.ExitCode != 0:
+		result.Status = "failed"
 	}
 	result.Output = tail.String()
 	result.DurationMS = time.Since(start).Milliseconds()
-	if err != nil {
-		result.Status = "failed"
-		result.ExitCode = -1
-		var exit *exec.ExitError
-		if errors.As(err, &exit) {
-			result.ExitCode = exit.ExitCode()
-		} else {
-			_, _ = tail.Write([]byte("\n" + err.Error()))
-			result.Output = tail.String()
-		}
-	}
-	if ctx.Err() != nil {
-		if cmd.Process != nil {
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		}
-		result.Status = "timed_out"
-		result.ExitCode = -1
-	}
 	return result
 }

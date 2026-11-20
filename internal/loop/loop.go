@@ -15,7 +15,6 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -128,6 +127,7 @@ type VerifyResult struct {
 	Known    []KnownFailure
 	Mismatch string
 	TimedOut bool
+	Limit    time.Duration
 }
 
 type Verifier func(ctx context.Context, dir string) (VerifyResult, error)
@@ -359,6 +359,9 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 			res.Outcome, res.Reason = BaselineMismatch, baseline.Mismatch
 			e.progress("  %s", res.Reason)
 			return res, nil
+		}
+		if baseline.TimedOut {
+			return e.fail(res, fmt.Errorf("verify did not finish within %s before any change, so km stopped it: make verify faster or raise [test] verify_timeout; see %s\n%s", baseline.Limit, baselinePath, tail(strings.TrimRight(baseline.Output, "\n"), 20))), nil
 		}
 		if baseline.ExitCode != 0 {
 			return e.fail(res, fmt.Errorf("verify already fails before any change (exit %d); see %s\n%s", baseline.ExitCode, baselinePath, tail(strings.TrimRight(baseline.Output, "\n"), 20))), nil
@@ -1078,7 +1081,11 @@ func (e *Engine) runVerify(ctx context.Context, round int, path string) (VerifyR
 	if err != nil {
 		return v, err
 	}
-	e.progress("  exit %d in %s%s", code, secs(rec.DurationMS), attemptsNote(v.Attempts))
+	if v.TimedOut {
+		e.progress("  did not finish within %s; stopped after %s", v.Limit, secs(rec.DurationMS))
+	} else {
+		e.progress("  exit %d in %s%s", code, secs(rec.DurationMS), attemptsNote(v.Attempts))
+	}
 	if code == 0 && v.Attempts > 1 {
 		e.verifyRetried = append(e.verifyRetried, VerifyRetry{Round: round, Attempts: v.Attempts})
 	}
@@ -1258,57 +1265,32 @@ func CommandVerifier(command string) Verifier {
 }
 
 func CommandVerifierWithin(command string, limit time.Duration) Verifier {
-	return func(parent context.Context, dir string) (VerifyResult, error) {
-		ctx := parent
-		if limit > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(parent, limit)
-			defer cancel()
-		}
-		cmd := exec.CommandContext(ctx, "sh", "-c", "unset "+verifySkipEnv+"\n"+command)
-		cmd.Dir = dir
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		stopGroup := func() error {
-			err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-			if errors.Is(err, syscall.ESRCH) {
-				return os.ErrProcessDone
-			}
-			return err
-		}
-		cmd.Cancel = stopGroup
-		cmd.WaitDelay = 200 * time.Millisecond
+	return func(ctx context.Context, dir string) (VerifyResult, error) {
+		var env []string
 		var known func() []KnownFailure
 		if record, recordErr := os.MkdirTemp("", "km-verify-steps-"); recordErr == nil {
 			defer os.RemoveAll(record)
 			steps := filepath.Join(record, "steps")
-			cmd.Env = append(os.Environ(), VerifyStepsEnv+"="+steps)
+			env = append(os.Environ(), VerifyStepsEnv+"="+steps)
 			known = func() []KnownFailure { return ReadKnownFailures(steps) }
 		}
 		var out lockedBuffer
-		cmd.Stdout, cmd.Stderr = &out, &out
-		err := cmd.Run()
-		if ctx.Err() != nil && cmd.Process != nil {
-			_ = stopGroup()
+		ran := RunShell(ctx, dir, command, env, limit, &out)
+		result := VerifyResult{ExitCode: ran.ExitCode, Output: out.String()}
+		switch {
+		case ctx.Err() != nil:
+			return VerifyResult{Output: out.String()}, ctx.Err()
+		case ran.TimedOut:
+			result.TimedOut, result.Limit = true, limit
+			result.Output = strings.TrimRight(result.Output, "\n") + fmt.Sprintf("\nkm: the command did not finish within %s; km stopped it and every process it started\n", limit)
+			return result, nil
+		case ran.Err != nil:
+			return VerifyResult{Output: out.String()}, ran.Err
 		}
-		if parent.Err() != nil {
-			return VerifyResult{Output: out.String()}, parent.Err()
-		}
-		if ctx.Err() != nil {
-			return VerifyResult{ExitCode: -1, TimedOut: true, Output: strings.TrimRight(out.String(), "\n") + fmt.Sprintf("\nkm: the command did not finish within %s; km stopped it and every process it started\n", limit)}, nil
-		}
-		result := VerifyResult{Output: out.String()}
 		if known != nil {
 			result.Known = known()
 		}
-		var exit *exec.ExitError
-		if errors.As(err, &exit) {
-			result.ExitCode = exit.ExitCode()
-			return result, nil
-		}
-		if errors.Is(err, exec.ErrWaitDelay) {
-			return result, nil
-		}
-		return result, err
+		return result, nil
 	}
 }
 

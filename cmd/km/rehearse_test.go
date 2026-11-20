@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jystringfellow/kapellmeister/internal/ensemble"
 	"github.com/jystringfellow/kapellmeister/internal/loop"
@@ -219,5 +220,23 @@ func TestRehearseWritesTheReportAndStandingTaskFileAndNamesFailedChairs(t *testi
 				t.Errorf("booted %d and briefed %d chairs", next, cues)
 			}
 		})
+	}
+}
+
+func TestRehearseStopsABaselineVerifyAtTheVerifyLimit(t *testing.T) {
+	t.Setenv(loop.HomeEnv, t.TempDir())
+	writeFile(t, loop.UserConfigPath(loop.Home()), builtInAgentConfig)
+	t.Setenv(loop.StateEnv, t.TempDir())
+	wt := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(wt, ".kapellmeister"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, loop.ConfigFile), []byte("[test]\nverify = 'echo started; sleep 30'\nverify_timeout = '300ms'\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	err := rehearseCommand([]string{"-worktree", wt, "-task", "task", "-cao", unreachableCAO})
+	if err == nil || !strings.Contains(err.Error(), "baseline verify did not finish within 300ms") || time.Since(start) > 15*time.Second {
+		t.Fatalf("baseline error = %v after %s", err, time.Since(start))
 	}
 }

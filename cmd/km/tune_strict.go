@@ -107,6 +107,9 @@ func tuneStrict(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	if !*again && saved.Strict != "" {
 		return fmt.Errorf("strict %q is already written; pass -again to tune it anyway", saved.Strict)
 	}
+	if len(saved.Excluded) == 0 && !saved.VerifyTimeBounded {
+		return errors.New("there is nothing for strict to hold: [[test.excluded]] is empty and verify is not time-bounded, so verify already runs what it was given; run km tune verify first if suites are missing from it, or write scripts/strict by hand and prove it with km prove -level strict")
+	}
 	limit := saved.StrictLimit(saved.Timeout(prove.DefaultTimeout))
 	subject := tune.Strict{Excluded: saved.Excluded, TimeBounded: saved.VerifyTimeBounded}
 	if flagsSet(fs)["strict-timeout"] {
@@ -182,21 +185,25 @@ func strictRefusal(wt string, saved, written loop.TestConfig, subject tune.Stric
 		return fmt.Sprintf("[test] strict_timeout must stay %q: only the caller sets it, with -strict-timeout", wantTimeout)
 	}
 	labels := tune.StepLabels(string(script))
+	commands := tune.StepCommands(string(script))
 	for _, entry := range saved.Excluded {
 		if !slices.Contains(labels, entry.Suite) {
 			return fmt.Sprintf("suite %q is excluded from verify and scripts/strict has no run step labelled %q: strict must run every excluded suite (by hand: %s)", entry.Suite, entry.Suite, entry.Run)
 		}
+		if recorded := strings.TrimSpace(entry.Run); recorded != "" && strings.TrimSpace(commands[entry.Suite]) != recorded {
+			return fmt.Sprintf("the step labelled %q in scripts/strict runs %q, not the command recorded for that excluded suite, %q: run the recorded command, or have the caller change the entry's run", entry.Suite, commands[entry.Suite], recorded)
+		}
 	}
-	network := subject.NetworkSuites()
+	network := subject.NeedProbe()
 	switch {
 	case len(network) > 0 && strings.TrimPrefix(written.StrictReady, "./") != initrepo.StrictReadyFile && (saved.StrictReady == "" || written.StrictReady != saved.StrictReady):
-		return fmt.Sprintf("strict holds a suite excluded for network (%q), so km requires a readiness probe: write scripts/strict-ready and set [test] strict_ready = \"scripts/strict-ready\"", strings.Join(network, ", "))
+		return fmt.Sprintf("strict holds a suite that needs something a machine may lack (%s), so km requires a readiness probe: write scripts/strict-ready and set [test] strict_ready = \"scripts/strict-ready\"", strings.Join(network, ", "))
 	case len(network) > 0:
 		if fault := loop.ProbeFault(wt, written.StrictReady); fault != "" {
 			return "the strict_ready probe km requires is broken: " + fault
 		}
 	case written.StrictReady != saved.StrictReady:
-		return "km decides when strict needs a readiness probe, and this strict holds no suite excluded for network: remove [test] strict_ready and scripts/strict-ready"
+		return "km decides when strict needs a readiness probe, and this strict holds no suite excluded for network, a service, a credential or another machine: remove [test] strict_ready and scripts/strict-ready"
 	}
 	return ""
 }
@@ -208,11 +215,13 @@ func strictHooks(root, wt, head, runID, runDir, patches string, setup map[string
 	}
 	summary := &tuneSummary{LeftOut: []loop.TuneOmission{}, Breaks: []tuneBreak{}, Excluded: saved.Excluded, Result: prove.Result{Worktree: wt, Level: prove.LevelStrict, Status: "not_run", Reason: "no proof was run", Runs: []prove.RunResult{}, Breaks: []prove.BreakResult{}}}
 	var proved *tuneProved
+	currentRound := 0
 	hooks := &loop.TuneHooks{
 		Subject:     "strict",
 		ReviewBrief: subject.ReviewBrief(),
 		PatchDir:    patches,
 		Changed: func() ([]string, error) {
+			currentRound++
 			now, err := tuneTree(wt)
 			if err != nil {
 				return nil, err
@@ -277,12 +286,18 @@ func strictHooks(root, wt, head, runID, runDir, patches string, setup map[string
 					needsCaller = true
 				}
 				if result.Status == "proved" {
+				ran:
 					for _, entry := range saved.Excluded {
 						for _, run := range result.Runs {
-							if len(run.Steps) > 0 && !slices.ContainsFunc(run.Steps, func(step prove.Step) bool { return step.Label == entry.Suite }) {
-								result.Status, result.ExitStatus = "refused", 10
-								result.Reason = fmt.Sprintf("scripts/strict has a step labelled %q but %s did not run it: strict must run every excluded suite", entry.Suite, run.Name)
+							if slices.ContainsFunc(run.Steps, func(step prove.Step) bool { return step.Label == entry.Suite }) {
+								continue
 							}
+							result.Status, result.ExitStatus = "suite_not_run", 14
+							result.Reason = fmt.Sprintf("excluded suite %q did not run in %s; strict must run every excluded suite", entry.Suite, run.Name)
+							if len(run.Steps) == 0 {
+								result.Reason = fmt.Sprintf("excluded suite %q did not run in %s: strict recorded no steps; its run wrapper must append each label it runs to the file named by $%s, as the wrapper km writes does", entry.Suite, run.Name, initrepo.StepsEnv)
+							}
+							break ran
 						}
 					}
 				}
@@ -326,12 +341,14 @@ func strictHooks(root, wt, head, runID, runDir, patches string, setup map[string
 			if now != head {
 				return errors.New("checkout HEAD moved while tuning; checkout left untouched")
 			}
-			candidate, err := readTuneSetup(wt, strictSetupFiles...)
-			if err != nil {
-				return err
-			}
-			if !reflect.DeepEqual(candidate, proved.setup) {
-				return errors.New("setup files changed after proof; checkout left untouched")
+			if round == currentRound {
+				candidate, err := readTuneSetup(wt, strictSetupFiles...)
+				if err != nil {
+					return err
+				}
+				if !reflect.DeepEqual(candidate, proved.setup) {
+					return errors.New("setup files changed after proof; checkout left untouched")
+				}
 			}
 			for _, name := range strictSetupFiles {
 				file := proved.setup[name]

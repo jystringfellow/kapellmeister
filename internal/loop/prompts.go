@@ -81,6 +81,9 @@ func verifyLine(command string, v VerifyResult, path string) string {
 	if command == "" {
 		return "kapellmeister did not verify this change: no verify command is configured.\n"
 	}
+	if v.TimedOut {
+		return fmt.Sprintf("kapellmeister ran `%s`; it did not finish within %s and kapellmeister stopped it: it ran out of time, which says nothing about whether the tests pass. What it printed until then is in %s.\n", command, v.Limit, path)
+	}
 	line := fmt.Sprintf("kapellmeister ran `%s`; it exited %d. Its output is in %s.\n", command, v.ExitCode, path)
 	if v.Attempts > 1 && v.ExitCode == 0 {
 		line += fmt.Sprintf("It failed first and passed on attempt %d, so treat any test that failed as possibly flaky and say whether this change could have caused it.\n", v.Attempts)

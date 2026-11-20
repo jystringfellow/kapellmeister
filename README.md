@@ -48,7 +48,7 @@ installing the base chair profiles below.
 ```sh
 km init [-worktree DIR] [-dry-run] [-json] [-verify CMD] [-check CMD] [-no-run] [-timeout D]  # write config and an unfinished verify script
 km tune verify [-worktree DIR] [-require SUITE]... [-known-failure LABEL]... [-time-bounded] [-detach] [-timeout D] [-budget D] [-verify-timeout D] [-json] [-again] [-guide]  # write and prove verify
-km tune strict [-worktree DIR] [-strict-timeout D] [-budget D] [-detach] [-json] [-again] [-guide]  # write and prove strict: what verify had to leave out
+km tune strict [-worktree DIR] [-strict-timeout D] [-budget D] [-timeout D] [-detach] [-json] [-again] [-guide]  # write and prove strict: what verify had to leave out
 km prove [-worktree DIR] [-level verify|strict] [-break PATCH]... [-timeout D] [-json]  # prove verify or strict on clean copies and broken code
 km run -repo ~/Code/app [-base BRANCH] -task-file task.md [-ensemble thorough] [-detach]  # one ensemble
 km audition -worktree DIR [-ensemble thorough]   # can this ensemble play? no real work
@@ -904,8 +904,15 @@ as a warning.
 Each verify in a run gets `[test] verify_timeout`, or `[run] timeout` (`60m` by default) when the
 key is not set. km stops a verify that passes the limit, together with every process it started;
 it counts as a failed verify, its output ends with `km: the command did not finish within 20m`,
-and it is not run again. An interrupt stops a running verify, strict or probe and its processes
-the same way.
+and it is not run again. The progress line says `did not finish within 20m`, the chairs are told
+it ran out of time and that this says nothing about whether the tests pass, and a baseline that
+runs out of time ends the run with that reason, not with an exit status. An interrupt stops a
+running verify, strict or probe and its processes the same way, and so does a shell that exits
+while a process it started still holds its output. `km rehearse` applies the same limit to its
+baseline verify.
+
+`[run] timeout = "0"` means no limit. With it, a verify, strict or probe that has no
+`verify_timeout` or `strict_timeout` of its own runs until it finishes or the run is interrupted.
 
 Snapshot objects and an index copy live in a private temporary directory, referenced by
 a temporary snapshot manifest in the run record. km removes both when the run ends,
@@ -1422,7 +1429,7 @@ The output says `strict failed, as required` for each break, and the JSON carrie
 ### Tuning strict
 
 ```sh
-km tune strict [-worktree DIR] [-strict-timeout D] [-budget D] [-detach] [-json] [-again] [-guide]
+km tune strict [-worktree DIR] [-strict-timeout D] [-budget D] [-timeout D] [-detach] [-json] [-again] [-guide]
 ```
 
 `km tune strict` has the ensemble write `scripts/strict` and km prove it, the way `km tune verify`
@@ -1432,13 +1439,22 @@ strict together run everything CI runs.
 - **What goes in.** Every suite in `[[test.excluded]]`, and whatever a time-bounded verify cut.
   The writer is given each excluded suite with the command km recorded for it. Strict has no time
   target, so nothing is left out of it to save time.
+- **km does not check what a time-bounded verify cut.** The config records that verify is
+  time-bounded, not which tests were cut for it, so km cannot tell whether strict picked them up.
+  That part rests on the writer and the reviewer; read `scripts/strict` against CI yourself.
+- **Nothing to hold, nothing to tune.** When `[[test.excluded]]` is empty and verify is not
+  time-bounded, `km tune strict` says so and stops before it seats anyone.
 - **km refuses a strict that leaves an excluded suite uncovered.** Each excluded suite needs a
-  `run` step in `scripts/strict` labelled exactly with its name, and that step must run in both
-  clean runs. Otherwise the round is refused and names the suite and its by-hand command.
-- **km decides whether a probe is needed.** When strict holds a suite excluded for `network`, km
-  requires `scripts/strict-ready` and `[test] strict_ready`; the writer writes the probe and km
-  refuses the round without it. When strict holds no such suite, a round that adds a probe is
-  refused. A `strict_ready` the config already had is kept.
+  `run` step in `scripts/strict` labelled exactly with its name, that step must run the command
+  recorded in the entry's `run`, and it must run in both clean runs. A step with the right label
+  and another command, such as `run 'network' 'true'`, is refused. A strict whose wrapper records
+  no steps is `suite_not_run`, as for a required suite in verify.
+- **km decides whether a probe is needed.** When strict holds a suite excluded for `network`,
+  `service`, `credential` or `machine`, km requires `scripts/strict-ready` and `[test]
+  strict_ready`; the writer writes the probe and km refuses the round without it. When strict
+  holds no such suite, a round that adds a probe is refused. A `strict_ready` the config already
+  had is kept. km itself only ever writes the reason `network`; the others are for entries you
+  add.
 - **A probe that fails on this machine is not a proof.** The round ends `strict_not_run`, nothing
   is published, and the probe's output is in the reason. Run the tune where strict can run.
 - **What the writer may change:** `scripts/strict`, `scripts/strict-ready`, and the `strict`,
@@ -1456,6 +1472,10 @@ strict together run everything CI runs.
 
 The proved files are copied back uncommitted, as after `km tune verify`, and the summary starts
 `tune strict: COMMAND`.
+
+When a later `km tune verify -again` excludes a suite the written strict has no step for, its
+summary says `strict does not run excluded suite NAME: run km tune strict -again`, and the JSON
+lists the suites under `strict_missing`.
 
 ### Tiers
 

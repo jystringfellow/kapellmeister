@@ -25,6 +25,7 @@ func strictTuneFixture(t *testing.T, config string) string {
 }
 
 type strictWrites struct {
+	script string
 	suites []string
 	probe  string
 	config string
@@ -34,7 +35,11 @@ type strictWrites struct {
 func strictWriter(base string, w strictWrites) func(*testing.T, cao.StepRequest, string) string {
 	return func(t *testing.T, req cao.StepRequest, patchDir string) string {
 		t.Helper()
-		proofWrite(t, req.WorkingDirectory, initrepo.StrictFile, suiteScript(w.suites...), 0755)
+		script := suiteScript(w.suites...)
+		if w.script != "" {
+			script = w.script
+		}
+		proofWrite(t, req.WorkingDirectory, initrepo.StrictFile, script, 0755)
 		config := "strict = 'scripts/strict'\n"
 		if w.probe != "" {
 			proofWrite(t, req.WorkingDirectory, initrepo.StrictReadyFile, "#!/bin/sh\n"+w.probe+"\n", 0755)
@@ -107,7 +112,7 @@ func TestKmDecidesThatAStrictHoldingASuiteExcludedForNetworkNeedsAProbe(t *testi
 	root := strictTuneFixture(t, excludedEntry)
 	f := &tuneCAO{writer: strictWriter(excludedEntry, strictWrites{suites: []string{"slow", "network"}})}
 	code, out := tuneCall(t, "strict", "-worktree", root, "-cao", f.serve(t).URL)
-	if code == 0 || strictPublished(t, root) || !strings.Contains(out, `strict holds a suite excluded for network ("network"), so km requires a readiness probe: write scripts/strict-ready and set [test] strict_ready = "scripts/strict-ready"`) {
+	if code == 0 || strictPublished(t, root) || !strings.Contains(out, `strict holds a suite that needs something a machine may lack ("network": network), so km requires a readiness probe: write scripts/strict-ready and set [test] strict_ready = "scripts/strict-ready"`) {
 		t.Fatal(code, out)
 	}
 }
@@ -116,7 +121,7 @@ func TestAWriterDoesNotAddAProbeKmDidNotAskFor(t *testing.T) {
 	root := strictTuneFixture(t, strictSlowExcluded)
 	f := &tuneCAO{writer: strictWriter(strictSlowExcluded, strictWrites{suites: []string{"slow"}, probe: "exit 0"})}
 	code, out := tuneCall(t, "strict", "-worktree", root, "-cao", f.serve(t).URL)
-	if code == 0 || strictPublished(t, root) || !strings.Contains(out, "km decides when strict needs a readiness probe, and this strict holds no suite excluded for network: remove [test] strict_ready") {
+	if code == 0 || strictPublished(t, root) || !strings.Contains(out, "km decides when strict needs a readiness probe, and this strict holds no suite excluded for network, a service, a credential or another machine: remove [test] strict_ready") {
 		t.Fatal(code, out)
 	}
 	if !strings.Contains(f.prompts[0], "Do not write a strict_ready probe") {
@@ -181,6 +186,106 @@ func TestTheStrictTimeoutTheCallerPassesIsTheProofLimitAndMustBeRecorded(t *test
 func TestTuneNamesBothSubjects(t *testing.T) {
 	code, out := tuneCall(t, "everything")
 	if code != 2 || !strings.Contains(out, "  verify  ") || !strings.Contains(out, "  strict  ") {
+		t.Fatal(code, out)
+	}
+}
+
+func TestAStepThatCarriesAnExcludedSuitesLabelButNotItsCommandIsRefused(t *testing.T) {
+	root := strictTuneFixture(t, excludedEntry)
+	hollow := suiteSteps("run 'slow' 'sh suites/slow.sh'\nrun 'network' 'true'\n")
+	f := &tuneCAO{writer: strictWriter(excludedEntry, strictWrites{script: hollow, probe: "exit 0"})}
+	code, out := tuneCall(t, "strict", "-worktree", root, "-cao", f.serve(t).URL)
+	if code == 0 || strictPublished(t, root) || !strings.Contains(out, `the step labelled "network" in scripts/strict runs "true", not the command recorded for that excluded suite, "sh suites/network.sh"`) {
+		t.Fatal(code, out)
+	}
+}
+
+func TestAStrictThatRecordsNoStepsCannotShowAnExcludedSuiteRan(t *testing.T) {
+	root := strictTuneFixture(t, strictSlowExcluded)
+	silent := "#!/bin/sh\ncd \"$(dirname \"$0\")/..\" || exit 1\nrun() { sh -c \"$2\"; }\nrun 'slow' 'sh suites/slow.sh'\n"
+	f := &tuneCAO{writer: strictWriter(strictSlowExcluded, strictWrites{script: silent})}
+	code, out := tuneCall(t, "strict", "-worktree", root, "-cao", f.serve(t).URL)
+	if code == 0 || strictPublished(t, root) || !strings.Contains(out, `suite_not_run`) || !strings.Contains(out, `excluded suite "slow" did not run in clean run 1: strict recorded no steps`) {
+		t.Fatal(code, out)
+	}
+}
+
+func TestAProvedStrictIsPublishedWhenALaterRoundIsEditedAndNotProved(t *testing.T) {
+	root := strictTuneFixture(t, strictSlowExcluded)
+	excludedRounds(t, "2")
+	round := 0
+	good := strictWriter(strictSlowExcluded, strictWrites{suites: []string{"slow"}})
+	bad := strictWriter(strictSlowExcluded, strictWrites{suites: []string{"unit"}})
+	f := &tuneCAO{mode: "revision", writer: func(t *testing.T, req cao.StepRequest, patchDir string) string {
+		round++
+		if round == 1 {
+			return good(t, req, patchDir)
+		}
+		return bad(t, req, patchDir)
+	}}
+	code, out := tuneCall(t, "strict", "-worktree", root, "-cao", f.serve(t).URL)
+	if code != 0 || !strings.Contains(out, "later revision was not adopted") || strings.Contains(out, "setup files changed after proof") {
+		t.Fatal(code, out)
+	}
+	if script := initRead(t, root, initrepo.StrictFile); script != suiteScript("slow") {
+		t.Fatal(script)
+	}
+}
+
+func TestTuneStrictStopsBeforeSeatingAnyoneWhenVerifyLeftNothingOut(t *testing.T) {
+	root := strictTuneFixture(t, "")
+	code, out := tuneCall(t, "strict", "-worktree", root)
+	if code == 0 || !strings.Contains(out, "there is nothing for strict to hold: [[test.excluded]] is empty and verify is not time-bounded") {
+		t.Fatal(code, out)
+	}
+	bounded := strictTuneFixture(t, "verify_time_bounded = true\n")
+	f := &tuneCAO{writer: strictWriter("verify_time_bounded = true\n", strictWrites{suites: []string{"slow"}})}
+	if code, out := tuneCall(t, "strict", "-worktree", bounded, "-cao", f.serve(t).URL); code != 0 || !strictPublished(t, bounded) {
+		t.Fatal(code, out)
+	}
+}
+
+func TestASuiteExcludedForACredentialOrAServiceNeedsAProbeToo(t *testing.T) {
+	credential := strings.Replace(strictSlowExcluded, "reason = 'flaky'", "reason = 'credential'", 1)
+	root := strictTuneFixture(t, credential)
+	f := &tuneCAO{writer: strictWriter(credential, strictWrites{suites: []string{"slow"}})}
+	code, out := tuneCall(t, "strict", "-worktree", root, "-cao", f.serve(t).URL)
+	if code == 0 || strictPublished(t, root) || !strings.Contains(out, `strict holds a suite that needs something a machine may lack ("slow": credential), so km requires a readiness probe`) {
+		t.Fatal(code, out)
+	}
+	f = &tuneCAO{writer: strictWriter(credential, strictWrites{suites: []string{"slow"}, probe: "exit 0"})}
+	if code, out := tuneCall(t, "strict", "-worktree", root, "-cao", f.serve(t).URL); code != 0 || !strictPublished(t, root) {
+		t.Fatal(code, out)
+	}
+}
+
+func TestTheUsageNamesTheBudgetFlagOfTuneStrict(t *testing.T) {
+	var diag strings.Builder
+	execute([]string{"help"}, &diag)
+	if !strings.Contains(diag.String(), "km tune strict [-worktree DIR] [-strict-timeout D] [-budget D]") {
+		t.Fatal(diag.String())
+	}
+}
+
+func TestTuneVerifyWarnsWhenItExcludesASuiteTheWrittenStrictDoesNotRun(t *testing.T) {
+	root := suiteFixture(t)
+	excludedRounds(t, "2")
+	const keepsStrict = "strict = 'scripts/strict'\n"
+	proofWrite(t, root, loop.ConfigFile, suiteConfig(keepsStrict), 0644)
+	proofWrite(t, root, initrepo.StrictFile, suiteScript("slow"), 0755)
+	round := 0
+	f := &tuneCAO{writer: func(t *testing.T, req cao.StepRequest, patchDir string) string {
+		suites := []string{"fast", "loopback", "network"}
+		if round++; round > 1 {
+			suites = suites[:2]
+		} else {
+			proofWrite(t, req.WorkingDirectory, loop.ConfigFile, suiteConfig(keepsStrict), 0644)
+		}
+		proofWrite(t, req.WorkingDirectory, initrepo.ScriptFile, suiteScript(suites...), 0755)
+		return suiteReply(t, patchDir, "sh suites/"+strings.Join(suites, ".sh && sh suites/")+".sh")
+	}}
+	code, out := tuneCall(t, "verify", "-worktree", root, "-cao", f.serve(t).URL)
+	if code != 0 || !strings.Contains(out, "  strict does not run excluded suite network: run km tune strict -again so that verify and strict together still run what CI runs\n") {
 		t.Fatal(code, out)
 	}
 }
