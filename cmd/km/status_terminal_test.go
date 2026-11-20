@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/jystringfellow/kapellmeister/internal/ensemble"
+	"github.com/jystringfellow/kapellmeister/internal/loop"
 	"path/filepath"
 	"testing"
 )
@@ -57,6 +59,33 @@ func TestStatusJSONShowsAPlayingChairWithoutARecordedTerminal(t *testing.T) {
 	for _, chair := range chairs[1:4] {
 		if chair["terminal"] != "" || chair["state"] != "playing" {
 			t.Fatal(chair)
+		}
+	}
+}
+
+func TestStatusJSONClearsAResumedChairsOldTerminalWhileItsFreshFallbackPlays(t *testing.T) {
+	root, state := statusDataFixture(t)
+	state["playing"] = []any{map[string]any{"step": "draft", "round": 2, "chair": "strings.pen@voices"}}
+	saveStatusData(t, root, state)
+	chair := dataChairs(t, statusDataRow(t, root))[0]
+	if chair["terminal"] != "" || chair["memory"] != "resume" {
+		t.Fatal(chair)
+	}
+}
+
+func TestStatusSeatingUsesEachPartsMemoryAndAlwaysKeepsReviewPartsFresh(t *testing.T) {
+	score := loop.Score{Parts: []loop.Part{{Name: "scout", Memory: loop.MemoryResume}, {Name: "judge", Memory: loop.MemoryFresh}, {Name: "auditor", Memory: loop.MemoryResume}}, Steps: []loop.ScoreStep{
+		{Name: "survey", Part: "scout", Kind: loop.KindProduce},
+		{Name: "rule", Part: "judge", Kind: loop.KindDecide},
+		{Name: "inspect", Part: "auditor", Kind: loop.KindReview},
+	}}
+	p := ensembleRun{Members: []ensemble.Member{
+		{Name: "scout", Part: "scout"}, {Name: "judge", Part: "judge"}, {Name: "auditor", Part: "auditor"},
+	}}
+	seating := recordSeating(p, score)
+	for i, want := range []string{"resume", "fresh", "fresh"} {
+		if seating.Sections[0].Chairs[i].Memory != want {
+			t.Fatal(seating)
 		}
 	}
 }

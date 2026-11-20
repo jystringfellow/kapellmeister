@@ -9,6 +9,13 @@ import (
 	"github.com/jystringfellow/kapellmeister/internal/cao"
 )
 
+var ErrReuseRefused = errors.New("terminal reuse refused")
+
+type reuseRefusedError struct{ error }
+
+func (e reuseRefusedError) Is(target error) bool { return target == ErrReuseRefused }
+func (e reuseRefusedError) Unwrap() error        { return e.error }
+
 type CAOStepper struct {
 	Session string
 	Client  *cao.Client
@@ -17,6 +24,9 @@ type CAOStepper struct {
 func (c CAOStepper) Run(ctx context.Context, s Step) (StepResult, error) {
 	if s.ReuseTerminal != "" {
 		if err := c.Client.SetDescription(ctx, s.ReuseTerminal, s.Label); err != nil {
+			if ctx.Err() == nil && !errors.Is(err, context.Canceled) {
+				err = reuseRefusedError{err}
+			}
 			return StepResult{TerminalID: s.ReuseTerminal}, err
 		}
 	}
@@ -36,6 +46,9 @@ func (c CAOStepper) Run(ctx context.Context, s Step) (StepResult, error) {
 	resp, err := c.Client.RunStep(ctx, req)
 	if err != nil {
 		var herr *cao.HTTPError
+		if s.ReuseTerminal != "" && ctx.Err() == nil && errors.As(err, &herr) && herr.Status >= 400 && herr.Status < 500 {
+			return StepResult{TerminalID: s.ReuseTerminal}, reuseRefusedError{err}
+		}
 		if errors.As(err, &herr) && herr.TerminalID != "" {
 			return StepResult{TerminalID: herr.TerminalID}, err
 		}

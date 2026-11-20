@@ -443,6 +443,16 @@ repo. Chairs: `km-claude` (Haiku 5.5), `km-codex` (GPT-6 Luna), `km-copilot` (Ha
     a second run reported all four unchanged. Differing content, a foreign description, a live
     recorded child process and a wrong CAO home each triggered the intended refusal.
 
+29. **A missing kept terminal is refused before a step runs.**
+    Measured on 2026-11-20 against an isolated server with all homes, state, API port and tmux
+    socket under a short scratch directory. Both `PATCH /terminals/deadbeef/description` and
+    `POST /terminals/run-step` with `reuse_terminal_id = "deadbeef"` returned HTTP 404 and
+    `{"detail":"Terminal 'deadbeef' not found"}`. The detail is a string, with no error kind.
+    A description patch using a non-hexadecimal id returned HTTP 422 with a path validation
+    error; the run-step call using that id returned 404. No live terminal was seated, so provider
+    mismatch and busy-terminal reuse were not observed. Both probe servers were stopped by
+    their recorded PIDs, and their isolated tmux servers were taken down.
+
 ## Implications for the team layer
 
 - km owns the queue of obligations, as decided: a cue is done only when its reply lands in the km

@@ -47,7 +47,7 @@ const usage = `usage:
   km preflight -worktree DIR [-agents LIST] [-tier T]       check each agent starts and answers
   km profiles install [-cao URL] [-replace] [AGENT ...]       install embedded base chair profiles
   km mcp                                                    serve run tools over MCP stdio
-  km score show NAME                                        print a built-in score and its part texts
+  km score show NAME                                        print a built-in score (default as TOML; review with part texts)
   km version                                                print the version
   km config [-worktree DIR]                                  show the effective settings and the files they come from`
 

@@ -148,7 +148,6 @@ func TestAnInvalidScoreIsRefusedWithItsFileStepAndReason(t *testing.T) {
 		{"empty writes", `escalate = true`, `writes = ""`, `step draft: unknown writes "" (want reply)`},
 		{"backward without rounds", "rounds = 2\n", "", `step inspect: exit changes targets earlier step "draft" without rounds`},
 		{"review resumes", "[parts.drafter]", "[parts.reviewer]\nmemory = \"resume\"\n[parts.drafter]", `part reviewer: review steps cannot resume`},
-		{"other part resumes", `memory = "fresh"`, `memory = "resume"`, `part drafter: memory resume is supported only for implementer`},
 		{"unknown memory", `memory = "fresh"`, `memory = "forever"`, `part drafter: unknown memory "forever" (want fresh or resume)`},
 		{"empty memory", `memory = "fresh"`, `memory = ""`, `part drafter: unknown memory "" (want fresh or resume)`},
 		{"optional produce", `memory = "fresh"`, `optional = true`, `part drafter: optional requires test or background steps`},
