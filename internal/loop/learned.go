@@ -93,15 +93,32 @@ func (e *Engine) loadLessons() {
 		part, name string
 		chair      Chair
 	}
-	seats := []seat{
-		{"planner", "", e.Config.Chairs.Planner}, {"implementer", "", e.Config.Chairs.Implementer},
-		{"gate", "", e.Config.Chairs.Gate}, {"classifier", "", e.Config.Chairs.Classifier},
-	}
-	for i, chair := range e.Config.Chairs.Reviewers {
-		seats = append(seats, seat{"reviewer", ReviewerName(i, len(e.Config.Chairs.Reviewers)), chair})
-	}
-	if chair := e.Config.Chairs.Tester; chair != nil {
-		seats = append(seats, seat{"tester", "", *chair})
+	var seats []seat
+	score := e.playingScore()
+	for group := 0; group < 3; group++ {
+		for _, part := range score.Parts {
+			priority, review := 0, false
+			for _, step := range score.StepsOf(part.Name) {
+				review = review || step.Kind == KindReview
+			}
+			if review {
+				priority = 1
+			}
+			if part.Optional {
+				priority = 2
+			}
+			if priority != group {
+				continue
+			}
+			chairs := e.Config.Chairs.Of(part.Name)
+			for i, chair := range chairs {
+				name := ""
+				if review {
+					name = reviewChairName(part.Name, i, len(chairs))
+				}
+				seats = append(seats, seat{part.Name, name, chair})
+			}
+		}
 	}
 	budget := e.Config.LearnedBudget
 	if budget <= 0 {
@@ -140,7 +157,7 @@ func (e *Engine) loadLessons() {
 }
 
 func (e *Engine) lessonsFor(step string, chair Chair) string {
-	return lessonsSection(e.lessons[lessonKey{PartOf(step), chair.Address}])
+	return lessonsSection(e.lessons[lessonKey{firstSet(e.playingScore().StepPart(step), step), chair.Address}])
 }
 
 func (e *Engine) readLessonBlob(mode, oid string) lessonBlob {

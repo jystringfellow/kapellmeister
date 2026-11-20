@@ -186,8 +186,13 @@ func (e *Engine) proposeLessons(ctx context.Context, res Result) (lessons []Less
 	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
 	path := e.rel("lessons-reply.json")
-	errs, guardErr := e.readOnlySteps(ctx, []Step{{Name: "lessons", Round: res.Rounds, Chair: e.Config.Chairs.Gate, ReplyPath: path, Timeout: limit, FreshTerminal: true,
-		Prompt: lessonsPrompt(e.Config.Task, res, e.lessonFiles(), path, e.seatedParts())}})
+	chairs := e.Config.Chairs.Of(e.playingScore().LessonsBy)
+	if len(chairs) == 0 {
+		report.Reason = "lessons step skipped: no chair plays its part"
+		return
+	}
+	errs, guardErr := e.readOnlySteps(ctx, []Step{{Name: "lessons", Round: res.Rounds, Chair: chairs[0], ReplyPath: path, Timeout: limit, FreshTerminal: true,
+		Prompt: lessonsPartPrompt(e.playingScore().LessonsBy, e.Config.Task, res, e.lessonFiles(), path, e.seatedParts())}})
 	if guardErr != nil {
 		report.Reason = "lessons step failed: " + guardErr.Error()
 		if strings.Contains(guardErr.Error(), "modified the worktree") {
@@ -236,9 +241,9 @@ func (e *Engine) lessonFiles() []string {
 			continue
 		}
 		name := entry.Name()
-		include := name == "plan.md" || name == "test-plan.md"
-		for _, prefix := range []string{"implement-", "review-", "gate-", "test-", "verify-"} {
-			if strings.HasPrefix(name, prefix) && ((prefix == "verify-" && strings.HasSuffix(name, ".txt")) || (prefix != "verify-" && strings.HasSuffix(name, ".md"))) {
+		include := strings.HasPrefix(name, "verify-") && strings.HasSuffix(name, ".txt")
+		for _, step := range e.playingScore().Steps {
+			if name == step.Name+".md" || (strings.HasPrefix(name, step.Name+"-") && strings.HasSuffix(name, ".md")) {
 				include = true
 			}
 		}
@@ -250,9 +255,12 @@ func (e *Engine) lessonFiles() []string {
 }
 
 func (e *Engine) seatedParts() []string {
-	parts := slices.Clone(ChairRoles)
-	if e.Config.Chairs.Tester != nil {
-		parts = append(parts, OptionalRoles...)
+	var parts []string
+	score := e.playingScore()
+	for _, part := range score.Parts {
+		if len(e.Config.Chairs.Of(part.Name)) > 0 {
+			parts = append(parts, part.Name)
+		}
 	}
 	return parts
 }

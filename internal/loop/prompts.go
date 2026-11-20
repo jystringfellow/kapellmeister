@@ -126,11 +126,16 @@ func testPrompt(task, plan, testPlan, summary, command string, v VerifyResult, v
 func classifyPrompt(subject, path, out, lessons string) string {
 	score := DefaultScore()
 	part, _ := score.Part(score.Classifier)
+	step, _ := score.Step(subject)
+	return classifyPartPrompt(part, step.Kind, subject, path, out, lessons)
+}
+
+func classifyPartPrompt(part Part, kind StepKind, subject, path, out, lessons string) string {
 	nitNote := ""
-	if subject == "gate" {
+	if kind == KindDecide {
 		nitNote = "Points it lists as nits or non-blocking are not required changes.\n"
 	}
-	if subject == "test" {
+	if kind == KindTest {
 		subject = "test report"
 		nitNote = "APPROVE only when every scenario passed.\n"
 	}
@@ -146,7 +151,11 @@ func preflightPrompt(path string) string {
 }
 
 func lessonsPrompt(task string, res Result, files []string, out string, parts []string) string {
-	return preamble(DefaultScore().LessonsBy) + taskBlock(task) + fmt.Sprintf(`
+	return lessonsPartPrompt(DefaultScore().LessonsBy, task, res, files, out, parts)
+}
+
+func lessonsPartPrompt(part, task string, res Result, files []string, out string, parts []string) string {
+	return preamble(part) + taskBlock(task) + fmt.Sprintf(`
 The run ended with outcome %s after %d rounds. Read this run's records:
 %s
 From this run's plan, reviews and verdicts, what would have saved a round if a chair had known it at the start?

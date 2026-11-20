@@ -24,12 +24,19 @@ type Exit struct {
 }
 
 type ScoreStep struct {
-	Writes     string
-	Name       string
-	Kind       StepKind
-	Part       string
-	Exits      []Exit
-	Background bool
+	Reads       []string
+	Sizes       bool
+	Sized       bool
+	Escalate    bool
+	ApproveWhen string
+	Tier        string
+	Brief       string
+	Writes      string
+	Name        string
+	Kind        StepKind
+	Part        string
+	Exits       []Exit
+	Background  bool
 }
 
 type Part struct {
@@ -63,12 +70,12 @@ func DefaultScore() Score {
 			{Name: "tester", Optional: true, Memory: MemoryFresh, Prompt: map[string]string{"test-plan": testPlanInstructions, "test": testInstructions}},
 		},
 		Steps: []ScoreStep{
-			{Name: "plan", Writes: "reply", Kind: KindProduce, Part: "planner", Exits: []Exit{{"done", "implement"}}},
-			{Name: "test-plan", Writes: "reply", Kind: KindProduce, Part: "tester", Background: true},
-			{Name: "implement", Kind: KindProduce, Part: "implementer", Exits: []Exit{{"done", "review"}}},
-			{Name: "review", Kind: KindReview, Part: "reviewer", Exits: []Exit{{"approve", "gate"}, {"changes", "implement"}}},
-			{Name: "gate", Kind: KindDecide, Part: "gate", Exits: []Exit{{"approve", "test"}, {"changes", "implement"}}},
-			{Name: "test", Kind: KindTest, Part: "tester", Exits: []Exit{{"approve", "approved"}, {"changes", "implement"}, {"absent", "approved"}}},
+			{Name: "plan", Sizes: true, Brief: "plan", Writes: "reply", Kind: KindProduce, Part: "planner", Exits: []Exit{{"done", "implement"}}},
+			{Name: "test-plan", Sized: true, Reads: []string{"plan"}, Tier: "test", Brief: "test-plan", Writes: "reply", Kind: KindProduce, Part: "tester", Background: true},
+			{Name: "implement", Reads: []string{"plan", "review", "gate", "test"}, Sized: true, Escalate: true, Brief: "implement", Kind: KindProduce, Part: "implementer", Exits: []Exit{{"done", "review"}}},
+			{Name: "review", Reads: []string{"plan", "implement"}, Sized: true, ApproveWhen: "any", Brief: "review", Kind: KindReview, Part: "reviewer", Exits: []Exit{{"approve", "gate"}, {"changes", "implement"}}},
+			{Name: "gate", Reads: []string{"plan", "implement", "review"}, Sized: true, Brief: "gate", Kind: KindDecide, Part: "gate", Exits: []Exit{{"approve", "test"}, {"changes", "implement"}}},
+			{Name: "test", Reads: []string{"plan", "test-plan", "implement"}, Sized: true, Brief: "test", Kind: KindTest, Part: "tester", Exits: []Exit{{"approve", "approved"}, {"changes", "implement"}, {"absent", "approved"}}},
 		},
 	}
 }
@@ -241,4 +248,52 @@ func (s Score) Outline(strict bool) ScoreOutline {
 		out.Steps = append(out.Steps, StepOutline{Name: "strict", Kind: "strict"})
 	}
 	return out
+}
+
+func (s Score) Index(name string) int {
+	for i, step := range s.Steps {
+		if step.Name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+func (s Score) Step(name string) (ScoreStep, bool) {
+	if i := s.Index(name); i >= 0 {
+		return s.Steps[i], true
+	}
+	return ScoreStep{}, false
+}
+
+func (s Score) LoopHead() int {
+	head := len(s.Steps)
+	for i, step := range s.Steps {
+		for _, exit := range step.Exits {
+			if target := s.Index(exit.To); target >= 0 && target <= i && target < head {
+				head = target
+			}
+		}
+	}
+	if head == len(s.Steps) {
+		for i, step := range s.Steps {
+			if !step.Background && (step.Kind != KindProduce || step.Writes != "reply") {
+				return i
+			}
+		}
+	}
+	return head
+}
+
+func (s Score) PolicyKey(name string) string {
+	if step, ok := s.Step(name); ok {
+		return firstSet(step.Tier, name)
+	}
+	if name == "lessons" {
+		return s.LessonsBy
+	}
+	if strings.HasPrefix(name, "classify-") {
+		return "classify"
+	}
+	return name
 }

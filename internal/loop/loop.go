@@ -66,12 +66,13 @@ func (s Chair) String() string {
 }
 
 type Chairs struct {
-	Tester      *Chair  `json:"tester,omitempty"`
-	Planner     Chair   `json:"planner"`
-	Implementer Chair   `json:"implementer"`
-	Reviewers   []Chair `json:"reviewers"`
-	Gate        Chair   `json:"gate"`
-	Classifier  Chair   `json:"classifier"`
+	Parts       map[string][]Chair `json:"parts,omitempty"`
+	Tester      *Chair             `json:"tester,omitempty"`
+	Planner     Chair              `json:"planner"`
+	Implementer Chair              `json:"implementer"`
+	Reviewers   []Chair            `json:"reviewers"`
+	Gate        Chair              `json:"gate"`
+	Classifier  Chair              `json:"classifier"`
 }
 
 type Step struct {
@@ -205,6 +206,7 @@ type Record struct {
 
 const (
 	Approved            = "approved"
+	ChangesRequested    = "changes_requested"
 	Untested            = "untested"
 	RoundsExhausted     = "rounds_exhausted"
 	BudgetExhausted     = "budget_exhausted"
@@ -262,6 +264,8 @@ type ActiveStep struct {
 }
 
 type Engine struct {
+	Score           Score
+	score           Score
 	Now             func() time.Time
 	snapshotDir     string
 	snapshotObjects string
@@ -299,6 +303,10 @@ func RunDirRel(runID string) string {
 }
 
 func (e *Engine) Run(ctx context.Context) (res Result, err error) {
+	e.score = e.Score
+	if len(e.score.Steps) == 0 {
+		e.score = DefaultScore()
+	}
 	defer e.cleanupSnapshot()
 	e.restores, e.verifyRetried, e.knownFailures = nil, nil, nil
 	defer func() {
@@ -339,7 +347,7 @@ func (e *Engine) Run(ctx context.Context) (res Result, err error) {
 	if cause := SignalOf(ctx); cause != nil {
 		e.record(Record{RunID: e.Config.RunID, Step: "interrupted", Error: cause.Error()})
 	}
-	if e.Config.Lessons {
+	if e.Config.Lessons && e.playingScore().LessonsBy != "" {
 		proposed, report := e.proposeLessons(ctx, res)
 		res.Proposed, res.Lessons = proposed, &report
 	}
@@ -347,7 +355,6 @@ func (e *Engine) Run(ctx context.Context) (res Result, err error) {
 }
 
 func (e *Engine) play(ctx context.Context) (Result, error) {
-	score := DefaultScore()
 	cfg := e.Config
 	res := Result{RunID: cfg.RunID, Worktree: cfg.Worktree, RunDir: filepath.Join(cfg.Worktree, RunDirRel(cfg.RunID))}
 	if err := PrepareRunDir(cfg.Worktree, cfg.RunID); err != nil {
@@ -375,174 +382,7 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 		}
 	}
 
-	plan := e.rel("plan.md")
-	askSize := e.sizing().Mode != SizingOff && e.sizing().Decider == DeciderPlanner
-	if _, err := e.step(ctx, Step{Name: "plan", Chair: cfg.Chairs.Planner, Prompt: planPrompt(cfg.Task, plan, askSize, e.lessonsFor("plan", cfg.Chairs.Planner)), ReplyPath: plan}); err != nil {
-		return e.fail(res, err), nil
-	}
-	e.decideSize(ctx, plan)
-
-	var testPlanDone chan error
-	if cfg.Chairs.Tester != nil {
-		testCtx, cancel := context.WithCancel(ctx)
-		testPlanDone = make(chan error, 1)
-		go func() {
-			path := e.rel("test-plan.md")
-			_, err := e.step(testCtx, Step{Name: "test-plan", Chair: *cfg.Chairs.Tester,
-				Prompt: testPlanPrompt(cfg.Task, plan, path, cfg.ScratchDir, e.testerTimeout(), os.Getpid(), e.lessonsFor("test-plan", *cfg.Chairs.Tester), cfg.CAOURL, cfg.StateDir), ReplyPath: path})
-			testPlanDone <- err
-		}()
-		defer func() {
-			cancel()
-			if testPlanDone != nil {
-				<-testPlanDone
-			}
-		}()
-	}
-	joinTestPlan := func() error {
-		if testPlanDone == nil {
-			return nil
-		}
-		err := <-testPlanDone
-		testPlanDone = nil
-		return err
-	}
-
-	implementer := ""
-	var implementerChair Chair
-	misses := 0
-	defer func() {
-		if score.Resumes("implement") && implementer != "" {
-			_ = e.Stepper.Release(context.WithoutCancel(ctx), implementer)
-		}
-	}()
-
-	var feedback []string
-	var feedbackGate, feedbackTest string
-	for round := 1; round <= cfg.MaxRounds; round++ {
-		if err := e.lowDisk(); err != nil {
-			return e.fail(res, err), nil
-		}
-		res.Rounds = round
-		summary := e.relf("implement-%d.md", round)
-		if chair, _ := e.resolve("implement", cfg.Chairs.Implementer); score.Resumes("implement") && implementer != "" && chair != implementerChair {
-			_ = e.Stepper.Release(context.WithoutCancel(ctx), implementer)
-			implementer = ""
-		}
-		implementerChair, _ = e.resolve("implement", cfg.Chairs.Implementer)
-		out, err := e.step(ctx, Step{
-			Name: "implement", Round: round, Chair: cfg.Chairs.Implementer,
-			Prompt:    implementPrompt(cfg.Task, plan, summary, cfg.CheckCommand, cfg.VerifyCommand, feedback, feedbackGate, feedbackTest, e.lessonsFor("implement", cfg.Chairs.Implementer)),
-			ReplyPath: summary, KeepTerminal: score.Resumes("implement"), ReuseTerminal: implementer,
-		})
-		if score.Resumes("implement") && out.TerminalID != "" {
-			implementer = out.TerminalID
-		}
-		if err != nil {
-			return e.fail(res, err), nil
-		}
-		if err := e.git("add", "--intent-to-add", "--all"); err != nil {
-			return e.fail(res, err), nil
-		}
-
-		verifyPath := e.relf("verify-%d.txt", round)
-		verify, err := e.runVerify(ctx, round, verifyPath)
-		if err != nil {
-			return e.fail(res, err), nil
-		}
-
-		reviews, err := e.reviewRound(ctx, round, plan, summary, verify, verifyPath)
-		if err != nil {
-			return e.fail(res, err), nil
-		}
-		var files, handed, failed, verdicts []string
-		for _, review := range reviews {
-			if required, ok := e.readReview(round, review.Path); ok {
-				files = append(files, review.Path)
-				handed = append(handed, required)
-			}
-			if review.Err != nil {
-				failed = append(failed, fmt.Sprintf("%s (%s)", review.Name, review.Chair))
-			}
-			verdicts = append(verdicts, review.Verdict)
-		}
-		feedback = append(handed, verifyPath)
-		feedbackGate, feedbackTest = "", ""
-		if !gateRuns(cfg.GateWhen, verify.ExitCode == 0, verdicts) {
-			misses++
-			e.escalate(round, misses)
-			continue
-		}
-
-		gate := e.relf("gate-%d.md", round)
-		if errs, err := e.readOnlySteps(ctx, []Step{{
-			Name: "gate", Round: round, Chair: cfg.Chairs.Gate,
-			Prompt:    gatePrompt(cfg.Task, plan, summary, files, failed, cfg.VerifyCommand, verify, verifyPath, gate, e.lessonsFor("gate", cfg.Chairs.Gate)),
-			ReplyPath: gate,
-		}}); err != nil {
-			return e.fail(res, err), nil
-		} else if errs[0] != nil {
-			return e.fail(res, errs[0]), nil
-		}
-		gateVerdict, err := e.verdict(ctx, round, "gate", gate, "")
-		if err != nil {
-			return e.fail(res, err), nil
-		}
-		e.gateRound = round
-		if gateVerdict == "APPROVE" {
-			if cfg.Chairs.Tester == nil {
-				res.Outcome = Approved
-				return res, nil
-			}
-			if err := joinTestPlan(); err != nil {
-				return e.fail(res, err), nil
-			}
-			testPath := e.relf("test-%d.md", round)
-			verdict, err := e.testRound(ctx, round, plan, summary, verify, verifyPath, testPath, e.measurements)
-			if err != nil {
-				var interrupted *testInterruptedError
-				if errors.As(err, &interrupted) {
-					res.Outcome = Untested
-					res.Reason = "change approved by the gate but the tester did not finish: " + interrupted.Signal.Error() + "; the gate's approval stands unverified"
-					if info, err := os.Stat(filepath.Join(cfg.Worktree, interrupted.Path)); err == nil && info.Mode().IsRegular() {
-						res.Reason += "; partial report: " + interrupted.Path
-					}
-					e.progress("  %s", res.Reason)
-					e.record(Record{RunID: cfg.RunID, Round: round, Step: "unverified", Detail: res.Reason})
-					return res, nil
-				}
-				var timeout *testTimeoutError
-				if errors.As(err, &timeout) {
-					res.Outcome = Untested
-					res.Reason = fmt.Sprintf("change approved by the gate but testing did not finish: test step timed out: %s", timeout.Err)
-					if info, err := os.Stat(filepath.Join(cfg.Worktree, timeout.Path)); err == nil && info.Mode().IsRegular() {
-						res.Reason += "; partial report: " + timeout.Path
-					}
-					return res, nil
-				}
-				return e.fail(res, err), nil
-			}
-			e.measured = len(e.measurements)
-			if verdict == "APPROVE" {
-				res.Outcome = Approved
-				return res, nil
-			}
-			feedback = append([]string{testPath}, feedback...)
-			feedbackTest = testPath
-			misses++
-			e.escalate(round, misses)
-			continue
-		}
-		feedback = append([]string{gate}, feedback...)
-		feedbackGate = gate
-		misses++
-		e.escalate(round, misses)
-	}
-	if err := joinTestPlan(); err != nil {
-		return e.fail(res, err), nil
-	}
-	res.Outcome = RoundsExhausted
-	return res, nil
+	return e.walkScore(ctx, res)
 }
 
 type testInterruptedError struct {
@@ -561,38 +401,34 @@ type testTimeoutError struct {
 func (e *testTimeoutError) Error() string { return e.Err.Error() }
 func (e *testTimeoutError) Unwrap() error { return e.Err }
 
-func (e *Engine) testerTimeout() time.Duration {
-	if chair := e.Config.Chairs.Tester; chair != nil && chair.Timeout != 0 {
+func (e *Engine) chairTimeout(chair Chair) time.Duration {
+	if chair.Timeout != 0 {
 		return chair.Timeout
 	}
 	return e.Config.StepTimeout
 }
 
-func (e *Engine) testRound(ctx context.Context, round int, plan, summary string, verify VerifyResult, verifyPath, path string, measurements []string) (verdict string, err error) {
+func (e *Engine) testRound(ctx context.Context, step Step) (verdict string, err error) {
 	defer func() {
-		e.reportLeftRunning(round)
+		e.reportLeftRunning(step.Round)
 		if err == nil && verdict == "APPROVE" {
 			e.clearScratch()
 		}
 	}()
-	errs, err := e.readOnlySteps(ctx, []Step{{
-		Name: "test", Round: round, Chair: *e.Config.Chairs.Tester,
-		Prompt:    testPrompt(e.Config.Task, plan, e.rel("test-plan.md"), summary, e.Config.VerifyCommand, verify, verifyPath, e.Config.ScratchDir, path, e.testerTimeout(), os.Getpid(), e.lessonsFor("test", *e.Config.Chairs.Tester), e.Config.CAOURL, e.Config.StateDir, measurements),
-		ReplyPath: path,
-	}})
+	errs, err := e.readOnlySteps(ctx, []Step{step})
 	if err != nil {
 		return "", err
 	}
 	if errs[0] != nil {
 		if errors.Is(errs[0], context.Canceled) && SignalOf(ctx) != nil {
-			return "", &testInterruptedError{Path: path, Signal: SignalOf(ctx)}
+			return "", &testInterruptedError{Path: step.ReplyPath, Signal: SignalOf(ctx)}
 		}
 		if errors.Is(errs[0], context.DeadlineExceeded) && ctx.Err() == nil {
-			return "", &testTimeoutError{Path: path, Err: errs[0]}
+			return "", &testTimeoutError{Path: step.ReplyPath, Err: errs[0]}
 		}
 		return "", errs[0]
 	}
-	return e.verdict(ctx, round, "test", path, "")
+	return e.verdict(ctx, step.Round, step.Name, step.ReplyPath, "")
 }
 
 func lastVerdictLine(text string) string {
@@ -626,28 +462,34 @@ func (e *Engine) sizing() SizingConfig {
 	return e.Config.Policy.Sizing
 }
 
-func stepKey(name string) string {
-	if name == "lessons" {
-		return "gate"
+func stepKey(name string) string { return DefaultScore().PolicyKey(name) }
+
+func (e *Engine) playingScore() Score {
+	if len(e.score.Steps) != 0 {
+		return e.score
 	}
-	if name == "test-plan" {
-		return "test"
+	if len(e.Score.Steps) != 0 {
+		return e.Score
 	}
-	if strings.HasPrefix(name, "classify-") {
-		return "classify"
-	}
-	return name
+	return DefaultScore()
 }
 
-func (e *Engine) resolve(key string, chair Chair) (Chair, Assignment) {
+func (e *Engine) resolve(name string, chair Chair) (Chair, Assignment) {
+	score := e.playingScore()
 	want, bump := "", 0
-	switch key {
-	case "implement":
-		want, bump = e.size, e.bump
-	case "review", "gate", "test":
-		want = e.size
+	step, ok := score.Step(name)
+	if !ok && name == "lessons" {
+		step, ok = score.Step(score.PolicyKey(name))
 	}
-	return e.Config.Policy.Chair(key, chair, want, bump)
+	if ok {
+		if step.Sized {
+			want = e.size
+		}
+		if step.Escalate {
+			bump = e.bump
+		}
+	}
+	return e.Config.Policy.Chair(score.PolicyKey(name), chair, want, bump)
 }
 
 func (e *Engine) decideSize(ctx context.Context, planPath string) {
@@ -699,27 +541,40 @@ func (e *Engine) escalate(round, misses int) {
 	if after == 0 || misses/after <= e.bump {
 		return
 	}
-	_, before := e.resolve("implement", e.Config.Chairs.Implementer)
-	e.bump = misses / after
-	chair, now := e.resolve("implement", e.Config.Chairs.Implementer)
-	if now.Tier == before.Tier {
-		return
+	score := e.playingScore()
+	for _, step := range score.Steps {
+		if !step.Escalate {
+			continue
+		}
+		chairs := e.Config.Chairs.Of(step.Part)
+		if len(chairs) == 0 {
+			continue
+		}
+		_, before := e.resolve(step.Name, chairs[0])
+		bump := e.bump
+		e.bump = misses / after
+		chair, now := e.resolve(step.Name, chairs[0])
+		e.bump = bump
+		if now.Tier == before.Tier {
+			continue
+		}
+		detail := fmt.Sprintf("%d rounds without approval: %s %s → %s", misses, step.Part, before.Tier, now.Tier)
+		e.record(Record{RunID: e.Config.RunID, Round: round, Step: "escalate", Part: step.Part, Chair: &chair, Tier: now.Tier, Effort: now.Effort, TierSource: now.Source, Detail: detail})
+		e.progress("  escalate: %s", detail)
 	}
-	detail := fmt.Sprintf("%d rounds without approval: implementer %s → %s", misses, before.Tier, now.Tier)
-	e.record(Record{RunID: e.Config.RunID, Round: round, Step: "escalate", Part: DefaultScore().StepPart("implement"), Chair: &chair, Tier: now.Tier, Effort: now.Effort, TierSource: now.Source, Detail: detail})
-	e.progress("  escalate: %s", detail)
+	e.bump = misses / after
 }
 
 func (e *Engine) step(ctx context.Context, s Step) (StepResult, error) {
 	if s.Assignment == (Assignment{}) {
-		s.Chair, s.Assignment = e.resolve(stepKey(s.Name), s.Chair)
+		s.Chair, s.Assignment = e.resolve(s.Name, s.Chair)
 	}
 	s.Dir = e.Config.Worktree
 	labelName := firstSet(s.ChairName, s.Name)
 	if strings.HasPrefix(s.Name, "classify-") {
 		labelName = s.Name
 	}
-	s.Label = TerminalLabel(e.Config.RunID, labelName)
+	s.Label = "km " + e.Config.RunID + " · " + firstSet(e.playingScore().StepPart(labelName), labelName)
 	if s.Timeout == 0 {
 		s.Timeout = s.Chair.Timeout
 	}
@@ -776,7 +631,7 @@ var errNoReply = errors.New("no reply file")
 
 func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 	chair := s.Chair
-	rec := Record{Part: DefaultScore().StepPart(s.Name), Retry: s.Retry, RunID: e.Config.RunID, Round: s.Round, Step: s.Name, ChairName: s.ChairName, Chair: &chair, Reply: s.ReplyPath,
+	rec := Record{Part: e.playingScore().StepPart(s.Name), Retry: s.Retry, RunID: e.Config.RunID, Round: s.Round, Step: s.Name, ChairName: s.ChairName, Chair: &chair, Reply: s.ReplyPath,
 		Tier: s.Assignment.Tier, Effort: s.Assignment.Effort, TierSource: s.Assignment.Source}
 	retryNote := ""
 	if s.Retry > 0 {
@@ -795,7 +650,7 @@ func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 			return StepResult{}, err
 		}
 	}
-	finish := e.beginStep(s.Round, ActiveStep{Part: DefaultScore().StepPart(s.Name), Step: s.Name, ChairName: s.ChairName, Chair: s.Chair.Address, Terminal: s.ReuseTerminal, label: s.Label})
+	finish := e.beginStep(s.Round, ActiveStep{Part: e.playingScore().StepPart(s.Name), Step: s.Name, ChairName: s.ChairName, Chair: s.Chair.Address, Terminal: s.ReuseTerminal, label: s.Label})
 	defer finish()
 	start := time.Now()
 	finishWatch := e.watchStep(s)
@@ -956,27 +811,27 @@ type review struct {
 	Err     error
 }
 
-func (e *Engine) reviewRound(ctx context.Context, round int, plan, summary string, verify VerifyResult, verifyPath string) ([]review, error) {
-	chairs := e.Config.Chairs.Reviewers
+func (e *Engine) reviewRound(ctx context.Context, spec ScoreStep, round int, hand handoff) ([]review, error) {
+	chairs := e.Config.Chairs.Of(spec.Part)
 	if len(chairs) == 0 {
 		return nil, errors.New("no reviewers configured")
 	}
 	reviews := make([]review, len(chairs))
 	steps := make([]Step, len(chairs))
 	for i, chair := range chairs {
-		name, chairName := ReviewerName(i, len(chairs)), ""
-		path := e.relf("review-%d.md", round)
+		name, chairName := reviewChairName(spec.Part, i, len(chairs)), ""
+		path := e.stepReply(spec.Name, round)
 		if len(chairs) > 1 {
 			chairName = name
-			path = e.rel(fmt.Sprintf("review-%d-%d.md", round, i+1))
+			path = strings.TrimSuffix(path, ".md") + fmt.Sprintf("-%d.md", i+1)
 		}
 		reviews[i] = review{Name: name, Chair: chair, Path: path}
-		steps[i] = Step{Name: "review", Round: round, Chair: chair, ChairName: chairName, KeepTerminal: DefaultScore().Resumes("review"),
-			Prompt: reviewPrompt(e.Config.Task, plan, summary, e.Config.VerifyCommand, verify, verifyPath, path, e.lessonsFor("review", chair)), ReplyPath: path}
+		steps[i] = Step{Name: spec.Name, Round: round, Chair: chair, ChairName: chairName,
+			Prompt: e.brief(spec, hand, path, chair), ReplyPath: path}
 	}
 	classifyErrs := make([]error, len(chairs))
 	errs, err := e.readOnlyStepsThen(ctx, steps, func(i int) {
-		reviews[i].Verdict, classifyErrs[i] = e.verdict(ctx, round, "review", reviews[i].Path, steps[i].ChairName)
+		reviews[i].Verdict, classifyErrs[i] = e.verdict(ctx, round, spec.Name, reviews[i].Path, steps[i].ChairName)
 	})
 	if err != nil {
 		return nil, err
@@ -988,7 +843,7 @@ func (e *Engine) reviewRound(ctx context.Context, round int, plan, summary strin
 		}
 		reviews[i].Err, reviews[i].Verdict = err, VerdictFailed
 		failures = append(failures, fmt.Errorf("%s: %w", reviews[i].Name, err))
-		e.record(Record{RunID: e.Config.RunID, Round: round, Step: "verdict-review", ChairName: steps[i].ChairName,
+		e.record(Record{RunID: e.Config.RunID, Round: round, Step: "verdict-" + spec.Name, ChairName: steps[i].ChairName,
 			Verdict: VerdictFailed, Reply: reviews[i].Path, Error: cancellationReason(ctx, err)})
 	}
 	if len(failures) == len(chairs) {
@@ -1038,7 +893,7 @@ func (e *Engine) verdict(ctx context.Context, round int, subject, path, chairNam
 		e.record(Record{RunID: e.Config.RunID, Round: round, Step: "verdict-" + subject, ChairName: chairName,
 			Verdict: verdict, Reply: path, VerdictSource: "reply"})
 		noun := subject
-		if subject == "test" {
+		if step, ok := e.playingScore().Step(subject); ok && step.Kind == KindTest {
 			noun = "report"
 		}
 		e.progress("  %s verdict: %s (from the %s's last line)", firstSet(chairName, subject), verdict, noun)
@@ -1050,8 +905,8 @@ func (e *Engine) verdict(ctx context.Context, round int, subject, path, chairNam
 func (e *Engine) classify(ctx context.Context, round int, subject, path, chairName string) (string, error) {
 	verdictPath := strings.TrimSuffix(path, filepath.Ext(path)) + ".verdict"
 	out, err := e.step(ctx, Step{
-		Name: "classify-" + subject, Round: round, Chair: e.Config.Chairs.Classifier, ChairName: chairName,
-		Prompt: classifyPrompt(subject, path, verdictPath, e.lessonsFor("classify-"+subject, e.Config.Chairs.Classifier)), ReplyPath: verdictPath,
+		Name: "classify-" + subject, Round: round, Chair: e.classifierChair(), ChairName: chairName,
+		Prompt: e.classifyBrief(subject, path, verdictPath), ReplyPath: verdictPath,
 	})
 	if err != nil {
 		return "", err
@@ -1218,7 +1073,7 @@ func (e *Engine) notifyPlaying(round int) {
 
 func (e *Engine) record(rec Record) {
 	if rec.Part == "" && rec.BlockedStep != "" {
-		rec.Part = DefaultScore().StepPart(rec.BlockedStep)
+		rec.Part = e.playingScore().StepPart(rec.BlockedStep)
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -1406,4 +1261,25 @@ func tail(s string, lines int) string {
 		return s
 	}
 	return strings.Join(parts[len(parts)-lines:], "\n")
+}
+
+func (c Chairs) Of(part string) []Chair {
+	switch part {
+	case "planner":
+		return []Chair{c.Planner}
+	case "implementer":
+		return []Chair{c.Implementer}
+	case "reviewer":
+		return c.Reviewers
+	case "gate":
+		return []Chair{c.Gate}
+	case "classifier":
+		return []Chair{c.Classifier}
+	case "tester":
+		if c.Tester != nil {
+			return []Chair{*c.Tester}
+		}
+		return nil
+	}
+	return c.Parts[part]
 }
