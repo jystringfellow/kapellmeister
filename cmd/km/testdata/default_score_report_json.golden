@@ -1,0 +1,201 @@
+{
+  "not_searched": [],
+  "not_searched_total": 0,
+  "parts": {
+    "rows": [
+      {
+        "duration_ms": "\u003cduration\u003e",
+        "duration_ms_per_step": "\u003cduration\u003e",
+        "model": "m",
+        "part": "planner",
+        "provider": "p",
+        "runs": 1,
+        "step_errors": 0,
+        "steps": 1,
+        "unmeasured_duration_steps": 0,
+        "usage": {
+          "known": false,
+          "unknown_steps": 1
+        },
+        "work": {
+          "approved_first_round": 1,
+          "approved_later_rounds": 0,
+          "approved_rounds_unknown": 0,
+          "not_approved": 0,
+          "rounds_in_approved_runs": 1,
+          "split_runs": 0,
+          "unfinished": 0,
+          "unreadable_results": 0
+        }
+      },
+      {
+        "duration_ms": "\u003cduration\u003e",
+        "duration_ms_per_step": "\u003cduration\u003e",
+        "model": "m",
+        "part": "implementer",
+        "provider": "p",
+        "runs": 1,
+        "step_errors": 0,
+        "steps": 1,
+        "unmeasured_duration_steps": 0,
+        "usage": {
+          "known": false,
+          "unknown_steps": 1
+        },
+        "work": {
+          "approved_first_round": 1,
+          "approved_later_rounds": 0,
+          "approved_rounds_unknown": 0,
+          "not_approved": 0,
+          "rounds_in_approved_runs": 1,
+          "split_runs": 0,
+          "unfinished": 0,
+          "unreadable_results": 0
+        }
+      },
+      {
+        "duration_ms": "\u003cduration\u003e",
+        "duration_ms_per_step": "\u003cduration\u003e",
+        "model": "m",
+        "part": "reviewer",
+        "provider": "p",
+        "runs": 1,
+        "step_errors": 0,
+        "steps": 2,
+        "unmeasured_duration_steps": 0,
+        "usage": {
+          "known": false,
+          "unknown_steps": 2
+        },
+        "work": {
+          "approve": 2,
+          "approve_gate_ran": 2,
+          "approve_test_ran": 2,
+          "approve_then_gate_not_approved": 0,
+          "approve_then_test_not_approved": 0,
+          "changes": 0,
+          "changes_gate_ran": 0,
+          "changes_then_gate_approved": 0,
+          "failed": 0,
+          "unclear": 0
+        }
+      },
+      {
+        "duration_ms": "\u003cduration\u003e",
+        "duration_ms_per_step": "\u003cduration\u003e",
+        "model": "m",
+        "part": "gate",
+        "provider": "p",
+        "runs": 1,
+        "step_errors": 0,
+        "steps": 1,
+        "unmeasured_duration_steps": 0,
+        "usage": {
+          "known": false,
+          "unknown_steps": 1
+        },
+        "work": {
+          "approve": 1,
+          "approve_test_ran": 1,
+          "approve_then_test_not_approved": 0,
+          "changes": 0,
+          "unclear": 0
+        }
+      },
+      {
+        "duration_ms": "\u003cduration\u003e",
+        "duration_ms_per_step": "\u003cduration\u003e",
+        "model": "m",
+        "part": "tester",
+        "provider": "p",
+        "runs": 1,
+        "step_errors": 0,
+        "steps": 2,
+        "unmeasured_duration_steps": 0,
+        "usage": {
+          "known": false,
+          "unknown_steps": 2
+        },
+        "work": {
+          "all_approved_rounds_tested": 1,
+          "approve": 1,
+          "changes": 0,
+          "not_approved_after_all_approved": 0,
+          "unclear": 0
+        }
+      },
+      {
+        "duration_ms": "\u003cduration\u003e",
+        "duration_ms_per_step": "\u003cduration\u003e",
+        "model": "m",
+        "part": "classifier",
+        "provider": "p",
+        "runs": 1,
+        "step_errors": 0,
+        "steps": 4,
+        "unmeasured_duration_steps": 0,
+        "usage": {
+          "known": false,
+          "unknown_steps": 4
+        }
+      }
+    ],
+    "runs_without_steps": 0,
+    "unattributed_steps": 0,
+    "unattributed_verdicts": 0
+  },
+  "runs": [
+    {
+      "duration_ms": "\u003cduration\u003e",
+      "ensemble": "thorough",
+      "outcome": "approved",
+      "path": "\u003crun\u003e",
+      "rounds": 1,
+      "run_id": "recorded",
+      "started": "\u003cstarted\u003e",
+      "usage": {
+        "known": false
+      }
+    }
+  ],
+  "totals": {
+    "ensemble_usage": {
+      "thorough": {
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "input_tokens": 0,
+        "known_runs": 0,
+        "output_tokens": 0,
+        "unknown_runs": 1
+      }
+    },
+    "ensembles": {
+      "thorough": 1
+    },
+    "outcomes": {
+      "approved": 1
+    },
+    "repositories": {
+      "unknown": 1
+    },
+    "repository_usage": {
+      "unknown": {
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "input_tokens": 0,
+        "known_runs": 0,
+        "output_tokens": 0,
+        "unknown_runs": 1
+      }
+    },
+    "runs": 1,
+    "usage": {
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "input_tokens": 0,
+      "known_runs": 0,
+      "output_tokens": 0,
+      "unknown_runs": 1
+    }
+  }
+}
