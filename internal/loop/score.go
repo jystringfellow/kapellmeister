@@ -40,10 +40,12 @@ type ScoreStep struct {
 }
 
 type Part struct {
-	Name     string
-	Optional bool
-	Memory   Memory
-	Prompt   map[string]string
+	ResumeTokens int64
+	ResumeSteps  int
+	Name         string
+	Optional     bool
+	Memory       Memory
+	Prompt       map[string]string
 }
 
 type Score struct {

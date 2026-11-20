@@ -9,8 +9,10 @@ import (
 )
 
 type scorePartFile struct {
-	Memory   *Memory `toml:"memory"`
-	Optional bool    `toml:"optional"`
+	ResumeTokens *int64  `toml:"resume_tokens"`
+	ResumeSteps  *int    `toml:"resume_steps"`
+	Memory       *Memory `toml:"memory"`
+	Optional     bool    `toml:"optional"`
 }
 type scoreStepFile struct {
 	Name        string            `toml:"name"`
@@ -58,7 +60,7 @@ func decodeScoreWithPartText(text, path, name string, ownPartText bool) (Score, 
 	if parts, ok := raw["parts"].(map[string]any); ok {
 		for _, name := range sortedKeys(parts) {
 			if p, ok := parts[name].(map[string]any); ok {
-				if err := scoreKeys(path, "part "+name, p, "memory", "optional"); err != nil {
+				if err := scoreKeys(path, "part "+name, p, "memory", "optional", "resume_tokens", "resume_steps"); err != nil {
 					return Score{}, err
 				}
 			}
@@ -252,10 +254,27 @@ func decodeScoreWithPartText(text, path, name string, ownPartText bool) (Score, 
 				return Score{}, scoreError(path, "part "+name, "optional requires test or background steps")
 			}
 		}
-		if memory == MemoryResume && name != "implementer" {
-			return Score{}, scoreError(path, "part "+name, "memory resume is supported only for implementer")
+		part := Part{Name: name, Memory: memory, Optional: p.Optional}
+		for _, limit := range []struct {
+			name  string
+			value int64
+			set   bool
+		}{
+			{"resume_tokens", valueOrZero(p.ResumeTokens), p.ResumeTokens != nil},
+			{"resume_steps", int64(valueOrZero(p.ResumeSteps)), p.ResumeSteps != nil},
+		} {
+			if !limit.set {
+				continue
+			}
+			if limit.value < 1 {
+				return Score{}, scoreError(path, "part "+name, "%s must be at least 1", limit.name)
+			}
+			if memory != MemoryResume {
+				return Score{}, scoreError(path, "part "+name, "%s requires memory = resume", limit.name)
+			}
 		}
-		score.Parts = append(score.Parts, Part{Name: name, Memory: memory, Optional: p.Optional})
+		part.ResumeTokens, part.ResumeSteps = valueOrZero(p.ResumeTokens), valueOrZero(p.ResumeSteps)
+		score.Parts = append(score.Parts, part)
 	}
 	classifier, _ := DefaultScore().Part("classifier")
 	classifier.Optional = !verdict
@@ -300,4 +319,11 @@ func decodeScoreWithPartText(text, path, name string, ownPartText bool) (Score, 
 		}
 	}
 	return score, nil
+}
+
+func valueOrZero[T ~int | ~int64](value *T) T {
+	if value != nil {
+		return *value
+	}
+	return 0
 }

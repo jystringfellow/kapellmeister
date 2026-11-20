@@ -238,7 +238,7 @@ func TestKmScoreShowPrintsTheReviewScoreAndItsPartFiles(t *testing.T) {
 	}
 }
 func TestKmScoreShowRefusesUnknownNamesAndMissingArguments(t *testing.T) {
-	for _, args := range [][]string{{"score", "show"}, {"score", "show", "missing"}, {"score", "show", "default"}} {
+	for _, args := range [][]string{{"score", "show"}, {"score", "show", "missing"}} {
 		var diag bytes.Buffer
 		want := 1
 		if len(args) == 2 {

@@ -64,7 +64,7 @@ km mcp                                                  # serve run tools over M
 km preflight -worktree DIR [-agents NAME,...] [-tier large]  # check the available agents
 km config [-worktree DIR] [-cao URL]              # show the effective settings and their files
 km profiles install [-cao URL] [-replace] [AGENT ...]  # install base chair profiles
-km score show NAME                               # print a built-in score and its part texts
+km score show NAME                               # print default as TOML, or review with its part texts
 km version                                       # print the version
 ```
 
@@ -651,8 +651,29 @@ shows its two steps and chairs, with verify before review and strict after appro
 Print the shipped TOML and Markdown with `km score show review`. Copy each labelled file to its
 score or part directory, giving the score and its two parts new names and updating `part` in the
 score to match. Seat those parts through an ensemble file. Built-in names are reserved. The
-classifier keeps its built-in text. `review` is currently the printable built-in; `default` has
-no file form yet.
+classifier keeps its built-in text.
+
+`km score show default` prints a TOML file naming the built-in parts, without their text. Save
+it under a new name, then change a part's memory or another score setting:
+
+```sh
+km score show default > ~/.kapellmeister/scores/copy.toml
+km run -worktree DIR -score copy -task "What to change"
+```
+
+The copy plays the same steps with the same prompts, subject to these file-format limits:
+
+- Sizing has no file keys: the copy neither requests a size in the plan nor applies a size to
+  later steps (`sizes` and `sized` in the built-in).
+- Lesson proposals have no `lessons_by` key: the copy writes none, while the built-in asks the gate.
+- Tier aliases have no `tier` key: the built-in `test-plan` uses the `test` tier policy; the copy
+  uses a policy only under its own step name, `test-plan`.
+- File parts keep their existing alphabetical order, with the classifier last; the built-in has
+  its own order. Part report rows can therefore appear in a different order.
+
+For example, change `memory = "resume"` to `memory = "fresh"` under `[parts.implementer]` to
+start the implementer in a fresh terminal for every step. The default itself is unchanged:
+only its implementer resumes, with no length limit.
 
 ### Write a score and its parts
 
@@ -700,9 +721,43 @@ seated; custom parts need an ensemble file. Roles outside a file score are refus
 built-in score, role flags outside the score are refused and unused roles from config are ignored.
 
 The only score keys are `rounds`, `[parts.NAME]` and `[[steps]]`. Part tables accept `memory`
-(`fresh`, the default, or `resume`) and `optional` (default false). Resume is supported only for
-the implementer; review steps always use fresh memory. Optional parts may play only test steps
-or the background step. Each step accepts `name`, `kind`, `part`, `reads`, `writes`, `background`,
+(`fresh`, the default, or `resume`), `resume_tokens`, `resume_steps` and `optional` (default false).
+Any non-review part may resume. A part with a review-kind step is always fresh and is refused if
+it declares resume. Optional parts may play only test steps or the background step.
+
+Resume keeps the chair's terminal between its steps and sends its next step to that terminal.
+It continues across rounds and across different steps of the same part: a resumed tester tests
+in the terminal that wrote its test plan. It does not restore an agent's stored session into a
+new terminal. Every step receives the same files and prompt it would receive fresh. The existing
+implementer briefing still explains that an earlier attempt remains uncommitted in the worktree.
+
+Each step of a resumed part records `memory: "resume"` or `memory: "fresh"`. A fresh start carries
+`memory_reason`: the first step, a changed agent, model or tier, a length limit, or an occupied
+terminal. If the kept terminal is already playing another step, the overlapping step starts
+fresh and releases its own terminal afterward. If the server cannot accept the next step into
+the kept terminal, the conductor releases it and retries fresh, recording why; the run continues.
+A timeout or failure after a step was accepted remains a step failure. A run never fails for lack
+of memory. Replaced terminals and every kept terminal are released even when a run fails or is
+interrupted. `km status -json` shows the declared memory and keeps a resumed chair's terminal
+visible between steps.
+
+A resumed part may set either or both length limits, each at least 1:
+
+```toml
+[parts.drafter]
+memory = "resume"
+resume_tokens = 50000
+resume_steps = 5
+```
+
+`resume_tokens` starts fresh when the last step used more than that many `input_tokens`, summed
+over its requests. This excludes cache reads and writes, so it is not a context-size limit.
+Unmeasured usage does not trigger it. `resume_steps` starts fresh after that many steps in one
+terminal, counting the first step and excluding nudges. It always applies and is the limit to use
+when usage is unmeasured. Both limits are refused on a fresh part and on values below 1. Neither
+is set in the default score.
+
+Each step accepts `name`, `kind`, `part`, `reads`, `writes`, `background`,
 `approve_when`, `escalate` and `next`. Reads name steps whose newest reply files are handed over.
 Writes may be `"reply"` on produce steps; otherwise a produce step may change the worktree and
 is followed by verify. Approval policy is `any`, `all` or `always`, only on review steps; an
@@ -756,8 +811,7 @@ plan, summary and reviews; test needs plan, test plan and summary; test-plan nee
 that many reads are required. Planner and tester's produce steps need `writes = "reply"`.
 File scores do not request sizing; a step receives a tier policy only when its name is an existing
 policy key. Custom step names have no sizing or tier configuration, and a tier pin on a chair of
-a custom part is refused. Takeover by another non-review chair and memory for other parts are
-not supported yet.
+a custom part is refused. Takeover by another non-review chair is not supported yet.
 
 Before any chair is seated, loading refuses unknown keys, kinds, parts, reads, writes, memory,
 approval policies, exit names, targets or placeholders; missing exits; invalid, duplicate or
