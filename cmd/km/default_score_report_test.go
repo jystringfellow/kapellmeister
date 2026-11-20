@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,6 +58,14 @@ func TestReportPrintsThisTableForARunOfTheDefaultScore(t *testing.T) {
 	}
 	out = regexp.MustCompile(`\d{4}-\d\d-\d\d \d\d:\d\d:\d\d`).ReplaceAllString(out, "YYYY-MM-DD HH:MM:SS")
 	out = regexp.MustCompile(`(approved  1       )\d+s`).ReplaceAllString(out, "${1}Ns")
+	spaces := regexp.MustCompile(` {2,}`)
+	out = regexp.MustCompile(`(?m)^(PART +PROVIDER .*|\S+ +p +m +\d+ +\d+ +\d+ +\S+ +\S+ +unknown +unknown)$`).ReplaceAllStringFunc(out, func(row string) string {
+		cells := spaces.Split(row, -1)
+		if cells[0] != "PART" {
+			cells[6], cells[7] = "TIME", "TIME/STEP"
+		}
+		return strings.Join(cells, "  ")
+	})
 	reportGolden(t, "default_score_report.golden", out)
 }
 
