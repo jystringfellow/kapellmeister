@@ -1137,10 +1137,16 @@ func (e *Engine) readReply(rel string) (string, error) {
 		return "", err
 	}
 	if strings.TrimSpace(string(data)) == "" {
-		return "", fmt.Errorf("empty reply file at %s", rel)
+		return "", emptyReplyError{rel}
 	}
 	return string(data), nil
 }
+
+type emptyReplyError struct{ path string }
+
+func (e emptyReplyError) Error() string { return "empty reply file at " + e.path }
+
+func (emptyReplyError) Is(target error) bool { return target == errNoReply }
 
 func (e *Engine) treeState() (string, error) {
 	status, err := e.gitOutput("status", "--porcelain=v1", "--untracked-files=all")

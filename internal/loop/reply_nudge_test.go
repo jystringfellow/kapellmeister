@@ -172,3 +172,47 @@ func TestReplyNudgeSettingsUseTheDefaultAndMergeBeforeValidation(t *testing.T) {
 		})
 	}
 }
+
+func emptyReplyStep(t *testing.T, plan, nudge func(f *fakeStepper, s Step)) (int, error, time.Duration) {
+	t.Helper()
+	e, f, _ := newEngine(t, passing)
+	e.Config.ReplyGrace, e.Config.ReplyNudge = time.Minute, 30*time.Second
+	nudges := 0
+	var err error
+	var took time.Duration
+	synctest.Test(t, func(t *testing.T) {
+		start := time.Now()
+		f.actions["plan"] = func(s Step) { plan(f, s) }
+		f.actions["plan-nudge"] = func(s Step) {
+			nudges++
+			nudge(f, s)
+		}
+		_, err = e.step(context.Background(), Step{Name: "plan", Chair: e.Config.Chairs.Planner, ReplyPath: "reply.md"})
+		took = time.Since(start)
+	})
+	return nudges, err, took
+}
+
+func TestAReplyFileThatExistsButIsStillEmptyIsWaitedForAndReadOnceItHasContent(t *testing.T) {
+	nudges, err, took := emptyReplyStep(t, func(f *fakeStepper, s Step) {
+		f.write(s.ReplyPath, "")
+		go func() { time.Sleep(12 * time.Second); f.write(s.ReplyPath, "done") }()
+	}, func(*fakeStepper, Step) {})
+	if err != nil || nudges != 0 || took >= 30*time.Second {
+		t.Fatalf("nudges = %d, took %s, error = %v", nudges, took, err)
+	}
+}
+
+func TestAChairWhoseTurnEndedLeavingAnEmptyReplyFileIsNudgedLikeOneThatWroteNone(t *testing.T) {
+	nudges, err, took := emptyReplyStep(t, func(f *fakeStepper, s Step) { f.write(s.ReplyPath, " \n") }, func(f *fakeStepper, s Step) { f.write(s.ReplyPath, "done") })
+	if err != nil || nudges != 1 || took != 30*time.Second {
+		t.Fatalf("nudges = %d, took %s, error = %v", nudges, took, err)
+	}
+}
+
+func TestAReplyFileStillEmptyAfterTheNudgeAndTheGraceFailsTheStepAndSaysItIsEmpty(t *testing.T) {
+	nudges, err, took := emptyReplyStep(t, func(f *fakeStepper, s Step) { f.write(s.ReplyPath, "") }, func(*fakeStepper, Step) {})
+	if err == nil || !strings.Contains(err.Error(), "empty reply file at reply.md") || nudges != 1 || took != 90*time.Second {
+		t.Fatalf("nudges = %d, took %s, error = %v", nudges, took, err)
+	}
+}
