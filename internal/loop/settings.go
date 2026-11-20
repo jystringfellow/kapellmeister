@@ -82,6 +82,7 @@ type RunConfig struct {
 	Rounds             *int   `toml:"rounds"`
 	VerifyRetries      *int   `toml:"verify_retries"`
 	Timeout            string `toml:"timeout"`
+	ReplyNudge         string `toml:"reply_nudge"`
 	ReplyGrace         string `toml:"reply_grace"`
 	PreflightTimeout   string `toml:"preflight_timeout"`
 	PreflightRetryWait string `toml:"preflight_retry_wait"`
@@ -196,6 +197,8 @@ type Settings struct {
 	Rounds             int                    `json:"rounds"`
 	VerifyRetries      int                    `json:"verify_retries"`
 	Timeout            time.Duration          `json:"timeout"`
+	ReplyNudge         time.Duration          `json:"reply_nudge"`
+	ReplyNudgeSet      bool                   `json:"-"`
 	ReplyGrace         time.Duration          `json:"reply_grace"`
 	PreflightTimeout   time.Duration          `json:"preflight_timeout"`
 	PreflightRetryWait time.Duration          `json:"preflight_retry_wait"`
@@ -263,6 +266,7 @@ func DefaultSettings() Settings {
 		VerifyRetries:      1,
 		Timeout:            60 * time.Minute,
 		ReplyGrace:         15 * time.Minute,
+		ReplyNudge:         30 * time.Second,
 		PreflightTimeout:   4 * time.Minute,
 		PreflightRetryWait: 20 * time.Second,
 		MinFreeMB:          DefaultMinFreeMB,
@@ -370,6 +374,9 @@ func LoadSettings(home, worktree string) (Settings, error) {
 	s.Policy = p
 	if err := p.Validate(); err != nil {
 		return s, fmt.Errorf("%s: %w", strings.Join(append([]string{"config"}, s.Files...), ", "), err)
+	}
+	if err := s.ValidateReplyNudge(); err != nil {
+		return s, err
 	}
 	return s, nil
 }
@@ -591,6 +598,7 @@ func (s *Settings) applyRun(layer loadedConfig) error {
 		{"blocker_poll", r.BlockerPoll, &s.BlockerPoll},
 		{"timeout", r.Timeout, &s.Timeout},
 		{"reply_grace", r.ReplyGrace, &s.ReplyGrace},
+		{"reply_nudge", r.ReplyNudge, &s.ReplyNudge},
 		{"preflight_timeout", r.PreflightTimeout, &s.PreflightTimeout},
 		{"preflight_retry_wait", r.PreflightRetryWait, &s.PreflightRetryWait},
 	} {
@@ -605,6 +613,22 @@ func (s *Settings) applyRun(layer loadedConfig) error {
 			return fmt.Errorf("%s: run.lessons_timeout: must be above 0", layer.name)
 		}
 		*d.into = parsed
+		if d.key == "reply_nudge" {
+			s.ReplyNudgeSet = true
+		}
+	}
+	return nil
+}
+
+func (s *Settings) ValidateReplyNudge() error {
+	if s.ReplyNudge < 0 {
+		return fmt.Errorf("run.reply_nudge: must be 0 or more")
+	}
+	if !s.ReplyNudgeSet {
+		s.ReplyNudge = min(30*time.Second, s.ReplyGrace)
+	}
+	if s.ReplyNudge > s.ReplyGrace {
+		return fmt.Errorf("run.reply_nudge: %s must not exceed run.reply_grace %s", s.ReplyNudge, s.ReplyGrace)
 	}
 	return nil
 }

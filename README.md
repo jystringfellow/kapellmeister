@@ -152,7 +152,7 @@ km init [-worktree DIR] [-dry-run] [-json] [-verify CMD] [-check CMD] [-no-run] 
 km tune verify [-worktree DIR] [-require SUITE]... [-known-failure LABEL]... [-time-bounded] [-detach] [-timeout D] [-budget D] [-verify-timeout D] [-json] [-again] [-guide]  # write and prove verify
 km tune strict [-worktree DIR] [-strict-timeout D] [-budget D] [-timeout D] [-detach] [-json] [-again] [-guide]  # write and prove strict: what verify had to leave out
 km prove [-worktree DIR] [-level verify|strict] [-break PATCH]... [-timeout D] [-json]  # prove verify or strict on clean copies and broken code
-km run -repo ~/Code/app [-base BRANCH] -task-file task.md [-ensemble thorough | -score NAME] [-detach]  # one ensemble
+km run -repo ~/Code/app [-base BRANCH] -task-file task.md [-ensemble thorough | -score NAME] [-reply-nudge D] [-reply-grace D] [-detach]  # one ensemble
 km audition -worktree DIR [-ensemble thorough]   # can this ensemble play? no real work
 km rehearse -worktree DIR -task-file task.md [-ensemble thorough]  # brief and leave standing
 km play SESSION [-max-rounds N] [-verify CMD] [-timeout D] [-cao URL]  # run the score
@@ -238,6 +238,25 @@ The reviewer role can have several chairs. Use `-reviewer copilot,claude@large` 
 whole configured reviewer list for one run. Each reviewer runs concurrently in its own CAO
 terminal and resolves its tier separately: pinned reviewers keep their tier, while unpinned
 reviewers follow sizing. Other required parts have one chair; the optional tester has at most one.
+
+Before preflight, the run banner lists the playing score's tier policies and bounds in score
+order, with shared policies listed once and `classify` last when a classifier is seated. It says
+`sizing` only for a score with a sizing step and names the steps that escalate when escalation is
+enabled. The default score keeps its usual two lines.
+
+`-reply-nudge D` overrides `[run] reply_nudge` (default `30s`). The wait starts only after a chair's
+turn has ended and its step has returned without the reply file. `0s` nudges at once. When the wait
+has elapsed, the conductor checks the chair's terminal in the terminal listing: while it is
+processing, the conductor waits and checks again each poll, up to `reply_grace`. With no watcher,
+a failed listing or an absent terminal, it nudges after `reply_nudge`. A reply arriving during the
+wait prevents the nudge. A chair still inside its turn is never nudged.
+
+`-reply-grace D` overrides `[run] reply_grace` (default `15m`), the longest wait for a reply file
+after a step or its nudge returns. An explicit `reply_nudge` must not exceed `reply_grace`; an
+unset nudge is capped at a shorter grace. There is one nudge per step, in the same terminal. It
+asks the chair to finish any work still owed and write the reply file. Its progress line and step
+record (`nudged_after_ms`) say how long the conductor waited. If the nudge also returns without
+the file, the step fails after its reply grace.
 
 ### Detached runs
 
@@ -361,7 +380,7 @@ The run tool deliberately leaves out these `km run` flags:
 | `-task-file` | Would read a caller-selected file into agent prompts. Supply task text instead; km uses and removes a private temporary file internally. |
 | `-cao` | Would select an arbitrary server URL. The server environment and configuration select CAO. |
 | `-planner`, `-implementer`, `-reviewer`, `-gate`, `-classifier`, `-tester` | Machine bindings come from configuration and the named ensemble. |
-| `-rounds`, `-verify-retries`, `-preflight-timeout`, `-timeout`, `-reply-grace`, `-sizing` | Cost and time settings come from configuration. |
+| `-rounds`, `-verify-retries`, `-preflight-timeout`, `-timeout`, `-reply-grace`, `-reply-nudge`, `-sizing` | Cost and time settings come from configuration. |
 | `-detach`, `-detached-launch` | Detach is always on; the launch hand-off is internal. |
 
 No tool accepts a command to execute. The server exposes no `play`, `rehearse`, `audition`,
@@ -727,7 +746,9 @@ km run -worktree DIR -score review -task "What this change should do" \
 The reviewers play in parallel and each writes its own reply file, then the gate decides. The
 approval rule is `any`: at least one review must approve before the gate plays. An ensemble's
 `gate_when = "all"` requires every reviewer to approve; `gate_when = "always"` sends both review
-exits to the gate. There are no backward exits or rounds to repeat.
+exits to the gate. There are no backward exits or rounds to repeat. Status shows the
+round without a maximum for any score with no backward exit: `1` instead of `1/3` in the plain
+table, and `max_rounds: 0` in JSON.
 
 Alternatively, select a small ensemble file, for example `ensembles/inspect.toml` in the user
 or repository configuration directory, and run `km run -worktree DIR -ensemble inspect -task "..."`:
@@ -848,7 +869,12 @@ in the terminal that wrote its test plan. It does not restore an agent's stored 
 new terminal. Every step receives the same files and prompt it would receive fresh. The existing
 implementer briefing still explains that an earlier attempt remains uncommitted in the worktree.
 
-Each step of a resumed part records `memory: "resume"` or `memory: "fresh"`. A fresh start carries
+Every step played in a fresh terminal records `memory: "fresh"`. A part declared fresh carries
+`memory_reason: "declared fresh"`; a review step carries `memory_reason: "review parts are always fresh"`.
+Steps the conductor plays itself, such as verify and strict, record no memory. A service step
+played fresh by a part declared resume records fresh without a declared-fresh reason.
+
+Each step of a resumed part records `memory: "resume"` or `memory: "fresh"`. Its fresh start carries
 `memory_reason`: the first step, a changed agent, model or tier, a length limit, or an occupied
 terminal. If the kept terminal is already playing another step, the overlapping step starts
 fresh and releases its own terminal afterward. If the server cannot accept the next step into
@@ -976,7 +1002,7 @@ available agent in your user config.
 - **`.kapellmeister/config.toml`** in the repository holds the contract everyone working in it shares:
   `[test]`, step tiers and floors, rounds, learned budget and sizing.
 
-The repository's values win for `[run]` rounds, retries, `lessons`, `lessons_timeout` and `learned_budget`, `[steps]` and `[sizing]`; yours win
+The repository's values win for `[run]` `reply_grace`, `reply_nudge`, rounds, retries, `lessons`, `lessons_timeout` and `learned_budget`, `[steps]` and `[sizing]`; yours win
 for `[tiers]`, because only you know what your accounts can run. `[cao]`, `[chairs]`, `[agents]`,
 `[ensembles]`, `[report]`, `[run] worktree_dir`, `[run] trust_folder` and `[run] repository_scores` are machine-only
 (see [Trusting the folder](#trusting-the-folder)); `[test]` and `[run] base` are repository-only.
@@ -1066,7 +1092,8 @@ dirs = ["~/kept-sandboxes"]
 
 [run]
 timeout = "60m"                     # each agent step
-reply_grace = "15m"
+reply_grace = "15m"                # longest reply wait after a step or nudge returns
+reply_nudge = "30s"                # wait after a turn ends without its reply file; "0s" nudges at once
 preflight_timeout = "4m"
 min_free_mb = 1024                  # free disk a run needs, in MiB; 0 turns the check off
 preflight_retry_wait = "20s"        # wait before retrying a check that failed fast; "0s" retries at once
@@ -1095,6 +1122,12 @@ escalate = false
 [tiers.copilot_cli]
 large = { model = "claude-sonnet-5.5" }
 ```
+
+`[run] reply_nudge` and `reply_grace` may be set in either configuration file; the repository's
+value wins. An explicit nudge duration must not exceed the grace. The nudge wait extends only
+while the terminal listing reports the chair as processing, up to the grace; an unset nudge
+is capped at the grace when it is shorter than `30s`. The run flags `-reply-nudge` and
+`-reply-grace` override these settings.
 
 Select a named ensemble for a run with `km run -ensemble thorough` alongside the usual task and
 repository flags. Its chairs overlay `[chairs]`, then defaults derived from your available agents

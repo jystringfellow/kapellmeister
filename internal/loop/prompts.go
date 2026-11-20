@@ -143,7 +143,7 @@ func classifyPartPrompt(part Part, kind StepKind, subject, path, out, lessons st
 }
 
 func nudgePrompt(path string) string {
-	return fmt.Sprintf("You have not written %s yet. Write it now exactly as the previous instructions asked, then reply with one short sentence.\n", path)
+	return fmt.Sprintf("You ended your turn without writing %s. If you have not yet done what the previous instructions asked, do that now, then write %s and reply with one short sentence.\n", path, path)
 }
 
 func preflightPrompt(path string) string {

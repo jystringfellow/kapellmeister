@@ -380,7 +380,7 @@ func conductTune(ctx context.Context, c tuneConduct, stdout, stderr io.Writer) (
 	}()
 	sum, err := runEnsemble(ctx, ensembleRun{
 		Command: c.command, RunID: runID, StateDir: runDir, Meter: loop.NewLogMeter(), Tune: hooks, TuneSummary: summary, TuneCheckout: root,
-		Config:  loop.Config{RunID: runID, Task: task, Worktree: wt, Chairs: chairs, MaxRounds: s.Rounds, Budget: c.budget, BudgetStarted: c.started, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, Policy: &s.Policy, CAOURL: s.CAOURL, StateDir: loop.StateDir(), ScratchDir: scratch, MinFreeMB: s.MinFreeMB, BlockerPoll: s.BlockerPoll},
+		Config:  loop.Config{RunID: runID, Task: task, Worktree: wt, Chairs: chairs, MaxRounds: s.Rounds, Budget: c.budget, BudgetStarted: c.started, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, ReplyNudge: s.ReplyNudge, Policy: &s.Policy, CAOURL: s.CAOURL, StateDir: loop.StateDir(), ScratchDir: scratch, MinFreeMB: s.MinFreeMB, BlockerPoll: s.BlockerPoll},
 		Watcher: loop.CAOWatcher{Client: client, Session: podium.SessionName}, Stepper: loop.CAOStepper{Client: client, Session: podium.SessionName}, Progress: progress,
 	})
 	if err != nil {

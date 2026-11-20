@@ -110,6 +110,7 @@ func TestALessonsStepThatTimesOutProposesNoneAndNeverBlocksTheRunPastItsLimit(t 
 			e.Stepper = cleanup
 			e.Config.LessonsTimeout = 15 * time.Millisecond
 			e.Config.ReplyGrace = time.Hour
+			e.Config.ReplyNudge = time.Hour
 			f.contextActions = map[string]func(context.Context, Step) error{"lessons": func(ctx context.Context, s Step) error {
 				if missingReply {
 					return nil

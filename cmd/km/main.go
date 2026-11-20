@@ -143,7 +143,7 @@ type common struct {
 	fs                                                 *flag.FlagSet
 	repo, base, task, taskFile, verify, caoURL, sizing *string
 	rounds, retries                                    *int
-	timeout, preflight, replyGrace                     *time.Duration
+	timeout, preflight, replyGrace, replyNudge         *time.Duration
 }
 
 func commonFlags(fs *flag.FlagSet) common {
@@ -158,7 +158,8 @@ func commonFlags(fs *flag.FlagSet) common {
 		retries:    fs.Int("verify-retries", 0, "times to rerun a failing verify before counting it as failed (default [run] verify_retries, else 1)"),
 		preflight:  fs.Duration("preflight-timeout", 0, "how long each chair gets to answer the readiness check; 0 skips it (default [run] preflight_timeout, else 4m)"),
 		timeout:    fs.Duration("timeout", 0, "timeout for each agent step (default [run] timeout, else 60m)"),
-		replyGrace: fs.Duration("reply-grace", 0, "how long to wait for a reply file after a chair goes idle, before nudging it (default [run] reply_grace, else 15m)"),
+		replyNudge: fs.Duration("reply-nudge", 0, "how long after a chair ends its turn without its reply file before nudging it (default [run] reply_nudge, else 30s)"),
+		replyGrace: fs.Duration("reply-grace", 0, "longest wait for a reply file after a step or nudge returns (default [run] reply_grace, else 15m)"),
 		caoURL:     fs.String("cao", "", "cao-server URL (default $CAO_API_BASE_URL, then [cao] url, else http://127.0.0.1:9889)"),
 		sizing:     fs.String("sizing", "", "off, shadow or on: whether the size decider's answer picks the implement, review, gate and test tiers (default [sizing] mode, else shadow)"),
 	}
@@ -197,6 +198,12 @@ func (c common) settings(worktree string) (loop.Settings, error) {
 	}
 	if set["reply-grace"] {
 		s.ReplyGrace = *c.replyGrace
+	}
+	if set["reply-nudge"] {
+		s.ReplyNudge, s.ReplyNudgeSet = *c.replyNudge, true
+	}
+	if err := s.ValidateReplyNudge(); err != nil {
+		return s, err
 	}
 	if set["cao"] {
 		s.CAOURL = *c.caoURL
@@ -520,7 +527,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 	}
 	client := newClient(s.CAOURL, s, output)
 	if *detachedLaunch != "" {
-		state := initialRunState(runID, "run", wt, *ensemble, s.Rounds, time.Now())
+		state := initialRunState(runID, "run", wt, *ensemble, s.Rounds, time.Now(), s.Score.Score)
 		if err := os.MkdirAll(runDir, 0755); err != nil {
 			return err
 		}
@@ -543,8 +550,10 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		if *ensemble != "" {
 			fmt.Fprintf(output, "ensemble %s\n", *ensemble)
 		}
-		printPolicy(output, &policy)
-		printPinnedEscalation(output, &policy, chairs.Implementer)
+		printPolicy(output, &policy, s.Score.Score, len(stepChairs(chairs, s.Score.Score)["classify"]) > 0)
+		if s.Score.Score.Source == "" {
+			printPinnedEscalation(output, &policy, chairs.Implementer)
+		}
 	}
 	if err := ensureProfilesTo(ctx, client, &policy, stepChairs(chairs, s.Score.Score), output); err != nil {
 		return err
@@ -566,7 +575,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		_, err = fmt.Fprintf(stdout, "run       %s\npid       %d\nworktree  %s\noutput    %s\n", h.RunID, h.PID, h.Worktree, h.Output)
 		return err
 	}
-	preflighting := initialRunState(runID, "run", wt, *ensemble, s.Rounds, time.Now())
+	preflighting := initialRunState(runID, "run", wt, *ensemble, s.Rounds, time.Now(), s.Score.Score)
 	describeRun(&preflighting, ensembleRun{Score: s.Score.Score, Members: members, Agents: s.Defined, CAOURL: client.BaseURL, Ensemble: *ensemble, Config: loop.Config{Worktree: wt, Chairs: seated, CAOURL: s.CAOURL, VerifyCommand: verifyCmd, StrictCommand: tested.Strict}})
 	preflighting.Playing = []loop.ActiveStep{{Step: "preflight", Started: preflighting.Started}}
 	if err := os.MkdirAll(runDir, 0755); err == nil {
@@ -603,7 +612,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		Config: loop.Config{
 			ScratchDir: scratch, MinFreeMB: s.MinFreeMB, CAOURL: s.CAOURL, StateDir: loop.StateDir(), RunID: runID, Task: text, Worktree: wt, Chairs: seated, GateWhen: s.GateWhen,
 			Lessons: s.Lessons, LessonsTimeout: s.LessonsTimeout,
-			LearnedBudget: s.LearnedBudget, BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, VerifyCommand: verifyCmd, KnownFailures: tested.VerifyKnownFailures, CheckCommand: checkCmd, StrictCommand: tested.Strict, StrictReadyCommand: tested.StrictReady, StrictTimeout: tested.StrictLimit(s.Timeout), Policy: &policy,
+			LearnedBudget: s.LearnedBudget, BlockerPoll: s.BlockerPoll, MaxRounds: s.Rounds, StepTimeout: s.Timeout, ReplyGrace: s.ReplyGrace, ReplyNudge: s.ReplyNudge, VerifyCommand: verifyCmd, KnownFailures: tested.VerifyKnownFailures, CheckCommand: checkCmd, StrictCommand: tested.Strict, StrictReadyCommand: tested.StrictReady, StrictTimeout: tested.StrictLimit(s.Timeout), Policy: &policy,
 		},
 		Watcher: loop.CAOWatcher{Client: client, Session: podium.SessionName},
 		Stepper: loop.CAOStepper{Client: client, Session: podium.SessionName}, Verify: loop.Retrying(loop.CommandVerifierWithin(verifyCmd, tested.Timeout(s.Timeout)), s.VerifyRetries), Progress: stdout,
@@ -692,8 +701,8 @@ func configCommand(args []string) error {
 		return err
 	}
 	printSources(os.Stdout, s)
-	fmt.Printf("cao    %s\nstate  %s\nrun    rounds %d, verify retries %d, step timeout %s, reply grace %s, preflight %s, preflight retry wait %s, blocker poll %s, lessons %s, learned budget %d bytes, trust folder %s\n",
-		s.CAOURL, loop.StateDir(), s.Rounds, s.VerifyRetries, s.Timeout, s.ReplyGrace, s.PreflightTimeout, s.PreflightRetryWait, s.BlockerPoll, lessonsSetting(s), s.LearnedBudget, map[bool]string{true: "on", false: "off"}[s.TrustFolder])
+	fmt.Printf("cao    %s\nstate  %s\nrun    rounds %d, verify retries %d, step timeout %s, reply grace %s, reply nudge %s, preflight %s, preflight retry wait %s, blocker poll %s, lessons %s, learned budget %d bytes, trust folder %s\n",
+		s.CAOURL, loop.StateDir(), s.Rounds, s.VerifyRetries, s.Timeout, s.ReplyGrace, s.ReplyNudge, s.PreflightTimeout, s.PreflightRetryWait, s.BlockerPoll, lessonsSetting(s), s.LearnedBudget, map[bool]string{true: "on", false: "off"}[s.TrustFolder])
 	fmt.Printf("repository scores %s\n", map[bool]string{true: "on", false: "off"}[s.RepositoryScores])
 	if len(s.ReportDirs) > 0 {
 		fmt.Printf("report dirs %s (in addition to %s)\n", plain(strings.Join(s.ReportDirs, ", ")), plain(defaultRunsDir()))
@@ -721,7 +730,7 @@ func configCommand(args []string) error {
 	}
 	printEnsembles(os.Stdout, s)
 	printEnsembleFiles(os.Stdout, loop.Home(), *worktree)
-	printPolicy(os.Stdout, &s.Policy)
+	printPolicy(os.Stdout, &s.Policy, loop.DefaultScore(), true)
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "\nPROVIDER\tTIER\tMODEL\tEFFORT")
 	for _, provider := range sortedKeys(s.Policy.Tiers) {
@@ -786,9 +795,22 @@ func printSources(w io.Writer, s loop.Settings) {
 	fmt.Fprintf(w, "config %s\n", strings.Join(s.Files, ", then "))
 }
 
-func printPolicy(w io.Writer, p *loop.Policy) {
+func printPolicy(w io.Writer, p *loop.Policy, score loop.Score, classifierSeated bool) {
+	keys := loop.StepKeys
+	if score.Source != "" {
+		keys = nil
+		for _, step := range score.Steps {
+			key := score.PolicyKey(step.Name)
+			if !slices.Contains(keys, key) {
+				keys = append(keys, key)
+			}
+		}
+		if classifierSeated && !slices.Contains(keys, "classify") {
+			keys = append(keys, "classify")
+		}
+	}
 	var steps []string
-	for _, key := range loop.StepKeys {
+	for _, key := range keys {
 		s := p.Steps[key]
 		if s.Min == s.Max {
 			steps = append(steps, key+" "+s.Tier)
@@ -796,11 +818,34 @@ func printPolicy(w io.Writer, p *loop.Policy) {
 			steps = append(steps, fmt.Sprintf("%s %s (%s–%s)", key, s.Tier, s.Min, s.Max))
 		}
 	}
-	sizing := fmt.Sprintf("sizing %s by %s", p.Sizing.Mode, p.Sizing.Decider)
-	if after := p.EscalateAfter(); after > 0 {
-		sizing += fmt.Sprintf("; the implementer moves up a tier after every %d rounds without approval", after)
+	fmt.Fprintf(w, "tiers  %s\n", strings.Join(steps, ", "))
+	if score.Source == "" {
+		sizing := fmt.Sprintf("sizing %s by %s", p.Sizing.Mode, p.Sizing.Decider)
+		if after := p.EscalateAfter(); after > 0 {
+			sizing += fmt.Sprintf("; the implementer moves up a tier after every %d rounds without approval", after)
+		}
+		fmt.Fprintf(w, "       %s\n", sizing)
+		return
 	}
-	fmt.Fprintf(w, "tiers  %s\n       %s\n", strings.Join(steps, ", "), sizing)
+	var notes, escalating []string
+	for _, step := range score.Steps {
+		if step.Sizes && len(notes) == 0 {
+			notes = append(notes, fmt.Sprintf("sizing %s by %s", p.Sizing.Mode, p.Sizing.Decider))
+		}
+		if step.Escalate {
+			escalating = append(escalating, step.Name)
+		}
+	}
+	if after := p.EscalateAfter(); after > 0 && len(escalating) > 0 {
+		verb := "move"
+		if len(escalating) == 1 {
+			verb = "moves"
+		}
+		notes = append(notes, fmt.Sprintf("%s %s up a tier after every %d rounds without approval", strings.Join(escalating, ", "), verb, after))
+	}
+	if len(notes) > 0 {
+		fmt.Fprintf(w, "       %s\n", strings.Join(notes, "; "))
+	}
 }
 
 func printPinnedEscalation(w io.Writer, p *loop.Policy, implementer loop.Chair) {
@@ -1215,7 +1260,7 @@ func runEnsemble(ctx context.Context, p ensembleRun) (sum ensembleSummary, runEr
 	}
 	fmt.Fprintf(p.Progress, "  state     %s\n", p.StateDir)
 	eng := &loop.Engine{Reseater: p.Reseater, Score: p.Score, Meter: p.Meter, Watcher: p.Watcher, Config: p.Config, Stepper: p.Stepper, Verify: p.Verify, Records: telemetry, Progress: p.Progress}
-	state := initialRunState(p.RunID, firstNonEmpty(p.Command, "run"), p.Config.Worktree, p.Ensemble, p.Config.MaxRounds, start)
+	state := initialRunState(p.RunID, firstNonEmpty(p.Command, "run"), p.Config.Worktree, p.Ensemble, p.Config.MaxRounds, start, p.Score)
 	if p.Tune == nil {
 		describeRun(&state, p)
 	}

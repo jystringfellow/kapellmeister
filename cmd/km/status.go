@@ -160,7 +160,10 @@ func printStatus(stdout io.Writer, runs []statusRun, now time.Time) error {
 			started = run.Started.UTC().Format("2006-01-02 15:04:05")
 		}
 		if run.Round > 0 {
-			round = fmt.Sprintf("%d/%d", run.Round, run.MaxRounds)
+			round = fmt.Sprint(run.Round)
+			if run.MaxRounds > 0 {
+				round = fmt.Sprintf("%d/%d", run.Round, run.MaxRounds)
+			}
 		}
 		if run.Updated != nil {
 			step = "between steps"

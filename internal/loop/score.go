@@ -324,3 +324,17 @@ func (s Score) PartPolicyKey(part string) string {
 	}
 	return ""
 }
+
+func (s Score) Loops() bool {
+	if len(s.Steps) == 0 {
+		return true
+	}
+	for i, step := range s.Steps {
+		for _, exit := range step.Exits {
+			if target := s.Index(exit.To); target >= 0 && target <= i {
+				return true
+			}
+		}
+	}
+	return false
+}
