@@ -99,7 +99,14 @@ func playCommand(args []string) error {
 	}
 	printSources(os.Stdout, s)
 	fmt.Printf("ensemble %s (session %s); sizing and tier escalation off\n", standing.Ensemble, standing.Session)
+	var members []ensemble.Member
+	terminals := map[string]string{}
+	for _, chair := range standing.Chairs {
+		members = append(members, ensemble.Member{Section: chair.Section, Name: chair.Name, Part: chair.Part, Chair: chair.Binding})
+		terminals[chair.Address] = chair.TerminalID
+	}
 	sum, err := runEnsemble(ctx, ensembleRun{
+		Members: members, Agents: s.Defined, CAOURL: client.BaseURL, Terminals: terminals,
 		Command: "play", RunID: runID, StateDir: runDir, Ensemble: standing.Ensemble, Meter: loop.NewLogMeter(),
 		Config: loop.Config{
 			ScratchDir: scratch, MinFreeMB: s.MinFreeMB, CAOURL: s.CAOURL, StateDir: loop.StateDir(), RunID: runID, Task: text, Worktree: standing.Worktree, Chairs: chairs, GateWhen: firstNonEmpty(standing.GateWhen, s.GateWhen),

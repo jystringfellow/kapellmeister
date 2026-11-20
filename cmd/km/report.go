@@ -46,6 +46,7 @@ type reportRun struct {
 	roughStart    bool
 	hasResult     bool
 	hasStarted    bool
+	records       []statusRecord
 	parts         *reportPartRun
 }
 

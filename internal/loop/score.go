@@ -24,6 +24,7 @@ type Exit struct {
 }
 
 type ScoreStep struct {
+	Writes     string
 	Name       string
 	Kind       StepKind
 	Part       string
@@ -62,8 +63,8 @@ func DefaultScore() Score {
 			{Name: "tester", Optional: true, Memory: MemoryFresh, Prompt: map[string]string{"test-plan": testPlanInstructions, "test": testInstructions}},
 		},
 		Steps: []ScoreStep{
-			{Name: "plan", Kind: KindProduce, Part: "planner", Exits: []Exit{{"done", "implement"}}},
-			{Name: "test-plan", Kind: KindProduce, Part: "tester", Background: true},
+			{Name: "plan", Writes: "reply", Kind: KindProduce, Part: "planner", Exits: []Exit{{"done", "implement"}}},
+			{Name: "test-plan", Writes: "reply", Kind: KindProduce, Part: "tester", Background: true},
 			{Name: "implement", Kind: KindProduce, Part: "implementer", Exits: []Exit{{"done", "review"}}},
 			{Name: "review", Kind: KindReview, Part: "reviewer", Exits: []Exit{{"approve", "gate"}, {"changes", "implement"}}},
 			{Name: "gate", Kind: KindDecide, Part: "gate", Exits: []Exit{{"approve", "test"}, {"changes", "implement"}}},
@@ -209,3 +210,35 @@ CHANGES if it asks for any change,
 UNCLEAR if you cannot tell.
 %sDo not modify any other file. Then reply with that same word.
 `
+
+type ScoreOutline struct {
+	Name   string        `json:"name"`
+	Source string        `json:"source"`
+	Rounds int           `json:"rounds"`
+	Steps  []StepOutline `json:"steps"`
+}
+
+type StepOutline struct {
+	Name string            `json:"name"`
+	Kind string            `json:"kind"`
+	Part string            `json:"part,omitempty"`
+	Next map[string]string `json:"next,omitempty"`
+}
+
+func (s Score) Outline(strict bool) ScoreOutline {
+	out := ScoreOutline{Name: s.Name, Source: "built-in", Rounds: s.Rounds, Steps: []StepOutline{{Name: "verify", Kind: "verify"}}}
+	for _, step := range s.Steps {
+		next := map[string]string{}
+		for _, exit := range step.Exits {
+			next[exit.Name] = exit.To
+		}
+		out.Steps = append(out.Steps, StepOutline{Name: step.Name, Kind: string(step.Kind), Part: step.Part, Next: next})
+		if step.Kind == KindProduce && step.Writes != "reply" {
+			out.Steps = append(out.Steps, StepOutline{Name: "verify", Kind: "verify"})
+		}
+	}
+	if strict {
+		out.Steps = append(out.Steps, StepOutline{Name: "strict", Kind: "strict"})
+	}
+	return out
+}

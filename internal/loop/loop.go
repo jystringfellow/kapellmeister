@@ -162,6 +162,8 @@ type Config struct {
 }
 
 type Record struct {
+	Part          string         `json:"part,omitempty"`
+	Kept          bool           `json:"kept,omitempty"`
 	Retry         int            `json:"retry,omitempty"`
 	Paths         []string       `json:"paths,omitempty"`
 	PathsMore     int            `json:"paths_more,omitempty"`
@@ -249,6 +251,9 @@ type Result struct {
 }
 
 type ActiveStep struct {
+	Part      string    `json:"part,omitempty"`
+	Round     int       `json:"round,omitempty"`
+	Terminal  string    `json:"terminal,omitempty"`
 	Step      string    `json:"step"`
 	ChairName string    `json:"chair_name,omitempty"`
 	Chair     string    `json:"chair"`
@@ -700,7 +705,7 @@ func (e *Engine) escalate(round, misses int) {
 		return
 	}
 	detail := fmt.Sprintf("%d rounds without approval: implementer %s → %s", misses, before.Tier, now.Tier)
-	e.record(Record{RunID: e.Config.RunID, Round: round, Step: "escalate", Chair: &chair, Tier: now.Tier, Effort: now.Effort, TierSource: now.Source, Detail: detail})
+	e.record(Record{RunID: e.Config.RunID, Round: round, Step: "escalate", Part: DefaultScore().StepPart("implement"), Chair: &chair, Tier: now.Tier, Effort: now.Effort, TierSource: now.Source, Detail: detail})
 	e.progress("  escalate: %s", detail)
 }
 
@@ -770,7 +775,7 @@ var errNoReply = errors.New("no reply file")
 
 func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 	chair := s.Chair
-	rec := Record{Retry: s.Retry, RunID: e.Config.RunID, Round: s.Round, Step: s.Name, ChairName: s.ChairName, Chair: &chair, Reply: s.ReplyPath,
+	rec := Record{Part: DefaultScore().StepPart(s.Name), Retry: s.Retry, RunID: e.Config.RunID, Round: s.Round, Step: s.Name, ChairName: s.ChairName, Chair: &chair, Reply: s.ReplyPath,
 		Tier: s.Assignment.Tier, Effort: s.Assignment.Effort, TierSource: s.Assignment.Source}
 	retryNote := ""
 	if s.Retry > 0 {
@@ -789,7 +794,7 @@ func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 			return StepResult{}, err
 		}
 	}
-	finish := e.beginStep(s.Round, ActiveStep{Step: s.Name, ChairName: s.ChairName, Chair: s.Chair.Address})
+	finish := e.beginStep(s.Round, ActiveStep{Part: DefaultScore().StepPart(s.Name), Step: s.Name, ChairName: s.ChairName, Chair: s.Chair.Address, Terminal: s.ReuseTerminal})
 	defer finish()
 	start := time.Now()
 	finishWatch := e.watchStep(s)
@@ -816,6 +821,7 @@ func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 			}
 		}
 	}
+	rec.Kept = s.KeepTerminal && err == nil && out.TerminalID != ""
 	e.record(rec)
 	e.progress("  %s in %s%s%s", strings.TrimSpace(s.ChairName+" "+statusOf(out, err)), secs(rec.DurationMS), waitNote(rec.ReplyWaitMS), errSuffix(cancellationCause(ctx, err)))
 	return out, err
@@ -1178,6 +1184,7 @@ func (e *Engine) gitOutput(args ...string) (string, error) {
 
 func (e *Engine) beginStep(round int, step ActiveStep) func() {
 	e.mu.Lock()
+	step.Round = round
 	step.Started = time.Now().UTC()
 	e.active = append(e.active, &step)
 	e.notifyPlaying(round)
@@ -1208,6 +1215,9 @@ func (e *Engine) notifyPlaying(round int) {
 }
 
 func (e *Engine) record(rec Record) {
+	if rec.Part == "" && rec.BlockedStep != "" {
+		rec.Part = DefaultScore().StepPart(rec.BlockedStep)
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if rec.Usage != nil {

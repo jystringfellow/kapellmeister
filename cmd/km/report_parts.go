@@ -88,9 +88,22 @@ type reportPartRecord struct {
 
 func readReportParts(dir *os.File) (*reportPartRun, []string) {
 	run := &reportPartRun{rows: map[reportPartKey]*reportPartRow{}, steps: map[reportVerdictKey]*reportPartKey{}, verdicts: map[reportVerdictKey]string{}}
+	diagnostics := readTelemetry(dir, func(line []byte) bool {
+		var record *reportPartRecord
+		if json.Unmarshal(line, &record) != nil || record == nil || record.Round < 0 {
+			return false
+		}
+		run.addRecord(*record)
+		return true
+	})
+	run.addVerdicts()
+	return run, diagnostics
+}
+
+func readTelemetry(dir *os.File, add func([]byte) bool) []string {
 	path := filepath.Join(dir.Name(), "telemetry.jsonl")
-	diagnose := func(err error) (*reportPartRun, []string) {
-		return run, []string{"km: report: " + plain(path) + ": " + plain(err.Error())}
+	diagnose := func(err error) []string {
+		return []string{"km: report: " + plain(path) + ": " + plain(err.Error())}
 	}
 	var stat unix.Stat_t
 	if err := unix.Fstatat(int(dir.Fd()), "telemetry.jsonl", &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
@@ -136,14 +149,8 @@ func readReportParts(dir *os.File) (*reportPartRun, []string) {
 		if lineBytes > reportFileLimit {
 			skipped++
 		} else if len(bytes.TrimSpace(line)) > 0 {
-			var record *reportPartRecord
-			decodeErr := json.Unmarshal(line, &record)
-			if decodeErr != nil || record == nil || record.Round < 0 {
-				if !errors.Is(err, io.EOF) {
-					skipped++
-				}
-			} else {
-				run.addRecord(*record)
+			if !add(line) && !errors.Is(err, io.EOF) {
+				skipped++
 			}
 		}
 		line = line[:0]
@@ -155,8 +162,7 @@ func readReportParts(dir *os.File) (*reportPartRun, []string) {
 	if skipped > 0 {
 		diagnostics = append(diagnostics, fmt.Sprintf("km: report: %s: %d telemetry lines could not be read and were skipped", plain(path), skipped))
 	}
-	run.addVerdicts()
-	return run, diagnostics
+	return diagnostics
 }
 
 func reportStepPart(step string) string {

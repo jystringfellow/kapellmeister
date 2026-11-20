@@ -29,6 +29,7 @@ const (
 
 type reportScan struct {
 	withParts         bool
+	withStatus        bool
 	maxDepth          int
 	maxEntries        int
 	entries           int
@@ -78,8 +79,9 @@ func printSearchedDirs(w io.Writer, dirs []string) error {
 	return nil
 }
 
-func findRuns(dirs []string, origin recordDirSource, source string, maxDepth, maxEntries int, refuseLinkedRoots, withParts bool) ([]reportRun, *reportScan, error) {
+func findRuns(dirs []string, origin recordDirSource, source string, maxDepth, maxEntries int, refuseLinkedRoots, withParts bool, withStatus ...bool) ([]reportRun, *reportScan, error) {
 	scan := &reportScan{withParts: withParts, maxDepth: maxDepth, maxEntries: maxEntries, visited: map[string]bool{}, skipped: map[string]bool{}, notSearched: []reportNotSearched{}}
+	scan.withStatus = len(withStatus) > 0 && withStatus[0]
 	roots := map[string]string{}
 	attribute := func(dir string, err error) error {
 		if origin == configuredRecordDirs && filepath.Clean(dir) != defaultRunsDir() {
@@ -241,6 +243,11 @@ func (scan *reportScan) directory(dir *os.File, depth int) error {
 			var partMessages []string
 			run.parts, partMessages = readReportParts(dir)
 			messages = append(messages, partMessages...)
+		}
+		if scan.withStatus && telemetry && !result {
+			var statusMessages []string
+			run.records, statusMessages = readStatusRecords(dir)
+			messages = append(messages, statusMessages...)
 		}
 		scan.diagnostics = append(scan.diagnostics, messages...)
 		scan.copies = append(scan.copies, run)
