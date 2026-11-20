@@ -1,0 +1,12 @@
+plan                                planner      .kapellmeister/runs/r1/plan.md; fresh terminal
+test-plan                           tester       .kapellmeister/runs/r1/test-plan.md; fresh terminal
+implement[1]                        implementer  .kapellmeister/runs/r1/implement-1.md; terminal kept for later
+review[1]              reviewer-1   reviewer-a   .kapellmeister/runs/r1/review-1-1.md; fresh terminal
+review[1]              reviewer-2   reviewer-b   .kapellmeister/runs/r1/review-1-2.md; fresh terminal
+gate[1]                             gate         .kapellmeister/runs/r1/gate-1.md; fresh terminal
+classify-gate[1]                    classifier   .kapellmeister/runs/r1/gate-1.verdict; fresh terminal
+implement[2]                        implementer  .kapellmeister/runs/r1/implement-2.md; same terminal as before
+review[2]              reviewer-1   reviewer-a   .kapellmeister/runs/r1/review-2-1.md; fresh terminal
+review[2]              reviewer-2   reviewer-b   .kapellmeister/runs/r1/review-2-2.md; fresh terminal
+gate[2]                             gate         .kapellmeister/runs/r1/gate-2.md; fresh terminal
+test[2]                             tester       .kapellmeister/runs/r1/test-2.md; fresh terminal
