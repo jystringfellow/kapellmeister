@@ -210,6 +210,7 @@ func Init(ctx context.Context, options Options) (result Result, err error) {
 		return result, nil
 	}
 	result.Next = append(result.Next, "km preflight -worktree "+shellQuote(root), "km run -repo "+shellQuote(root)+" -task-file task.md")
+	result.Next = append(result.Next, "km score show review, to copy a built-in score and write your own (README: Your own ensemble and score)")
 	if options.DryRun {
 		result.Verify.Output = "-dry-run"
 		return result, nil

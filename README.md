@@ -1,10 +1,16 @@
 # kapellmeister
 
-kapellmeister runs a plan → implement → review → gate loop over coding agents (including Claude Code, Codex, Copilot
-CLI and Antigravity) through [CLI Agent Orchestrator](https://github.com/awslabs/cli-agent-orchestrator)
-(CAO), with an optional tester that exercises the change live after gate approval. Rounds repeat
-until the gate and any tester approve or the rounds run out. Every run works in a throwaway detached
-worktree and leaves its change uncommitted for you to ship.
+kapellmeister conducts coding agents (including Claude Code, Codex, Copilot CLI and Antigravity)
+through [CLI Agent Orchestrator](https://github.com/awslabs/cli-agent-orchestrator) (CAO). You seat
+an **ensemble** of chairs, each playing a **part**, and km plays a **score** with them: it decides
+which chair plays next, hands each one files to read and a file to write, runs the tests itself,
+and follows the score to an ending. Agents never choose the next step or message each other.
+
+The built-in `default` score is a plan → implement → review → gate loop, with an optional tester
+that exercises the change live after gate approval. Rounds repeat until the gate and any tester
+approve or the rounds run out. Every `km run -repo` works in a throwaway detached worktree and
+leaves its change uncommitted for you to ship. You can also write
+[your own ensemble and score](#your-own-ensemble-and-score).
 
 ## Install
 
@@ -43,6 +49,102 @@ Workspace builds print `dev`, with the VCS revision and dirty marker when availa
 CAO, cao-server and the agent CLIs you use must also be installed; start cao-server before
 installing the base chair profiles below.
 
+## Your own ensemble and score
+
+Four small files make an ensemble of your own that plays a score of your own. This example has one
+chair draft a change and two others check it, with up to two rounds.
+
+`.kapellmeister/scores/draft-and-check.toml`, the score: its steps, who plays each, and where each
+exit leads.
+
+```toml
+rounds = 2
+
+[[steps]]
+name = "draft"
+kind = "produce"
+part = "drafter"
+reads = ["check"]
+next = { done = "check" }
+
+[[steps]]
+name = "check"
+kind = "review"
+part = "checker"
+reads = ["draft"]
+approve_when = "all"
+next = { approve = "approved", changes = "draft" }
+```
+
+`.kapellmeister/parts/drafter.md` and `.kapellmeister/parts/checker.md`, the parts: plain Markdown
+instructions. km fills the placeholders and adds its own block naming the files to read, the file
+to write and, for a step it takes a verdict from, the verdict line.
+
+```markdown
+You write the change the task asks for, in this worktree, and nothing beyond it.
+
+If earlier checks asked for changes, they are in: {inputs}. Address every one.
+
+Keep the change small. Leave it uncommitted. Then write to {reply} what you changed and why.
+```
+
+```markdown
+You check a change another chair made in this worktree. Look at it with `git status` and
+`git diff HEAD`. The drafter's note is in {plan}.
+
+Judge one thing: does the change do what the task asks, and only that? Write your findings to
+{reply}, each with its file and line.
+```
+
+`.kapellmeister/ensembles/duo.toml`, the ensemble: the chairs, the part each plays, the agent in
+each, and the score they play.
+
+```toml
+score = "draft-and-check"
+
+[sections.desk.chairs.drafter]
+part = "drafter"
+agents = ["codex"]
+
+[sections.desk.chairs.first-check]
+part = "checker"
+agents = ["claude"]
+
+[sections.desk.chairs.second-check]
+part = "checker"
+agents = ["agy"]
+
+[sections.desk.chairs.classifier]
+part = "classifier"
+agents = ["claude"]
+```
+
+Commit the four files: a repository's scores and parts are read from the commit, not from the
+worktree, and km prints each with a content hash before the run. Then:
+
+```sh
+km run -worktree . -ensemble duo -task "what to change" -detach
+km status -json     # sections, chairs, the score's steps, what is playing, each chair's terminal
+km wait RUN
+km report -parts    # tokens and time per part and model
+```
+
+- **Start from a built-in.** `km score show review` and `km score show default` print the two
+  built-in scores in this format. `km run -worktree DIR -score review` reviews a change that
+  already exists; see [Review an existing change](#review-an-existing-change).
+- **Every file is checked before a chair is seated.** A step no exit reaches, an exit with no
+  target, a part with no chair, a placeholder with nothing to fill it: each is refused, naming the
+  file and the step.
+- **Tests stay km's.** km runs verify after a step that may change the worktree and hands chairs
+  its short result, under every score.
+- **Models.** An unpinned chair plays on the `medium` [tier](#tiers); pin one with `@large` after
+  its agent, or set `[steps.NAME]` in your config.
+- **Memory.** `memory = "resume"` under `[parts.NAME]` keeps that chair's terminal between its
+  steps; review parts always start fresh.
+
+[Scores and parts as files](#scores-and-parts-as-files) has every key, the placeholders, what is
+checked and the trust rules. [Ensemble files](#ensemble-files) has the chair keys.
+
 ## Commands
 
 ```sh
@@ -80,6 +182,8 @@ With `-verify CMD`, init wraps the supplied command and runs it once. Init and t
 `km prove -break PATCH`, need no CAO or agents.
 Review and commit the setup, then use `km preflight -worktree .` and
 `km run -repo . -task-file task.md`. Preview exact contents with `km init -dry-run`.
+Once verify is set, `km init` also points to `km score show review`: the way to start a
+[score of your own](#your-own-ensemble-and-score).
 
 ## Run
 

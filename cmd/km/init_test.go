@@ -467,3 +467,16 @@ func TestInitCheckFlagNeverEditsAnExistingConfig(t *testing.T) {
 		t.Fatal(out, err)
 	}
 }
+
+func TestInitPointsToWritingAScoreOnceVerifyIsSetAndNotWhileItIsAStub(t *testing.T) {
+	want := "next: km score show review, to copy a built-in score and write your own (README: Your own ensemble and score)"
+	root := initFixture(t, map[string]string{"go.mod": "module fixture\n\ngo 1.21\n", "pass.go": "package fixture\n"})
+	out, err := initCall(t, root, "-dry-run", "-verify", "true")
+	if err != nil || !strings.Contains(out, want) {
+		t.Fatal(out, err)
+	}
+	stub, err := initCall(t, initFixture(t, map[string]string{"notes.txt": "nothing to detect\n"}), "-dry-run")
+	if err != nil || strings.Contains(stub, "km score show") {
+		t.Fatal(stub, err)
+	}
+}
