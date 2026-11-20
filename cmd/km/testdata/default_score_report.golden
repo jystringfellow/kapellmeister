@@ -1,0 +1,40 @@
+STARTED              REPOSITORY  ENSEMBLE  OUTCOME   ROUNDS  TOOK  TOKENS
+YYYY-MM-DD HH:MM:SS  unknown     thorough  approved  1       Ns    unknown
+
+runs: 1
+usage: unknown (1 without usage)
+by outcome
+  approved  1
+by repository
+  unknown  1  unknown (1 without usage)
+by ensemble
+  thorough  1  unknown (1 without usage)
+
+by part and model
+PART         PROVIDER  MODEL  RUNS  STEPS  ERRORS  TIME  TIME/STEP  TOKENS   TOKENS/STEP
+planner      p         m      1     1      0       0s    0s         unknown  unknown
+implementer  p         m      1     1      0       0s    0s         unknown  unknown
+reviewer     p         m      1     2      0       0s    0s         unknown  unknown
+gate         p         m      1     1      0       0s    0s         unknown  unknown
+tester       p         m      1     2      0       0s    0s         unknown  unknown
+classifier   p         m      1     4      0       0s    0s         unknown  unknown
+
+work: planner
+PROVIDER  MODEL  FIRST  LATER  ROUNDS?  NOT APPROVED  UNFINISHED  RESULT?  SPLIT  ROUNDS/APPROVED
+p         m      1      0      0        0             0           0        0      1 over 1 runs
+
+work: implementer
+PROVIDER  MODEL  FIRST  LATER  ROUNDS?  NOT APPROVED  UNFINISHED  RESULT?  SPLIT  ROUNDS/APPROVED
+p         m      1      0      0        0             0           0        0      1 over 1 runs
+
+work: reviewer
+PROVIDER  MODEL  APPROVE  CHANGES  UNCLEAR  FAILED  APPROVE→GATE!  APPROVE→TEST!  CHANGES→GATE+
+p         m      2        0        0        0       0/2            0/2            0/0
+
+work: gate
+PROVIDER  MODEL  APPROVE  CHANGES  UNCLEAR  APPROVE→TEST!
+p         m      1        0        0        0/1
+
+work: tester
+PROVIDER  MODEL  APPROVE  CHANGES  UNCLEAR  ALL+→TEST!
+p         m      1        0        0        0/1

@@ -179,3 +179,27 @@ func TestTheImplementerKeepsItsTerminalAcrossRoundsAndEveryOtherStepReleasesIts(
 		t.Fatalf("the implementer played in more than one terminal: %v", terminals)
 	}
 }
+
+func TestAnImplementerWhoseTierRisesLeavesItsTerminalAndStartsAFreshOne(t *testing.T) {
+	e, f, records := tieredEngine(t, SizingOff)
+	f.verdicts["review"] = []string{"CHANGES", "CHANGES"}
+	res := run(t, e)
+	var out strings.Builder
+	fmt.Fprintf(&out, "outcome %s after %d rounds\n", res.Outcome, res.Rounds)
+	for _, s := range scoreSteps(f) {
+		if s.Name != "implement" {
+			continue
+		}
+		terminal := "starts a fresh terminal"
+		if s.ReuseTerminal != "" {
+			terminal = "plays in terminal " + s.ReuseTerminal
+		}
+		fmt.Fprintf(&out, "%s: model %s, tier %s (%s), %s, kept for later %t\n", label(s.Name, s.Round), s.Chair.Model, s.Assignment.Tier, s.Assignment.Source, terminal, s.KeepTerminal)
+	}
+	fmt.Fprintf(&out, "released, in order: %s\n", strings.Join(f.released, " "))
+	for _, rec := range recordsOf(t, records, "escalate") {
+		fmt.Fprintf(&out, "escalate record: round %d, tier %s, %s\n", rec.Round, rec.Tier, rec.Detail)
+	}
+	fmt.Fprintf(&out, "=== implement[3] prompt\n%s\n", scorePlaces(e, stepNamed(t, f, "implement", 3).Prompt))
+	scoreGolden(t, "default_score_escalation.golden", out.String())
+}
