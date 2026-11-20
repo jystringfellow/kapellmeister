@@ -353,7 +353,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 	worktree := fs.String("worktree", "", "use this existing worktree instead of creating one")
 	roles := chairFlags(fs, loop.AllRoles()...)
 	ensemble := fs.String("ensemble", "", ensembleHelp)
-	fs.String("score", "", "score to play with role flags or chairs from config")
+	fs.String("score", "", "name of a built-in or file score to play (role flags and chairs from config supply its parts)")
 	hideFlags(fs, "detached-launch")
 	if err := fs.Parse(args); err != nil {
 		return err

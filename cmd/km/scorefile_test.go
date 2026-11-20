@@ -87,7 +87,7 @@ func smallRepositoryScore(t *testing.T) (loop.Settings, loop.Chairs, []ensemble.
 	wt := standing.Worktree
 	writeFile(t, loop.UserConfigPath(loop.Home()), builtInAgentConfig)
 	writeFile(t, filepath.Join(wt, ".kapellmeister/scores/small.toml"), repositorySmallScore)
-	writeFile(t, filepath.Join(wt, ".kapellmeister/parts/drafter.md"), "Committed drafter {reply} {inputs}")
+	writeFile(t, filepath.Join(wt, ".kapellmeister/parts/drafter.md"), "Committed drafter {reply}")
 	writeFile(t, filepath.Join(wt, ".kapellmeister/parts/judge.md"), "Committed judge")
 	writeFile(t, filepath.Join(wt, ".kapellmeister/ensembles/small.toml"), smallScoreEnsemble)
 	for _, args := range [][]string{{"add", "-f", ".kapellmeister/scores", ".kapellmeister/parts"}, {"-c", "commit.gpgsign=false", "commit", "-qm", "fixture"}} {

@@ -663,6 +663,9 @@ scores and parts resolve independently. Names use lowercase letters, digits and 
 with a letter or digit. The score names `default` and `review` and the part names `planner`,
 `implementer`, `reviewer`, `gate`, `tester` and `classifier` are reserved: a file with one is refused,
 naming it.
+A score file larger than 64 KiB or a part file larger than 256 KiB is refused in either
+directory, naming the file, its size and the limit. Files exactly at the limit are accepted.
+A user score or part that is a named pipe, including a symlink to one, is refused before opening it.
 A run that names no score does not inspect these directories.
 
 For example, `scores/small.toml` could contain:
@@ -734,8 +737,10 @@ steps the part plays, cannot repeat, and must leave nonempty instructions for ea
 | `{scratch}` | The generated scratch directory |
 
 Only braces matching `\{[a-z][a-z0-9_]*\}` are placeholders; JSON braces and `${HOME}` stay
-literal. Substitution is single-pass; text from a chair is never substituted. The prompt contains,
-in order, the conductor's preamble, task, lessons, part text and a fixed block naming the files to
+literal. `{plan}` and `{inputs}` are refused for each step that reads nothing, including
+when they occur in text shared by several steps. Substitution is single-pass; text from a chair
+is never substituted. The prompt contains, in order, the conductor's preamble, task, lessons,
+part text and a fixed block naming the files to
 read and the reply to write. Review, decide and test steps end that block with
 `Put APPROVE or CHANGES alone on the last line of the reply file.` A part cannot remove or reword
 that block. Test steps also get the scratch-directory constraint. Reply files are named by the
@@ -1986,17 +1991,22 @@ by ensemble
 `km report -parts [DIR...]` appends a view of the same selected runs grouped by part,
 provider and model. It accepts the same `-since`, `-repository`, `-max-depth`, `-max-entries`
 and directory arguments. `-parts -json` adds a top-level `parts` object; existing keys and
-plain `km report` output keep their meaning. Rows follow score order (planner, implementer,
-reviewer, gate, tester, classifier), then provider and model alphabetically. They show recorded
-facts, with counts and denominators; they provide no score or ranking.
+plain `km report` output keep their meaning. Rows list planner, implementer, reviewer, gate,
+tester and classifier first, then other parts alphabetically, then provider and model
+alphabetically. They show recorded facts, with counts and denominators; they provide no score
+or ranking.
 
-A step must name a chair and be `plan`, `implement`, `review`, `gate`, `test-plan`, `test`,
-`classify-review`, `classify-gate`, `classify-test` or `lessons`, optionally followed by `-nudge`.
-Each nudge counts as another step with its own time and usage. `test-plan` and `test` belong to
-tester; `classify-*` to classifier; the lessons proposal step to gate. Escalation, verification,
-start and other metadata do not count as steps. Chairless lessons-loading records and
-lessons tree-change notifications are metadata too. Other recognized steps without a chair
-count as unattributed steps.
+A step must name a chair. Its recorded `part` takes precedence, followed by the step's part in
+the score outline in the run's `current.json`, then the default step-name mapping for older runs.
+The outline also supplies step kinds. Without an outline, a named step with a recorded part and
+chair is accepted; older records without either use the default names: `plan`, `implement`,
+`review`, `gate`, `test-plan`, `test`, `classify-review`, `classify-gate`, `classify-test` and
+`lessons`. Each `-nudge` counts as another step with its own time and usage, using the base step
+for part and kind lookup. In the default mapping, `test-plan` and `test` belong to tester,
+`classify-*` to classifier and the lessons proposal step to gate. Escalation, blocked and
+unblocked events, verification, start and other metadata do not count as steps, even when they
+carry a part. Chairless lessons-loading records and lessons tree-change notifications are
+metadata too. Other recognized steps without a chair count as unattributed steps.
 
 The provider comes from `chair.provider`. The model comes from `chair.model`, falling back to
 the reported top-level `model`; if `model_honored` is false and a reported model exists, that
@@ -2029,11 +2039,18 @@ step contributes one to `unknown_steps`, regardless of a step record’s own cou
 unknown. The per-step time and usage objects are omitted when unknown. `efforts` and `tiers`
 are value-to-step-count maps, present only when that value varies within the row.
 
-The work tables count verdicts only when a `verdict-review`, `verdict-gate` or `verdict-test`
-record matches a `review`, `gate` or `test` step with a chair by subject, positive round and
-`chair_name` (empty for a single reviewer, gate and tester). For duplicate keys the last step
-and last verdict win (an incomplete last verdict removes any earlier verdict); step totals still include all attempts. A verdict without that match
-belongs to no model. Downstream comparisons use verdict records of the same round, even if
+Work tables use the kinds a part played, choosing test, review, decide, then produce-only in
+that order. A whole table is omitted, including JSON `work`, when any column has no meaning for
+the score: produce outcomes need rounds, review comparisons need decide and test steps, decide
+comparisons need a test step, and test comparisons need review and decide steps. A merged row
+keeps its table only when every contributing run has the same applicable table. Runs without
+an outline retain the default part-name tables.
+
+The work tables count verdicts only when a `verdict-STEP` record matches a step of kind `review`,
+`decide` or `test` with a chair by subject, positive round and `chair_name` (empty for a single
+chair). For duplicate keys the last step and last verdict win (an incomplete last verdict removes
+any earlier verdict); step totals still include all attempts. A verdict without that match belongs
+to no model. Downstream comparisons use verdict records of the same round, even if
 their step cannot be attributed. They do not infer a verdict from a run outcome. Older runs
 without verdict records contribute steps and run outcomes but no verdict counts. Counts can
 also be lower than steps because a step failed, a run stopped or records are partial.
@@ -2057,8 +2074,9 @@ carry the gate policy, so these columns make no claim that the round was actuall
 They describe agreement between recorded verdicts, not which model was right. Missing review
 records cannot prove that unrecorded reviewers approved.
 
-Planner and implementer work uses `result.json` and counts **runs**, not verdicts. Only runs
-where that part was played by a single (provider, model) contribute to these outcome columns:
+Produce-only work (planner and implementer in the default score) uses `result.json` and counts
+**runs**, not verdicts. Only runs where that part was played by a single (provider, model)
+contribute to these outcome columns:
 
 | Column | Meaning (JSON work field) |
 | --- | --- |
@@ -2071,7 +2089,7 @@ where that part was played by a single (provider, model) contribute to these out
 | `SPLIT` | Runs where multiple providers or models played this part (`split_runs`), excluded from every other outcome column for each participating row. |
 | `ROUNDS/APPROVED` | Sum of rounds in approved runs with known positive rounds (`rounds_in_approved_runs`), shown as `sum over n runs`, where n is `FIRST + LATER`. Divide to obtain rounds per approved run. |
 
-Classifier has no work table. JSON rows carry these same counts in `work` for the other parts.
+Classifier has no work table. JSON rows carry these same counts in `work` where applicable.
 The `parts` object contains `rows` (an empty array when none), `unattributed_steps`,
 `unattributed_verdicts` and `runs_without_steps`. These last three counts print below the tables
 when nonzero. Unattributed verdicts include unmatched verdict keys and records without a positive
@@ -2148,6 +2166,7 @@ Each chair includes `address`, `name`, `part`, `agent`, `provider`, `model`, `ti
 `done` or `unknown`; a prompt waiting for a person is a separate `needs_input: {count, reason}`.
 `terminal` is empty when no occupant is seated. While a fresh chair plays, its occupant's id
 appears within one blocker poll of the terminal existing, matched by the step's terminal label.
+That poll is 20 seconds unless `[run] blocker_poll` says otherwise.
 Ids returned by earlier steps are excluded from fresh assignments. The watcher leaves it empty
 when several playing steps or remaining listed terminals share that label (for example,
 concurrent classifiers), or when watching is disabled. Existing prompt records can

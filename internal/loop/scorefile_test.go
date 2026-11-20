@@ -44,7 +44,7 @@ func scoreFileSource(t *testing.T) ScoreSource {
 	t.Helper()
 	s := ScoreSource{Home: t.TempDir(), AllowRepository: true}
 	scoreFileWrite(t, s.Home, "scores/small.toml", smallScoreFile)
-	scoreFileWrite(t, s.Home, "parts/drafter.md", "Draft {reply} using {inputs}.")
+	scoreFileWrite(t, s.Home, "parts/drafter.md", "Draft {reply}.")
 	return s
 }
 func scoreFileGit(t *testing.T, dir string, args ...string) {

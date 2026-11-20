@@ -66,11 +66,53 @@ func TestABuiltInPartInAFileScoreGetsTodaysPromptForItsKind(t *testing.T) {
 }
 
 func TestAPartThatPlaysTwoStepsReceivesCommonTextAndOnlyItsOwnSection(t *testing.T) {
-	prompts, err := decodePart("Common\n## step: draft\nDraft {reply}\n## step: inspect\nInspect {inputs}", "part.md", []ScoreStep{{Name: "draft"}, {Name: "inspect"}})
+	prompts, err := decodePart("Common\n## step: draft\nDraft {reply}\n## step: inspect\nInspect {inputs}", "part.md", []ScoreStep{{Name: "draft"}, {Name: "inspect", Reads: []string{"draft"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if prompts["draft"] != "Common\n\nDraft {reply}" || prompts["inspect"] != "Common\n\nInspect {inputs}" {
 		t.Fatalf("prompts = %v", prompts)
+	}
+}
+
+func TestAPartFileUsingAnInputPlaceholderInAStepThatReadsNothingIsRefusedNamingTheFileTheStepAndThePlaceholder(t *testing.T) {
+	for _, placeholder := range []string{"{plan}", "{inputs}"} {
+		t.Run(placeholder, func(t *testing.T) {
+			s := scoreFileSource(t)
+			path := scoreFileWrite(t, s.Home, "parts/drafter.md", "Draft using "+placeholder)
+			_, err := LoadScore("small", s)
+			if err == nil {
+				t.Fatal("input placeholder accepted without reads")
+			}
+			for _, want := range []string{path, "draft", placeholder, "reads nothing"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error %v missing %s", err, want)
+				}
+			}
+		})
+	}
+}
+
+func TestAPartWhoseTextAppliesToSeveralStepsIsRefusedOnlyForTheStepsThatReadNothing(t *testing.T) {
+	steps := []ScoreStep{{Name: "draft", Reads: []string{"earlier"}}, {Name: "check"}}
+	_, err := decodePart("Use {inputs}", "part.md", steps)
+	if err == nil || !strings.Contains(err.Error(), "step check") || !strings.Contains(err.Error(), "{inputs}") {
+		t.Fatalf("error = %v", err)
+	}
+	steps[1].Reads = []string{"draft"}
+	if _, err := decodePart("Use {inputs}", "part.md", steps); err != nil {
+		t.Fatal(err)
+	}
+	prompts, err := decodePart("Common\n## step: draft\nUse {inputs}\n## step: check\nCheck {reply}", "part.md", []ScoreStep{{Name: "draft", Reads: []string{"earlier"}}, {Name: "check"}})
+	if err != nil || !strings.Contains(prompts["check"], "{reply}") {
+		t.Fatalf("prompts=%v error=%v", prompts, err)
+	}
+}
+
+func TestPlaceholdersThatNeedNoInputsAreAcceptedInAStepThatReadsNothing(t *testing.T) {
+	s := scoreFileSource(t)
+	scoreFileWrite(t, s.Home, "parts/drafter.md", "Use {verify} {verification} {check} {scratch} {reply}")
+	if _, err := LoadScore("small", s); err != nil {
+		t.Fatal(err)
 	}
 }
