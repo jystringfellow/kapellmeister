@@ -133,7 +133,7 @@ func playRepositoryScore(t *testing.T, changes bool) (ensembleSummary, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(live) != 1 || live[0].Score == nil || live[0].Score.Name != "small" || live[0].Score.Source != "repository" || len(live[0].Score.Steps) != 5 {
+	if len(live) != 1 || live[0].Score == nil || live[0].Score.Name != "small" || live[0].Score.Source != "repository" || len(live[0].Score.Steps) != 3 {
 		t.Fatalf("status = %+v", live)
 	}
 	var names []string
