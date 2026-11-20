@@ -57,7 +57,10 @@ func writeRunState(dir string, state runState) error {
 	return os.Rename(file.Name(), filepath.Join(dir, "current.json"))
 }
 
-func initialRunState(id, command, worktree, ensemble string, rounds int, start time.Time) runState {
+func initialRunState(id, command, worktree, ensemble string, rounds int, start time.Time, scores ...loop.Score) runState {
+	if len(scores) > 0 && !scores[0].Loops() {
+		rounds = 0
+	}
 	host, _ := os.Hostname()
 	token, _ := processStart(os.Getpid())
 	origin, _ := gitOutput(worktree, "config", "--get", "remote.origin.url")

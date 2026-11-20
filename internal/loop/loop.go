@@ -76,6 +76,8 @@ type Chairs struct {
 }
 
 type Step struct {
+	noNudge       bool
+	NudgedAfter   time.Duration
 	MemoryKey     string
 	Memory        string
 	MemoryReason  string
@@ -96,6 +98,7 @@ type Step struct {
 }
 
 type StepResult struct {
+	replyWait     time.Duration
 	usage         *Usage
 	TerminalID    string
 	Status        string
@@ -161,12 +164,14 @@ type Config struct {
 	VerifyCommand      string
 	KnownFailures      []string
 	CheckCommand       string
+	ReplyNudge         time.Duration
 	ReplyGrace         time.Duration
 	SkipBaseline       bool
 	Policy             *Policy
 }
 
 type Record struct {
+	NudgedAfterMS *int64         `json:"nudged_after_ms,omitempty"`
 	Memory        string         `json:"memory,omitempty"`
 	MemoryReason  string         `json:"memory_reason,omitempty"`
 	Part          string         `json:"part,omitempty"`
@@ -622,6 +627,17 @@ func (e *Engine) step(ctx context.Context, s Step) (StepResult, error) {
 		s.MemoryKey = e.playingScore().StepPart(s.Name)
 	}
 	seat := e.prepareMemory(ctx, &s)
+	if s.Memory == "" {
+		partName := e.playingScore().StepPart(s.Name)
+		if partName != "" {
+			s.Memory = string(MemoryFresh)
+			if spec, ok := e.playingScore().Step(s.Name); ok && spec.Kind == KindReview {
+				s.MemoryReason = "review parts are always fresh"
+			} else if part, ok := e.playingScore().Part(partName); ok && part.Memory != MemoryResume {
+				s.MemoryReason = "declared fresh"
+			}
+		}
+	}
 	out, err := e.attempt(ctx, s)
 	if s.ReuseTerminal != "" && errors.Is(err, ErrReuseRefused) && ctx.Err() == nil && seat != nil {
 		old := s.ReuseTerminal
@@ -637,6 +653,7 @@ func (e *Engine) step(ctx context.Context, s Step) (StepResult, error) {
 		nudge := s
 		nudge.Name, nudge.ReuseTerminal = s.Name+"-nudge", out.TerminalID
 		nudge.Prompt = nudgePrompt(s.ReplyPath)
+		nudge.noNudge, nudge.NudgedAfter = true, out.replyWait
 		var nudged StepResult
 		nudged, err = e.attempt(ctx, nudge)
 		if nudged.TerminalID != "" {
@@ -701,7 +718,16 @@ func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 	if s.Retry > 0 {
 		retryNote = " (retry)"
 	}
-	e.progress("→ %s %s%s%s", strings.TrimSpace(label(s.Name, s.Round)+" "+s.ChairName), chair, tierNote(s.Assignment), retryNote)
+	nudgeNote := ""
+	if s.noNudge {
+		waited := s.NudgedAfter.Milliseconds()
+		rec.NudgedAfterMS = &waited
+		nudgeNote = ", nudged at once"
+		if s.NudgedAfter > 0 {
+			nudgeNote = fmt.Sprintf(", nudged after %s", secs(waited))
+		}
+	}
+	e.progress("→ %s %s%s%s%s", strings.TrimSpace(label(s.Name, s.Round)+" "+s.ChairName), chair, tierNote(s.Assignment), retryNote, nudgeNote)
 	var closeUsage func() Usage
 	if e.Meter != nil {
 		queued := time.Now()
@@ -726,7 +752,8 @@ func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 	if err == nil {
 		var reply string
 		var waited time.Duration
-		reply, waited, err = e.awaitReply(ctx, s.ReplyPath)
+		reply, waited, err = e.awaitReply(ctx, s.ReplyPath, out.TerminalID, !s.noNudge)
+		out.replyWait = waited
 		rec.ReplyChars, rec.ReplyWaitMS = len(reply), waited.Milliseconds()
 	}
 	if closeUsage != nil {
@@ -1054,7 +1081,7 @@ func (e *Engine) runVerify(ctx context.Context, round int, path string) (VerifyR
 
 const replyPollInterval = 5 * time.Second
 
-func (e *Engine) awaitReply(ctx context.Context, rel string) (string, time.Duration, error) {
+func (e *Engine) awaitReply(ctx context.Context, rel, terminal string, mayNudge bool) (string, time.Duration, error) {
 	start := time.Now()
 	for {
 		reply, err := e.readReply(rel)
@@ -1062,7 +1089,34 @@ func (e *Engine) awaitReply(ctx context.Context, rel string) (string, time.Durat
 		if !errors.Is(err, errNoReply) || waited >= e.Config.ReplyGrace {
 			return reply, waited, err
 		}
+		if mayNudge && terminal != "" && waited >= e.Config.ReplyNudge {
+			processing := false
+			if e.Watcher != nil {
+				pollCtx, cancel := context.WithTimeout(ctx, min(15*time.Second, e.Config.ReplyGrace-waited))
+				terminals, listErr := e.Watcher.Terminals(pollCtx)
+				cancel()
+				if listErr == nil {
+					for _, listed := range terminals {
+						if listed.ID == terminal {
+							processing = listed.Status == "processing"
+							break
+						}
+					}
+				}
+			}
+			if ctx.Err() != nil {
+				return "", time.Since(start), ctx.Err()
+			}
+			if !processing {
+				reply, err = e.readReply(rel)
+				return reply, time.Since(start), err
+			}
+		}
+		waited = time.Since(start)
 		wait := min(replyPollInterval, e.Config.ReplyGrace-waited)
+		if mayNudge && terminal != "" && waited < e.Config.ReplyNudge {
+			wait = min(wait, e.Config.ReplyNudge-waited)
+		}
 		select {
 		case <-ctx.Done():
 			return "", waited, ctx.Err()

@@ -315,6 +315,7 @@ func TestMissingReplyIsNudgedOnceInTheSameTerminal(t *testing.T) {
 func TestLateReplyFromBackgroundWorkIsAwaitedBeforeNudging(t *testing.T) {
 	eng, fake, records := newEngine(t, passing)
 	eng.Config.ReplyGrace = 2 * time.Second
+	eng.Config.ReplyNudge = time.Second
 	fake.actions["implement"] = func(s Step) {
 		go func() {
 			time.Sleep(100 * time.Millisecond)
