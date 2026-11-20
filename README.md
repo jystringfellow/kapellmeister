@@ -64,6 +64,7 @@ km mcp                                                  # serve run tools over M
 km preflight -worktree DIR [-agents NAME,...] [-tier large]  # check the available agents
 km config [-worktree DIR] [-cao URL]              # show the effective settings and their files
 km profiles install [-cao URL] [-replace] [AGENT ...]  # install base chair profiles
+km score show NAME                               # print a built-in score and its part texts
 km version                                       # print the version
 ```
 
@@ -595,12 +596,72 @@ built-in `default`, with the same steps, prompts, reply files and outcomes as be
 `km rehearse`, `km audition` and `km play` use the ensemble file's key. Play reads that key again
 when it starts; the standing record does not store the choice.
 
+### Review an existing change
+
+The built-in `review` score reviews the uncommitted change in the worktree you give it. The task
+says what that change is meant to do. Seat at least one reviewer, one gate and a classifier using
+role flags with `-score review`:
+
+```sh
+km run -worktree DIR -score review -task "What this change should do" \
+  -reviewer AGENT_A,AGENT_B -gate AGENT_C -classifier AGENT_D
+```
+
+The reviewers play in parallel and each writes its own reply file, then the gate decides. The
+approval rule is `any`: at least one review must approve before the gate plays. An ensemble's
+`gate_when = "all"` requires every reviewer to approve; `gate_when = "always"` sends both review
+exits to the gate. There are no backward exits or rounds to repeat.
+
+Alternatively, select a small ensemble file, for example `ensembles/inspect.toml` in the user
+or repository configuration directory, and run `km run -worktree DIR -ensemble inspect -task "..."`:
+
+```toml
+score = "review"
+
+[sections.strings.chairs.first]
+part = "reviewer"
+agents = ["AGENT_A"]
+
+[sections.strings.chairs.second]
+part = "gate"
+agents = ["AGENT_C"]
+
+[sections.strings.chairs.third]
+part = "classifier"
+agents = ["AGENT_D"]
+```
+
+Replace the agent names with available agents. This score has no planner, implementer or tester;
+an ensemble seating one of those parts is refused. A clean worktree is refused before seating
+any chair. `-repo` is refused for this score: it creates a clean checkout with nothing to review,
+so pass `-worktree DIR` with an existing change instead. Chairs may write only their reply files;
+the worktree's existing change is left as found.
+
+The conductor runs verify once before review and hands its short result to both parts. A failing
+verify ends `changes_requested`, names verify as the reason, and prevents the gate from playing.
+A command that cannot run or times out still ends `failed`. Strict runs after approval when
+configured, with its usual outcomes.
+
+`approved` exits 0. `changes_requested` exits 7; its summary names the gate's decision file, or
+the review files when the gate did not play. `km report`, `km report -parts`, `km wait` and
+`km status -json` work for this score; part reports contain only the parts that played. Status
+shows its two steps and chairs, with verify before review and strict after approval when configured.
+
+Print the shipped TOML and Markdown with `km score show review`. Copy each labelled file to its
+score or part directory, giving the score and its two parts new names and updating `part` in the
+score to match. Seat those parts through an ensemble file. Built-in names are reserved. The
+classifier keeps its built-in text. `review` is currently the printable built-in; `default` has
+no file form yet.
+
+### Write a score and its parts
+
 Keep scores in `~/.kapellmeister/scores/NAME.toml` or `.kapellmeister/scores/NAME.toml`, and
 parts in `~/.kapellmeister/parts/NAME.md` or `.kapellmeister/parts/NAME.md`. The user directories
 follow `$KAPELLMEISTER_HOME`. A user file shadows the repository file of the same name, whole;
 scores and parts resolve independently. Names use lowercase letters, digits and dashes, starting
-with a letter or digit. The score name `default` and the part names `planner`, `implementer`,
-`reviewer`, `gate`, `tester` and `classifier` are reserved: a file with one is refused, naming it.
+with a letter or digit. The score names `default` and `review` and the part names `planner`,
+`implementer`, `reviewer`, `gate`, `tester` and `classifier` are reserved: a file with one is refused,
+naming it.
 A run that names no score does not inspect these directories.
 
 For example, `scores/small.toml` could contain:
@@ -631,7 +692,8 @@ and supply `parts/drafter.md` and `parts/inspector.md`. Required parts need a ch
 use all chairs of their part, and other kinds accept one. Every seated part must belong to the
 score; the classifier is a service and is always accepted. A review, decide or test step needs a
 classifier. With `-score` and `[chairs]`, only the built-in roles those settings supply can be
-seated; custom parts need an ensemble file. Roles outside the score are refused.
+seated; custom parts need an ensemble file. Roles outside a file score are refused. With a
+built-in score, role flags outside the score are refused and unused roles from config are ignored.
 
 The only score keys are `rounds`, `[parts.NAME]` and `[[steps]]`. Part tables accept `memory`
 (`fresh`, the default, or `resume`) and `optional` (default false). Resume is supported only for
@@ -666,6 +728,7 @@ steps the part plays, cannot repeat, and must leave nonempty instructions for ea
 | `{reply}` | This step's reply file path |
 | `{inputs}` | All input reply paths, separated by commas |
 | `{verify}` | The verify output file path |
+| `{verification}` | The short verify result, or a line saying no verify command is configured |
 | `{check}` | The configured check command |
 | `{scratch}` | The generated scratch directory |
 

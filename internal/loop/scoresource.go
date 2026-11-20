@@ -57,8 +57,10 @@ func LoadScore(name string, src ScoreSource) (LoadedScore, error) {
 			}
 		}
 	}
-	if err := r.reserved("score", "default"); err != nil {
-		return LoadedScore{}, err
+	for _, builtin := range append([]string{"default"}, BuiltinScoreNames()...) {
+		if err := r.reserved("score", builtin); err != nil {
+			return LoadedScore{}, err
+		}
 	}
 	if name == "default" {
 		return LoadedScore{Score: DefaultScore()}, nil
@@ -67,6 +69,9 @@ func LoadScore(name string, src ScoreSource) (LoadedScore, error) {
 		if err := r.reserved("part", part); err != nil {
 			return LoadedScore{}, err
 		}
+	}
+	if score, ok := BuiltinScore(name); ok {
+		return LoadedScore{Score: score}, nil
 	}
 	text, file, err := r.read("score", name)
 	if err != nil {

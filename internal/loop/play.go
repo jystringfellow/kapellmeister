@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 )
 
 type stepReply struct {
@@ -47,13 +48,11 @@ func reviewChairName(part string, i, n int) string {
 	return fmt.Sprintf("%s-%d", part, i+1)
 }
 
-func (e *Engine) walkScore(ctx context.Context, res Result) (Result, error) {
+func (e *Engine) walkScore(ctx context.Context, res Result, verify VerifyResult, verifyPath string) (Result, error) {
 	score, cfg := e.playingScore(), e.Config
 	played := map[string]stepReply{}
 	var feedback []feedbackFile
 	var decide, test feedbackFile
-	var verify VerifyResult
-	var verifyPath string
 	var backgroundDone chan error
 	var cancelBackground context.CancelFunc
 	backgroundName := ""
@@ -276,6 +275,16 @@ func (e *Engine) walkScore(ctx context.Context, res Result) (Result, error) {
 				return e.fail(res, err), nil
 			}
 			res.Outcome = target
+			if target == ChangesRequested {
+				files := played[spec.Name].files
+				if decide.path != "" {
+					files = []string{decide.path}
+				}
+				res.Reason = "changes requested: see " + strings.Join(files, ", ")
+				if verify.ExitCode != 0 {
+					res.Reason = fmt.Sprintf("verify exited %d: see %s; %s", verify.ExitCode, verifyPath, res.Reason)
+				}
+			}
 			return res, nil
 		}
 		next := score.Index(target)

@@ -1,0 +1,19 @@
+[parts.reviewer]
+memory = "fresh"
+
+[parts.gate]
+memory = "fresh"
+
+[[steps]]
+name = "review"
+kind = "review"
+part = "reviewer"
+approve_when = "any"
+next = { approve = "gate", changes = "changes_requested" }
+
+[[steps]]
+name = "gate"
+kind = "decide"
+part = "gate"
+reads = ["review"]
+next = { approve = "approved", changes = "changes_requested" }

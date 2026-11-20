@@ -362,6 +362,8 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 	}
 
 	e.loadLessons()
+	var verify VerifyResult
+	var verifyPath string
 
 	if cfg.VerifyCommand != "" && e.Verify != nil && !cfg.SkipBaseline {
 		baselinePath := e.rel("verify-0.txt")
@@ -377,12 +379,18 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 		if baseline.TimedOut {
 			return e.fail(res, fmt.Errorf("verify did not finish within %s before any change, so km stopped it: make verify faster or raise [test] verify_timeout; see %s\n%s", baseline.Limit, baselinePath, tail(strings.TrimRight(baseline.Output, "\n"), 20))), nil
 		}
-		if baseline.ExitCode != 0 {
+		if !e.playingScore().EditsWorktree() && (baseline.ExitCode == 126 || baseline.ExitCode == 127) {
+			return e.fail(res, fmt.Errorf("verify could not run (exit %d); see %s\n%s", baseline.ExitCode, baselinePath, tail(strings.TrimRight(baseline.Output, "\n"), 20))), nil
+		}
+		if baseline.ExitCode != 0 && e.playingScore().EditsWorktree() {
 			return e.fail(res, fmt.Errorf("verify already fails before any change (exit %d); see %s\n%s", baseline.ExitCode, baselinePath, tail(strings.TrimRight(baseline.Output, "\n"), 20))), nil
+		}
+		if !e.playingScore().EditsWorktree() {
+			verify, verifyPath = baseline, baselinePath
 		}
 	}
 
-	return e.walkScore(ctx, res)
+	return e.walkScore(ctx, res, verify, verifyPath)
 }
 
 type testInterruptedError struct {

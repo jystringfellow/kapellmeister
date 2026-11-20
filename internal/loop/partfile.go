@@ -52,7 +52,7 @@ func decodePart(text, path string, steps []ScoreStep) (map[string]string, error)
 		}
 		for _, placeholder := range partPlaceholder.FindAllString(value, -1) {
 			switch placeholder {
-			case "{plan}", "{reply}", "{inputs}", "{verify}", "{check}", "{scratch}":
+			case "{plan}", "{reply}", "{inputs}", "{verify}", "{verification}", "{check}", "{scratch}":
 			default:
 				return nil, fmt.Errorf("%s: step %s: unknown placeholder %s", path, step.Name, placeholder)
 			}
