@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,7 +58,27 @@ func TestReportPrintsThisTableForARunOfTheDefaultScore(t *testing.T) {
 	}
 	out = regexp.MustCompile(`\d{4}-\d\d-\d\d \d\d:\d\d:\d\d`).ReplaceAllString(out, "YYYY-MM-DD HH:MM:SS")
 	out = regexp.MustCompile(`(approved  1       )\d+s`).ReplaceAllString(out, "${1}Ns")
-	reportGolden(t, "default_score_report.golden", out)
+	reportGolden(t, "default_score_report.golden", withoutPartTimes(out))
+}
+
+func withoutPartTimes(report string) string {
+	lines := strings.Split(report, "\n")
+	inParts := false
+	for i, line := range lines {
+		switch {
+		case line == "by part and model":
+			inParts = true
+		case line == "":
+			inParts = false
+		case inParts:
+			cells := strings.Fields(line)
+			if len(cells) == 10 && cells[0] != "PART" {
+				cells[6], cells[7] = "T", "T"
+			}
+			lines[i] = strings.Join(cells, " ")
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func TestReportPrintsThisJSONForARunOfTheDefaultScore(t *testing.T) {
