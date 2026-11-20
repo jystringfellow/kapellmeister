@@ -1951,8 +1951,13 @@ cannot be parsed is omitted.
 Each chair includes `address`, `name`, `part`, `agent`, `provider`, `model`, `tier`, `memory`,
 `state`, `step`, `since`, `terminal`, `needs_input` and `usage`. State is `waiting`, `playing`,
 `done` or `unknown`; a prompt waiting for a person is a separate `needs_input: {count, reason}`.
-`terminal` is empty when no occupant is seated. For a fresh occupant, its id is only available
-when the step returns or records a prompt; a resumed or standing occupant can be known sooner.
+`terminal` is empty when no occupant is seated. While a fresh chair plays, its occupant's id
+appears within one blocker poll of the terminal existing, matched by the step's terminal label.
+Ids returned by earlier steps are excluded from fresh assignments. The watcher leaves it empty
+when several playing steps or remaining listed terminals share that label (for example,
+concurrent classifiers), or when watching is disabled. Existing prompt records can
+still supply an id. Once the step ends and its terminal is released, the chair's `terminal` is
+empty again. A resumed or standing chair keeps its terminal.
 
 `score` includes its `name`, `source`, `rounds` and ordered `steps`, each with a `name`, `kind`,
 optional `part` and an exit-to-next-step map `next`. Verify appears before the score and after

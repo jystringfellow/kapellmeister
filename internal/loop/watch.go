@@ -72,9 +72,10 @@ type blockedChair struct {
 
 type watchState struct {
 	sync.Mutex
-	next    uint64
-	running map[uint64]Step
-	blocked map[string]blockedChair
+	next     uint64
+	running  map[uint64]Step
+	blocked  map[string]blockedChair
+	finished map[string]bool
 }
 
 func (e *Engine) startWatcher(ctx context.Context) func() {
@@ -136,6 +137,18 @@ func (e *Engine) watchStep(s Step) func() {
 	}
 }
 
+func (e *Engine) rememberFinishedTerminal(id string) {
+	if id == "" {
+		return
+	}
+	e.watch.Lock()
+	defer e.watch.Unlock()
+	if e.watch.finished == nil {
+		e.watch.finished = map[string]bool{}
+	}
+	e.watch.finished[id] = true
+}
+
 func (e *Engine) pollBlockers(ctx context.Context) {
 	e.watch.Lock()
 	if len(e.watch.running) == 0 {
@@ -148,6 +161,7 @@ func (e *Engine) pollBlockers(ctx context.Context) {
 	if err != nil {
 		return
 	}
+	e.assignTerminals(generation, terminals)
 	seen := map[string]bool{}
 	for _, terminal := range terminals {
 		e.watch.Lock()
@@ -192,6 +206,46 @@ func (e *Engine) pollBlockers(ctx context.Context) {
 			e.reportBlocker("unblocked", b)
 			delete(e.watch.blocked, id)
 		}
+	}
+}
+
+func (e *Engine) assignTerminals(generation uint64, terminals []WatchedTerminal) {
+	e.watch.Lock()
+	defer e.watch.Unlock()
+	if e.watch.next != generation || len(e.watch.running) == 0 {
+		return
+	}
+	running := map[string]int{}
+	for _, step := range e.watch.running {
+		running[step.Label]++
+	}
+	listed := map[string]int{}
+	ids := map[string]string{}
+	for _, terminal := range terminals {
+		if e.watch.finished[terminal.ID] {
+			continue
+		}
+		listed[terminal.Description]++
+		ids[terminal.Description] = terminal.ID
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	playing := map[string]int{}
+	for _, step := range e.active {
+		playing[step.label]++
+	}
+	changed := false
+	for _, step := range e.active {
+		if step.Terminal != "" || step.label == "" || running[step.label] != 1 || listed[step.label] != 1 || playing[step.label] != 1 {
+			continue
+		}
+		if id := ids[step.label]; id != "" {
+			step.Terminal = id
+			changed = true
+		}
+	}
+	if changed {
+		e.notifyPlaying(e.round)
 	}
 }
 
