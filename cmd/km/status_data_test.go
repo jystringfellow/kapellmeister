@@ -387,7 +387,7 @@ func TestStatusJSONAttributesARecordedPartBeforeANameThatBelongsToTheSubject(t *
 }
 
 func TestStatusJSONScorePlacesVerifyBeforeTheScoreAndAfterWorktreeChanges(t *testing.T) {
-	outline := loop.DefaultScore().Outline(true)
+	outline := loop.DefaultScore().Outline(true, true)
 	var names []string
 	for _, step := range outline.Steps {
 		names = append(names, step.Name)

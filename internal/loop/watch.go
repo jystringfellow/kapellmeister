@@ -118,7 +118,12 @@ func (e *Engine) watchStep(s Step) func() {
 	id := e.watch.next
 	e.watch.running[id] = s
 	e.watch.Unlock()
+	finished := make(chan struct{})
+	if e.Watcher != nil && e.Config.BlockerPoll > 0 && s.ReuseTerminal == "" && s.Label != "" {
+		go e.lookUpTerminal(id, s.Label, finished)
+	}
 	return func() {
+		close(finished)
 		e.watch.Lock()
 		defer e.watch.Unlock()
 		delete(e.watch.running, id)
@@ -133,6 +138,43 @@ func (e *Engine) watchStep(s Step) func() {
 				e.reportBlocker("unblocked", b)
 				delete(e.watch.blocked, terminal)
 			}
+		}
+	}
+}
+
+var terminalLookups = []time.Duration{2 * time.Second, 3 * time.Second, 5 * time.Second}
+
+func (e *Engine) lookUpTerminal(id uint64, label string, finished <-chan struct{}) {
+	for _, wait := range terminalLookups {
+		timer := time.NewTimer(wait)
+		select {
+		case <-finished:
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		e.watch.Lock()
+		_, running := e.watch.running[id]
+		generation := e.watch.next
+		e.watch.Unlock()
+		if !running {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		terminals, err := e.Watcher.Terminals(ctx)
+		cancel()
+		if err != nil {
+			continue
+		}
+		e.assignTerminals(generation, terminals)
+		e.mu.Lock()
+		found := false
+		for _, step := range e.active {
+			found = found || step.label == label && step.Terminal != ""
+		}
+		e.mu.Unlock()
+		if found {
+			return
 		}
 	}
 }

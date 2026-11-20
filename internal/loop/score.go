@@ -233,15 +233,18 @@ type StepOutline struct {
 	Next map[string]string `json:"next,omitempty"`
 }
 
-func (s Score) Outline(strict bool) ScoreOutline {
-	out := ScoreOutline{Name: s.Name, Source: firstSet(s.Source, "built-in"), Rounds: s.Rounds, Steps: []StepOutline{{Name: "verify", Kind: "verify"}}}
+func (s Score) Outline(verify, strict bool) ScoreOutline {
+	out := ScoreOutline{Name: s.Name, Source: firstSet(s.Source, "built-in"), Rounds: s.Rounds, Steps: []StepOutline{}}
+	if verify {
+		out.Steps = append(out.Steps, StepOutline{Name: "verify", Kind: "verify"})
+	}
 	for _, step := range s.Steps {
 		next := map[string]string{}
 		for _, exit := range step.Exits {
 			next[exit.Name] = exit.To
 		}
 		out.Steps = append(out.Steps, StepOutline{Name: step.Name, Kind: string(step.Kind), Part: step.Part, Next: next})
-		if step.Kind == KindProduce && step.Writes != "reply" {
+		if verify && step.Kind == KindProduce && step.Writes != "reply" {
 			out.Steps = append(out.Steps, StepOutline{Name: "verify", Kind: "verify"})
 		}
 	}

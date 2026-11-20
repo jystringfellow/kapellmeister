@@ -67,7 +67,7 @@ func TestAScoreFileLoadsIntoTheScoreTheEnginePlays(t *testing.T) {
 	if got.Score.Steps[1].Brief != "review" || got.Score.Steps[1].ApproveWhen != "all" || !got.Score.Steps[0].Escalate {
 		t.Fatalf("steps = %+v", got.Score.Steps)
 	}
-	if got.Score.Outline(false).Source != "user" {
+	if got.Score.Outline(false, false).Source != "user" {
 		t.Fatal("outline lost source")
 	}
 }

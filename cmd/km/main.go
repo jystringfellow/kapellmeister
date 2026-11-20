@@ -571,7 +571,20 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		_, err = fmt.Fprintf(stdout, "run       %s\npid       %d\nworktree  %s\noutput    %s\n", h.RunID, h.PID, h.Worktree, h.Output)
 		return err
 	}
+	preflighting := initialRunState(runID, "run", wt, *ensemble, s.Rounds, time.Now())
+	describeRun(&preflighting, ensembleRun{Score: s.Score.Score, Members: members, Agents: s.Defined, CAOURL: client.BaseURL, Ensemble: *ensemble, Config: loop.Config{Worktree: wt, Chairs: seated, CAOURL: s.CAOURL, VerifyCommand: verifyCmd, StrictCommand: tested.Strict}})
+	preflighting.Playing = []loop.ActiveStep{{Step: "preflight", Started: preflighting.Started}}
+	if err := os.MkdirAll(runDir, 0755); err == nil {
+		err = writeRunState(runDir, preflighting)
+		if err != nil {
+			fmt.Fprintln(stderr, "km: writing run state:", err)
+		}
+	}
 	if err := preflight(ctx, client, wt, s.PreflightTimeout, s.PreflightRetryWait, defaultChairs(&policy, chairs, s.Score.Score)...); err != nil {
+		if *detachedLaunch == "" {
+			_ = os.Remove(filepath.Join(runDir, "current.json"))
+			_ = os.Remove(runDir)
+		}
 		return err
 	}
 	podiumChair, _ := policy.Chair("classify", chairs.Classifier, "", 0)
@@ -1108,6 +1121,17 @@ type recordedLesson struct {
 	loop.Lesson
 }
 
+func describeRun(state *runState, p ensembleRun) {
+	score := p.Score
+	if len(score.Steps) == 0 {
+		score = loop.DefaultScore()
+	}
+	outline := score.Outline(p.Config.VerifyCommand != "", p.Config.StrictCommand != "")
+	state.Score = &outline
+	state.Seating = recordSeating(p, score)
+	state.CAO = statusServerAddress(firstNonEmpty(p.CAOURL, p.Config.CAOURL))
+}
+
 func runEnsemble(ctx context.Context, p ensembleRun) (sum ensembleSummary, runErr error) {
 	base, err := gitOutput(p.Config.Worktree, "rev-parse", "HEAD")
 	if err != nil {
@@ -1192,14 +1216,7 @@ func runEnsemble(ctx context.Context, p ensembleRun) (sum ensembleSummary, runEr
 	eng := &loop.Engine{Score: p.Score, Meter: p.Meter, Watcher: p.Watcher, Config: p.Config, Stepper: p.Stepper, Verify: p.Verify, Records: telemetry, Progress: p.Progress}
 	state := initialRunState(p.RunID, firstNonEmpty(p.Command, "run"), p.Config.Worktree, p.Ensemble, p.Config.MaxRounds, start)
 	if p.Tune == nil {
-		score := p.Score
-		if len(score.Steps) == 0 {
-			score = loop.DefaultScore()
-		}
-		outline := score.Outline(p.Config.StrictCommand != "")
-		state.Score = &outline
-		state.Seating = recordSeating(p, score)
-		state.CAO = statusServerAddress(firstNonEmpty(p.CAOURL, p.Config.CAOURL))
+		describeRun(&state, p)
 	}
 	warned := false
 	publish := func() {

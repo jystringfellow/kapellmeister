@@ -3,6 +3,7 @@ package loop
 import (
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -129,5 +130,25 @@ func TestOnlyTheImplementerResumesAndReviewIsAlwaysFresh(t *testing.T) {
 	}
 	if score.Resumes("review") || score.Resumes("unknown") {
 		t.Fatal("review and unknown steps must start fresh")
+	}
+}
+
+func TestTheOutlineListsVerifyAndStrictOnlyWhenTheRunHasThemToRun(t *testing.T) {
+	kinds := func(verify, strict bool) string {
+		var out []string
+		for _, step := range DefaultScore().Outline(verify, strict).Steps {
+			if step.Part == "" {
+				out = append(out, step.Kind)
+			}
+		}
+		return strings.Join(out, " ")
+	}
+	for _, c := range []struct {
+		verify, strict bool
+		want           string
+	}{{false, false, ""}, {true, false, "verify verify"}, {true, true, "verify verify strict"}, {false, true, "strict"}} {
+		if got := kinds(c.verify, c.strict); got != c.want {
+			t.Errorf("verify %t strict %t: %q, want %q", c.verify, c.strict, got, c.want)
+		}
 	}
 }
