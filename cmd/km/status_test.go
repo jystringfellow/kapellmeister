@@ -179,7 +179,7 @@ func TestStatusJSONPrintsTheSameRunsWithTheirPlayingStepsAndLiveness(t *testing.
 		t.Fatal(rows)
 	}
 	r := rows[0]
-	if r.RunID != "json" || r.Repository != s.Repository || r.Ensemble != s.Ensemble || r.Command != "run" || r.Round != 2 || r.MaxRounds != 3 || r.Liveness != "alive" || r.Playing[0].ElapsedMS != 1234 || r.Playing[0].Step != "verify-2" || r.Playing[0].Chair != "" {
+	if r.RunID != "json" || r.Repository != s.Repository || r.Ensemble.Name != s.Ensemble || r.Command != "run" || r.Round != 2 || r.MaxRounds != 3 || r.Liveness != "alive" || r.Playing[0].ElapsedMS != 1234 || r.Playing[0].Step != "verify-2" || r.Playing[0].Chair != "" {
 		t.Fatalf("%+v", r)
 	}
 	s.Playing[0].Started = statusNow.Add(time.Hour)

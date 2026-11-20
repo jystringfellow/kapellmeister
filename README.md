@@ -229,7 +229,7 @@ records live outside the default state directory. In Claude Code, register it wi
 | --- | --- | --- |
 | `run` | Required `task` text (at most 1 MiB) and exactly one of `repo` or `worktree`; optional `base` (only with `repo`) and `ensemble` | `run_id`, `pid`, `worktree`, `output` (log path); always detached |
 | `wait` | Required `run` id or unique prefix; optional integer `timeout_seconds`, default 30, minimum 1, capped at **55 seconds** | The `km wait -json` document: `run_id`, `state`, `exit_status`, `reason`, and `result` when finished |
-| `status` | None | The `km status -json` document of runs in progress, with seating, score, current steps, trail and measured usage |
+| `status` | None | The same `km status -json` document of runs in progress, with the `ensemble` object, score, current steps, trail and measured usage |
 | `report` | Optional `since` (YYYY-MM-DD or RFC3339) and `repository` | The `km report -json` summary with those filters |
 | `output` | Required `run`; optional integer `max_bytes`, default 16384, minimum 1, capped at **65536 bytes** | `run_id`, `path`, total byte `size`, byte count `returned`, `truncated`, and tail `text` |
 
@@ -1939,12 +1939,14 @@ diagnostics.
 `-json` emits `{"runs":[...]}`, including every playing step and its elapsed milliseconds;
 an empty result without configured directories is `{"runs":[]}`.
 
-Each JSON run has `schema: 1` and keeps the existing fields, including `command`, `round`,
-`max_rounds` and the `ensemble` name string. The structured ensemble is under `seating` to
-preserve that string: `{name, source, sections: [{name, chairs: [...]}]}`. Its source is `user`
-or `repository` for an ensemble file, otherwise empty. Runs seated from `[chairs]` have one
-section named `chairs`. `cao` is the server address used by that run, with URL userinfo removed.
-An address that cannot be parsed is omitted.
+Each JSON run has `schema: 1` and includes `command`, `round` and `max_rounds`. The `ensemble`
+field is an object `{name, source, sections: [{name, chairs: [...]}]}`; the ensemble's name is at
+`ensemble.name`. There is no `seating` key. Its source is `user` or `repository` for an ensemble
+file, otherwise empty. Runs seated from `[chairs]` have one section named `chairs`. A run recorded
+before seating was recorded has an `ensemble` object with its recorded `name`, an empty `source`
+and an empty `sections` list. The plain-text status table and `km report` still show the ensemble's
+name. `cao` is the server address used by that run, with URL userinfo removed. An address that
+cannot be parsed is omitted.
 
 Each chair includes `address`, `name`, `part`, `agent`, `provider`, `model`, `tier`, `memory`,
 `state`, `step`, `since`, `terminal`, `needs_input` and `usage`. State is `waiting`, `playing`,

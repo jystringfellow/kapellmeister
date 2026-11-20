@@ -24,7 +24,6 @@ type statusStep struct {
 type statusRun struct {
 	Schema     int                `json:"schema"`
 	CAO        string             `json:"cao,omitempty"`
-	Seating    *statusSeating     `json:"seating,omitempty"`
 	Score      *loop.ScoreOutline `json:"score,omitempty"`
 	Current    []statusCurrent    `json:"current"`
 	Trail      []statusTrail      `json:"trail"`
@@ -33,7 +32,7 @@ type statusRun struct {
 	Path       string             `json:"path"`
 	Started    *time.Time         `json:"started"`
 	Repository string             `json:"repository"`
-	Ensemble   string             `json:"ensemble"`
+	Ensemble   statusSeating      `json:"ensemble"`
 	Command    string             `json:"command"`
 	Round      int                `json:"round"`
 	MaxRounds  int                `json:"max_rounds"`
@@ -72,7 +71,7 @@ func statusAt(args []string, stdout, stderr io.Writer, now time.Time) error {
 	}
 	runs := []statusRun{}
 	for _, recorded := range unfinishedRuns(found) {
-		run := statusRun{RunID: recorded.RunID, Path: recorded.Path, Started: recorded.Started, Repository: recorded.Repository, Ensemble: recorded.Ensemble, Playing: []statusStep{}, Liveness: "unknown"}
+		run := statusRun{RunID: recorded.RunID, Path: recorded.Path, Started: recorded.Started, Repository: recorded.Repository, Ensemble: statusSeating{Name: recorded.Ensemble, Sections: []statusSection{}}, Playing: []statusStep{}, Liveness: "unknown"}
 		if state := recorded.state; state != nil {
 			run.Command, run.Round, run.MaxRounds = state.Command, state.Round, state.MaxRounds
 			if !state.Updated.IsZero() {
@@ -175,7 +174,7 @@ func printStatus(stdout io.Writer, runs []statusRun, now time.Time) error {
 			}
 			elapsed = elapsedSince(now, active.Started).Round(time.Second).String()
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", plain(run.RunID), plain(started), plain(reportKnown(run.Repository)), plain(reportRunLabel(run.Ensemble, run.Command)), plain(round), plain(step), plain(chair), plain(elapsed), plain(run.Liveness))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", plain(run.RunID), plain(started), plain(reportKnown(run.Repository)), plain(reportRunLabel(run.Ensemble.Name, run.Command)), plain(round), plain(step), plain(chair), plain(elapsed), plain(run.Liveness))
 	}
 	return w.Flush()
 }

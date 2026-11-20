@@ -219,7 +219,7 @@ func addStatusData(run *statusRun, recorded reportRun) {
 				chairs = append(chairs, chair)
 			}
 		}
-		run.Seating = &seating
+		run.Ensemble.Source, run.Ensemble.Sections = seating.Source, seating.Sections
 	}
 	verdicts := map[reportVerdictKey]string{}
 	for _, record := range recorded.records {

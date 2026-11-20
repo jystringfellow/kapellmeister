@@ -78,9 +78,9 @@ func statusDataRow(t *testing.T, root string) map[string]any {
 
 func dataChairs(t *testing.T, r map[string]any) []map[string]any {
 	t.Helper()
-	seating, ok := r["seating"].(map[string]any)
+	seating, ok := r["ensemble"].(map[string]any)
 	if !ok {
-		t.Fatalf("missing seating: %+v", r)
+		t.Fatalf("missing ensemble: %+v", r)
 	}
 	var chairs []map[string]any
 	for _, sec := range seating["sections"].([]any) {
@@ -91,13 +91,60 @@ func dataChairs(t *testing.T, r map[string]any) []map[string]any {
 	return chairs
 }
 
+func TestStatusJSONReportsEnsembleAsAnObjectWithItsNameSourceAndSectionsAndNoSeatingKey(t *testing.T) {
+	root, _ := statusDataFixture(t)
+	r := statusDataRow(t, root)
+	seating, ok := r["ensemble"].(map[string]any)
+	if !ok {
+		t.Fatalf("ensemble = %v, want an object", r["ensemble"])
+	}
+	if len(seating) != 3 || seating["name"] != "thorough" || seating["source"] != "repository" {
+		t.Fatal(seating)
+	}
+	sections := seating["sections"].([]any)
+	if len(sections) != 2 || sections[0].(map[string]any)["name"] != "strings" || sections[1].(map[string]any)["name"] != "winds" {
+		t.Fatal(sections)
+	}
+	if len(sections[0].(map[string]any)["chairs"].([]any)) != 1 || len(sections[1].(map[string]any)["chairs"].([]any)) != 4 {
+		t.Fatal(sections)
+	}
+	if _, exists := r["seating"]; exists {
+		t.Fatal("unexpected seating key")
+	}
+}
+
+func TestStatusJSONReportsARunRecordedBeforeSeatingWithItsEnsembleNameAnEmptySourceAndAnEmptySectionsList(t *testing.T) {
+	for _, current := range []bool{true, false} {
+		t.Run(map[bool]string{true: "with current record", false: "without current record"}[current], func(t *testing.T) {
+			root := t.TempDir()
+			name := ""
+			if current {
+				name = statusFixture(t, root, "old").Ensemble
+			} else {
+				writeFile(t, filepath.Join(root, "old", "telemetry.jsonl"), `{"at":"2026-11-09T14:00:00Z","step":"start"}`+"\n")
+			}
+			r := statusDataRow(t, root)
+			want := map[string]any{"name": name, "source": "", "sections": []any{}}
+			if !reflect.DeepEqual(r["ensemble"], want) {
+				t.Fatalf("ensemble = %#v, want %#v", r["ensemble"], want)
+			}
+			if _, exists := r["seating"]; exists {
+				t.Fatal("unexpected seating key")
+			}
+		})
+	}
+}
+
 func TestStatusJSONKeepsEveryFieldItPrintedBeforeWithTheSameMeaning(t *testing.T) {
 	root, _ := statusDataFixture(t)
 	r := statusDataRow(t, root)
-	for k, want := range map[string]any{"schema": float64(1), "run_id": "data", "ensemble": "thorough", "command": "run", "round": float64(2), "max_rounds": float64(3), "liveness": "alive", "repository": "host/owner/app"} {
+	for k, want := range map[string]any{"schema": float64(1), "run_id": "data", "command": "run", "round": float64(2), "max_rounds": float64(3), "liveness": "alive", "repository": "host/owner/app"} {
 		if r[k] != want {
 			t.Errorf("%s = %v, want %v", k, r[k], want)
 		}
+	}
+	if r["ensemble"].(map[string]any)["name"] != "thorough" {
+		t.Fatal(r["ensemble"])
 	}
 	if len(r["playing"].([]any)) != 3 || r["started"] == nil || r["updated"] == nil || r["path"] == nil {
 		t.Fatal(r)
@@ -217,7 +264,7 @@ func TestStatusJSONListsARunRecordedBeforeTheseRecordsWithTodaysFieldsAndTheRest
 	root := t.TempDir()
 	statusFixture(t, root, "old")
 	r := statusDataRow(t, root)
-	if r["schema"] != float64(1) || r["seating"] != nil || r["score"] != nil || len(r["current"].([]any)) != 0 || len(r["trail"].([]any)) != 0 {
+	if r["schema"] != float64(1) || r["score"] != nil || len(r["current"].([]any)) != 0 || len(r["trail"].([]any)) != 0 {
 		t.Fatal(r)
 	}
 }
@@ -239,7 +286,7 @@ func TestARunRecordedByTheLoopShowsItsSeatingScoreTrailAndUsageInStatus(t *testi
 		if chairs[0]["agent"] != "solo" || len(chairs) != 5 || chairs[1]["terminal"] != "terminal" || chairs[1]["memory"] != "resume" || chairs[2]["state"] != "playing" {
 			t.Fatal(chairs)
 		}
-		if r["seating"].(map[string]any)["sections"].([]any)[0].(map[string]any)["name"] != "chairs" {
+		if r["ensemble"].(map[string]any)["name"] != "" || r["ensemble"].(map[string]any)["sections"].([]any)[0].(map[string]any)["name"] != "chairs" {
 			t.Fatal(r)
 		}
 	}}
@@ -371,7 +418,7 @@ func TestARunRecordedByTheLoopKeepsAnEnsembleFilesSectionsChairsAndSource(t *tes
 				}
 				observed = true
 				r := statusDataRow(t, dir)
-				seating := r["seating"].(map[string]any)
+				seating := r["ensemble"].(map[string]any)
 				if seating["source"] != source || seating["name"] != "thorough" {
 					t.Fatal(seating)
 				}
@@ -460,7 +507,10 @@ func TestAStandingRunFromChairsRecordsOneSectionNamedChairs(t *testing.T) {
 			return
 		}
 		r := statusDataRow(t, dir)
-		sections := r["seating"].(map[string]any)["sections"].([]any)
+		if r["ensemble"].(map[string]any)["name"] != standing.Ensemble {
+			t.Fatal(r["ensemble"])
+		}
+		sections := r["ensemble"].(map[string]any)["sections"].([]any)
 		if len(sections) != 1 || sections[0].(map[string]any)["name"] != "chairs" {
 			t.Fatal(sections)
 		}
