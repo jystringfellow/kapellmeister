@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+const VerifyScript = "scripts/verify"
+
 const (
 	StrictFailed = "strict_failed"
 	StrictNotRun = "strict_not_run"
@@ -90,7 +92,7 @@ func shellWord(text string) (word, raw, rest string, ok bool) {
 func StrictScripts(test TestConfig) []string {
 	var names []string
 	for _, command := range []string{test.Verify, test.Strict, test.StrictReady} {
-		if name := ScriptPath(command); name != "" && name != "scripts/verify" && !slices.Contains(names, name) {
+		if name := ScriptPath(command); name != "" && name != VerifyScript && !slices.Contains(names, name) {
 			names = append(names, name)
 		}
 	}

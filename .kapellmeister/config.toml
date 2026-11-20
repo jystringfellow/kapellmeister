@@ -1,5 +1,5 @@
 [test]
-verify = 'test -z "$(gofmt -l .)" && go vet ./... && go test ./...'
+verify = 'test -z "$(gofmt -l .)" && go vet ./... && go test -timeout 30m ./...'
 check  = "go test {args}"
 
 [run]

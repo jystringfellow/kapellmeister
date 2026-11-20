@@ -18,7 +18,7 @@ the most expensive part of the run.
 The outcome and its reason tell the caller the review did not happen: the outcome is
 `budget_exhausted`, not `approved`, and the reason reads `time budget ... spent ... after round N`.
 
-Tried and rejected:
+Rejected:
 
 - Leaving the checkout untouched when the budget ends before the review. It discards a proved
   verify and treats the same proof differently from the no-round-remained case.
