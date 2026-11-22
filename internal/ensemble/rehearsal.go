@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jystringfellow/kapellmeister/internal/cao"
+	"github.com/jystringfellow/kapellmeister/internal/loop"
 )
 
 type Rehearsal struct {
@@ -75,5 +76,5 @@ func briefing(ensemble, task, km, id string, m Member, members []Member, queue s
 	if len(mates) > 0 {
 		sectionMates = strings.Join(mates, ", ")
 	}
-	return fmt.Sprintf("Cue %s from km: a rehearsal of ensemble %s. You are chair %s (part %s).\nSection-mates: %s\nTask:\n%s\nThis is a briefing: read and understand the task, but do not change any files yet. When you have, run this shell command exactly, then stop:\n%s cue done -queue %s %s", id, ensemble, m.Address(ensemble), m.Part, sectionMates, task, shellQuote(km), shellQuote(queue), id)
+	return fmt.Sprintf("Cue %s from km: a rehearsal of ensemble %s. You are chair %s (part %s).\n%sSection-mates: %s\nTask:\n%s\nThis is a briefing: read and understand the task, but do not change any files yet. When you have, run this shell command exactly, then stop:\n%s cue done -queue %s %s", id, ensemble, m.Address(ensemble), m.Part, loop.FocusBlock(m.Chair.Focus), sectionMates, task, shellQuote(km), shellQuote(queue), id)
 }

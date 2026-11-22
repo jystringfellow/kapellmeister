@@ -143,6 +143,7 @@ func prepareMember(ctx context.Context, client *cao.Client, policy loop.Policy, 
 		return m, err
 	}
 	chair.Address = m.Chair.Address
+	chair.Focus = m.Chair.Focus
 	m.Chair = chair
 	m = sizeMember(policy, m)
 	if err := ensureProfiles(ctx, client, &policy, map[string][]loop.Chair{policy.PartPolicyKey(m.Part): {chair}}); err != nil {
