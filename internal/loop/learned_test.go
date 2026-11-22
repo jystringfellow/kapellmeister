@@ -141,25 +141,25 @@ func TestALessonWrittenByAStepIsNotSeenByALaterStepOfTheSameRun(t *testing.T) {
 	for _, commit := range []bool{false, true} {
 		t.Run(fmt.Sprintf("committed=%v", commit), func(t *testing.T) {
 			e, f, _ := newEngine(t, passing)
-			writeLesson(t, e, "implementer.md", "ORIGINAL-LESSON\n")
+			writeLesson(t, e, "reviewer.md", "ORIGINAL-LESSON\n")
 			commitLessons(t, e)
-			f.actions["plan"] = func(s Step) {
-				writeLesson(t, e, "implementer.md", "WRITTEN-BY-PLAN\n")
-				writeLesson(t, e, "gate.md", "CREATED-BY-PLAN\n")
+			f.actions["implement"] = func(s Step) {
+				writeLesson(t, e, "reviewer.md", "WRITTEN-BY-IMPLEMENT\n")
+				writeLesson(t, e, "gate.md", "CREATED-BY-IMPLEMENT\n")
 				if err := e.git("add", "--", learnedDir); err != nil {
 					t.Error(err)
 				}
 				if commit {
 					commitLessons(t, e)
 				}
-				f.write(s.ReplyPath, "plan reply")
+				f.write(s.ReplyPath, "implementation reply")
 			}
 			requireLessonsApproved(t, e)
 			for _, s := range f.steps {
-				if s.Name == "implement" && !strings.Contains(s.Prompt, "ORIGINAL-LESSON") {
-					t.Error("implementer lost original lesson")
+				if s.Name == "review" && !strings.Contains(s.Prompt, "ORIGINAL-LESSON") {
+					t.Error("reviewer lost original lesson")
 				}
-				if strings.Contains(s.Prompt, "WRITTEN-BY-PLAN") || strings.Contains(s.Prompt, "CREATED-BY-PLAN") {
+				if strings.Contains(s.Prompt, "WRITTEN-BY-IMPLEMENT") || strings.Contains(s.Prompt, "CREATED-BY-IMPLEMENT") {
 					t.Errorf("%s read this run's lessons", s.Name)
 				}
 			}
@@ -359,11 +359,13 @@ func TestAnUnreadableBaseCommitWarnsAndRunsWithoutLessons(t *testing.T) {
 	if err := os.Rename(gitDir, held); err != nil {
 		t.Fatal(err)
 	}
-	f.actions["plan"] = func(s Step) {
-		if err := os.Rename(held, gitDir); err != nil {
-			t.Error(err)
+	e.Verify = func(ctx context.Context, dir string) (VerifyResult, error) {
+		if _, err := os.Stat(held); err == nil {
+			if err := os.Rename(held, gitDir); err != nil {
+				t.Error(err)
+			}
 		}
-		f.write(s.ReplyPath, "plan reply")
+		return passing(ctx, dir)
 	}
 	requireLessonsApproved(t, e)
 	if !strings.Contains(progress.String(), "warning: lessons:") {
