@@ -10,7 +10,7 @@ import (
 
 func scoreCommand(args []string, out io.Writer) error {
 	if len(args) != 2 || args[0] != "show" {
-		return &exitStatusError{code: 2, err: fmt.Errorf("usage: km score show NAME")}
+		return &exitStatusError{code: 2, err: fmt.Errorf("usage: km score (show NAME | check [-worktree DIR] [-name NAME] [-json] FILE)")}
 	}
 	name := args[1]
 	if name == "default" {
