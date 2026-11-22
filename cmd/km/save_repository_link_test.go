@@ -13,7 +13,7 @@ func TestARepositorySaveRefusesALinkedEnsembleDirectoryAndWritesNothingThroughIt
 		t.Run(linked, func(t *testing.T) {
 			home, wt, outside := t.TempDir(), t.TempDir(), t.TempDir()
 			t.Setenv("KAPELLMEISTER_HOME", home)
-			writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = ['claude', 'codex', 'copilot']\n")
+			writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = ['claude', 'codex', 'copilot', 'agy']\n")
 			if err := os.MkdirAll(filepath.Dir(filepath.Join(wt, linked)), 0o755); err != nil {
 				t.Fatal(err)
 			}

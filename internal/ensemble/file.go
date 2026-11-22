@@ -125,24 +125,31 @@ func load(name, path string, portable bool, agents loop.Agents) (Spec, error) {
 	if err != nil {
 		return Spec{}, fmt.Errorf("%s: %w", path, err)
 	}
-	return parse(name, path, string(data), portable, agents)
+	return parse(name, path, string(data), portable, agents, nil)
 }
 
 func Check(name, path, text string, agents loop.Agents) (Spec, error) {
 	if err := checkName(name, path); err != nil {
 		return Spec{}, err
 	}
-	return parse(name, path, text, false, agents)
+	return parse(name, path, text, false, agents, nil)
+}
+
+func CheckText(name, path, text string, agents loop.Agents, available []string) (Spec, error) {
+	if err := checkName(name, path); err != nil {
+		return Spec{}, err
+	}
+	return parse(name, path, text, false, agents, &available)
 }
 
 func CheckPortable(name, path, text string, agents loop.Agents) (Spec, error) {
 	if err := checkName(name, path); err != nil {
 		return Spec{}, err
 	}
-	return parse(name, path, text, true, agents)
+	return parse(name, path, text, true, agents, nil)
 }
 
-func parse(name, path, text string, portable bool, agents loop.Agents) (Spec, error) {
+func parse(name, path, text string, portable bool, agents loop.Agents, available *[]string) (Spec, error) {
 	spec := Spec{Name: name, Path: path, portable: portable}
 	fail := func(key, format string, args ...any) (Spec, error) {
 		return Spec{}, fmt.Errorf("%s: %s: %s", path, key, fmt.Sprintf(format, args...))
@@ -220,7 +227,15 @@ func parse(name, path, text string, portable bool, agents loop.Agents) (Spec, er
 				return fail(key+".tier", "unknown tier %q (want %s)", c.Tier, strings.Join(loop.TierNames, ", "))
 			}
 			for _, agent := range c.Agents {
-				_, pin, err := loop.SplitTier(agent)
+				base, pin, err := loop.SplitTier(agent)
+				if err == nil && available != nil && (strings.Contains(base, ":") || !slices.Contains(*available, base)) {
+					names := strings.Join(*available, ", ")
+					if names == "" {
+						names = "none"
+					}
+					address := (Member{Section: sectionName, Name: chairName}).Address(name)
+					return Spec{}, fmt.Errorf("%s: %s: agent %q is not allowed; text ensembles may only use names from [agents] available (%s)", path, address, agent, names)
+				}
 				if err == nil && c.Tier != "" && pin != "" && pin != c.Tier {
 					return fail(key+".tier", "tier %q conflicts with agent pin %q", c.Tier, pin)
 				}

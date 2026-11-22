@@ -352,3 +352,42 @@ func TestAChairTierMustBeValidAndAgreeWithItsAgentPins(t *testing.T) {
 		}
 	}
 }
+
+func TestTextEnsemblesRefuseEntriesOutsideAvailableNames(t *testing.T) {
+	for _, tc := range []struct {
+		entry, names string
+		available    []string
+	}{
+		{"p:planner:m", "claude, codex", []string{"claude", "codex"}},
+		{"p:planner", "claude", []string{"claude"}},
+		{"codex", "claude", []string{"claude"}},
+		{"claude", "none", nil},
+	} {
+		t.Run(tc.entry+tc.names, func(t *testing.T) {
+			text := fmt.Sprintf("[sections.leads.chairs.planner]\npart='planner'\nagents=[%q]\n", tc.entry)
+			_, err := CheckText("sample", "input.toml", text, loop.BuiltInAgents(), tc.available)
+			if err == nil {
+				t.Fatal("accepted entry")
+			}
+			for _, want := range []string{"input.toml", "leads.planner@sample", fmt.Sprintf("%q", tc.entry), "text ensembles may only use names from [agents] available", "(" + tc.names + ")"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("%q missing from %v", want, err)
+				}
+			}
+		})
+	}
+}
+
+func TestTextEnsemblesAcceptAvailableNamesWithPinsAndChairTiers(t *testing.T) {
+	text := `[sections.leads.chairs.planner]
+part = "planner"
+agents = ["claude@large"]
+[sections.leads.chairs.gate]
+part = "gate"
+agents = ["claude"]
+tier = "small"
+`
+	if _, err := CheckText("sample", "input.toml", text, loop.BuiltInAgents(), []string{"claude"}); err != nil {
+		t.Fatal(err)
+	}
+}

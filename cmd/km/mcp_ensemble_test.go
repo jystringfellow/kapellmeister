@@ -5,9 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/jystringfellow/kapellmeister/internal/loop"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -83,12 +86,13 @@ func TestMcpRunRecordsEnsembleContentAndWhyAndRemovesTheTemporaryFile(t *testing
 	tmp := t.TempDir()
 	t.Setenv("TMPDIR", tmp)
 	c := startMCPClient(t, false)
-	params := map[string]any{"worktree": wt, "task": "probe", "ensemble": "chosen", "ensemble_content": recordedEnsemble, "why": "fits"}
+	content := recordedText(t)
+	params := map[string]any{"worktree": wt, "task": "probe", "ensemble": "chosen", "ensemble_content": content, "why": "fits"}
 	t.Setenv(loop.CAOURLEnv, args[5])
 	d := mcpData(t, c.call("run", params))
 	dir := filepath.Dir(d["output"].(string))
 	b, err := os.ReadFile(filepath.Join(dir, "ensemble.toml"))
-	if err != nil || string(b) != recordedEnsemble {
+	if err != nil || string(b) != content {
 		t.Fatalf("copy %q: %v", b, err)
 	}
 	files, err := filepath.Glob(filepath.Join(tmp, "km-mcp-ensemble-*"))
@@ -112,5 +116,57 @@ func TestMcpRunRecordsEnsembleContentAndWhyAndRemovesTheTemporaryFile(t *testing
 	files, err = filepath.Glob(filepath.Join(tmp, "km-mcp-ensemble-*"))
 	if err != nil || len(files) != 0 {
 		t.Fatalf("temporary files after refusal %v: %v", files, err)
+	}
+}
+
+func TestMcpCheckRefusesAnExplicitSpecInEnsembleContent(t *testing.T) {
+	home, wt := t.TempDir(), t.TempDir()
+	t.Setenv(loop.HomeEnv, home)
+	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable=['claude']\n")
+	content := strings.Replace(sectionedEnsemble, `agents = ["claude"]`, `agents = ["p:planner:m"]`, 1)
+	c := startMCPClient(t, false)
+	got := mcpData(t, c.call("check", map[string]any{"kind": "ensemble", "name": "sample", "content": content, "worktree": wt}))
+	if got["ok"] != false || !strings.Contains(got["errors"].([]any)[0].(string), `leads.planner@sample: agent "p:planner:m"`) {
+		t.Fatal(got)
+	}
+}
+
+func TestMcpRunRefusesTextWithTheSameReasonBeforeAnyWork(t *testing.T) {
+	standing := playStanding(t)
+	wt := standing.Worktree
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
+	defer server.Close()
+	t.Setenv(loop.CAOURLEnv, server.URL)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	content := strings.Replace(recordedText(t), `agents = ["mock"]`, `agents = ["p:planner:m"]`, 1)
+	path := filepath.Join(t.TempDir(), "sample.toml")
+	writeFile(t, path, content)
+	before := safetyGit(t, wt, "worktree", "list", "--porcelain")
+	var out, diag bytes.Buffer
+	cli := runAt(context.Background(), []string{"-repo=" + wt, "-task=probe", "-ensemble=sample", "-ensemble-file=" + path, "-cao=" + server.URL, "-detach"}, &out, &diag, nil)
+	if cli == nil {
+		t.Fatal("CLI accepted text")
+	}
+	c := startMCPClient(t, false)
+	msg := mcpError(t, c.call("run", map[string]any{"repo": wt, "task": "probe", "ensemble": "sample", "ensemble_content": content}))
+	reason := strings.TrimPrefix(cli.Error(), path)
+	if !strings.Contains(msg, reason) || !strings.Contains(msg, "km-mcp-ensemble-") || !strings.Contains(reason, `(mock)`) {
+		t.Fatalf("CLI %v MCP %s", cli, msg)
+	}
+	if calls.Load() != 0 || before != safetyGit(t, wt, "worktree", "list", "--porcelain") {
+		t.Fatalf("requests=%d or worktrees changed", calls.Load())
+	}
+	entries, err := os.ReadDir(filepath.Join(loop.StateDir(), "runs"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatal(entries)
+	}
+	files, err := filepath.Glob(filepath.Join(tmp, "km-mcp-*"))
+	if err != nil || len(files) != 0 {
+		t.Fatal(files, err)
 	}
 }

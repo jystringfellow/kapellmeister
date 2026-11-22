@@ -20,7 +20,7 @@ import (
 func TestSaveWritesTheExactBytesFromAFile(t *testing.T) {
 	home, wt := t.TempDir(), t.TempDir()
 	t.Setenv("KAPELLMEISTER_HOME", home)
-	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = [\"claude\", \"codex\", \"copilot\"]\n")
+	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = [\"claude\", \"codex\", \"copilot\", \"agy\"]\n")
 	content := strings.TrimSuffix(sectionedEnsemble, "\n")
 	src := filepath.Join(wt, "input.toml")
 	writeFile(t, src, content)
@@ -46,7 +46,7 @@ func TestSaveRefusesConflictsAndLinksAndReplacesOnlyWhenAllowed(t *testing.T) {
 			t.Run(fmt.Sprintf("repo=%t/replace=%t", repo, replace), func(t *testing.T) {
 				home, wt := t.TempDir(), t.TempDir()
 				t.Setenv("KAPELLMEISTER_HOME", home)
-				writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = ['claude', 'codex', 'copilot']\n")
+				writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = ['claude', 'codex', 'copilot', 'agy']\n")
 				dest := filepath.Join(home, "ensembles", "sample.toml")
 				if repo {
 					dest = filepath.Join(wt, ".kapellmeister", "ensembles", "sample.toml")
@@ -106,7 +106,7 @@ func TestSaveReportsCheckErrorsAndReadiness(t *testing.T) {
 	}
 	out.Reset()
 	err = saveCommand([]string{"-name=sample", "-worktree=" + wt, "-"}, strings.NewReader(sectionedEnsemble), &out, &diag)
-	if err != nil || !strings.Contains(out.String(), "not ready here:") {
+	if err == nil || !strings.Contains(out.String(), "text ensembles may only use names") {
 		t.Fatal(err, out.String())
 	}
 }
@@ -114,7 +114,7 @@ func TestSaveReportsCheckErrorsAndReadiness(t *testing.T) {
 func TestSaveReadsARunRecordByPrefixAndRefusesANamedRun(t *testing.T) {
 	home, wt, records := t.TempDir(), t.TempDir(), t.TempDir()
 	t.Setenv("KAPELLMEISTER_HOME", home)
-	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = ['claude', 'codex', 'copilot']\n[report]\ndirs = ['"+records+"']\n")
+	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = ['claude', 'codex', 'copilot', 'agy']\n[report]\ndirs = ['"+records+"']\n")
 	reportFixture(t, records, "recorded", "", "app", "original", "approved")
 	writeFile(t, filepath.Join(records, "recorded", "ensemble.toml"), sectionedEnsemble)
 	var out, diag bytes.Buffer
@@ -142,7 +142,7 @@ func TestSaveHonorsShadowingAndConfiguredNames(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/%t", kind, replace), func(t *testing.T) {
 				home, wt := t.TempDir(), t.TempDir()
 				t.Setenv("KAPELLMEISTER_HOME", home)
-				config := "[agents]\navailable = ['claude','codex','copilot']\n"
+				config := "[agents]\navailable = ['claude','codex','copilot','agy']\n"
 				existing := filepath.Join(wt, ".kapellmeister", "ensembles", "sample.toml")
 				if kind == "repository-shadowed-by-user" {
 					existing = filepath.Join(home, "ensembles", "sample.toml")
@@ -227,7 +227,7 @@ func TestSaveNamesRunRecordErrorsAndOmitsAnUnknownSource(t *testing.T) {
 func TestSaveReportsTheUserFileWhenBothDestinationsExist(t *testing.T) {
 	home, wt := t.TempDir(), t.TempDir()
 	t.Setenv("KAPELLMEISTER_HOME", home)
-	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = ['claude','codex','copilot']\n")
+	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = ['claude','codex','copilot','agy']\n")
 	user := filepath.Join(home, "ensembles", "sample.toml")
 	repo := filepath.Join(wt, ".kapellmeister", "ensembles", "sample.toml")
 	writeFile(t, user, "user")
@@ -245,7 +245,7 @@ func TestSaveSourcesAppearInRepertoireWithTheirFitAndReadiness(t *testing.T) {
 			t.Run(source+"/"+location, func(t *testing.T) {
 				home, wt, records := t.TempDir(), t.TempDir(), t.TempDir()
 				t.Setenv(loop.HomeEnv, home)
-				writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = ['claude','codex','copilot']\n[report]\ndirs = ['"+records+"']\n")
+				writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = ['claude','codex','copilot','agy']\n[report]\ndirs = ['"+records+"']\n")
 				content := strings.TrimSuffix(sectionedEnsemble, "\n") + "  "
 				args := []string{"-json", "-name=sample", "-worktree=" + wt}
 				if location == "repository" {
@@ -363,7 +363,7 @@ func TestSaveRefusesDanglingLinksAndDirectoriesAtTheDestination(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/%t", kind, replace), func(t *testing.T) {
 				home, wt := t.TempDir(), t.TempDir()
 				t.Setenv(loop.HomeEnv, home)
-				writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable=['claude','codex','copilot']\n")
+				writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable=['claude','codex','copilot','agy']\n")
 				dest := filepath.Join(home, "ensembles", "sample.toml")
 				if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 					t.Fatal(err)
@@ -399,7 +399,7 @@ func TestSaveRefusesDanglingLinksAndDirectoriesAtTheDestination(t *testing.T) {
 func TestSaveReportsItsOutputAndExitCodesWithoutCAORequests(t *testing.T) {
 	home, wt := t.TempDir(), t.TempDir()
 	t.Setenv(loop.HomeEnv, home)
-	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable=['claude','codex','copilot']\n")
+	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable=['claude','codex','copilot','agy']\n")
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1) }))
 	defer server.Close()
@@ -455,26 +455,20 @@ func TestSaveReportsItsOutputAndExitCodesWithoutCAORequests(t *testing.T) {
 	}
 }
 
-func TestSaveReturnsReadinessInTextAndJSON(t *testing.T) {
+func TestSaveRefusesUnavailableNamesInTextAndJSON(t *testing.T) {
 	home, wt := t.TempDir(), t.TempDir()
 	t.Setenv(loop.HomeEnv, home)
 	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable=['claude']\n")
-	var out, diag bytes.Buffer
-	err := saveCommand([]string{"-json", "-name=json", "-worktree=" + wt, "-"}, strings.NewReader(sectionedEnsemble), &out, &diag)
-	var doc saveResult
-	if err != nil || json.Unmarshal(out.Bytes(), &doc) != nil || doc.Ready || doc.Reason == "" || len(doc.Errors) != 0 {
-		t.Fatal(err, out.String())
-	}
-	out.Reset()
-	err = saveCommand([]string{"-name=text", "-worktree=" + wt, "-"}, strings.NewReader(sectionedEnsemble), &out, &diag)
-	want := "saved text to " + filepath.Join(home, "ensembles", "text.toml") + "\nnot ready here: " + plain(doc.Reason) + "\n"
-	if err != nil || out.String() != want {
-		t.Fatal(err, out.String(), want)
-	}
-	for _, name := range []string{"json", "text"} {
-		data, e := os.ReadFile(filepath.Join(home, "ensembles", name+".toml"))
-		if e != nil || string(data) != sectionedEnsemble {
-			t.Fatal(e)
+	for _, flag := range []string{"", "-json"} {
+		args := []string{"-name=sample", "-worktree=" + wt}
+		if flag != "" {
+			args = append(args, flag)
+		}
+		args = append(args, "-")
+		var out, diag bytes.Buffer
+		err := saveCommand(args, strings.NewReader(sectionedEnsemble), &out, &diag)
+		if err == nil || !strings.Contains(out.String(), "text ensembles may only use names") {
+			t.Fatal(err, out.String())
 		}
 	}
 }
@@ -482,15 +476,15 @@ func TestSaveReturnsReadinessInTextAndJSON(t *testing.T) {
 func TestSaveRequiresPortableTextAndAnExistingRepositoryWorktree(t *testing.T) {
 	home, wt := t.TempDir(), t.TempDir()
 	t.Setenv(loop.HomeEnv, home)
-	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable=['claude','codex','copilot']\n")
-	content := strings.Replace(sectionedEnsemble, `agents = ["claude"]`, `agents = ["p:planner:m"]`, 1)
+	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable=['claude','codex','copilot','agy']\n")
+	content := sectionedEnsemble
 	var out, diag bytes.Buffer
 	err := saveCommand([]string{"-name=user", "-worktree=" + wt, "-"}, strings.NewReader(content), &out, &diag)
 	if err != nil {
 		t.Fatal(err, out.String())
 	}
 	out.Reset()
-	err = saveCommand([]string{"-name=repo", "-repository", "-worktree=" + wt, "-"}, strings.NewReader(content), &out, &diag)
+	err = saveCommand([]string{"-name=repo", "-repository", "-worktree=" + wt, "-"}, strings.NewReader(strings.Replace(content, `agents = ["claude"]`, `agents = ["p:planner:m"]`, 1)), &out, &diag)
 	if err == nil {
 		t.Fatal(out.String())
 	}
@@ -514,7 +508,7 @@ func TestSaveRefusesConfiguredNamesInTheRepositoryWithOrWithoutReplace(t *testin
 			home, wt := t.TempDir(), t.TempDir()
 			t.Setenv(loop.HomeEnv, home)
 			config := filepath.Join(home, "config.toml")
-			writeFile(t, config, "[agents]\navailable=['claude','codex','copilot']\n[ensembles.sample]\ngate='claude'\n")
+			writeFile(t, config, "[agents]\navailable=['claude','codex','copilot','agy']\n[ensembles.sample]\ngate='claude'\n")
 			args := []string{"-name=sample", "-worktree=" + wt, "-repository"}
 			if replace {
 				args = append(args, "-replace")
@@ -529,5 +523,64 @@ func TestSaveRefusesConfiguredNamesInTheRepositoryWithOrWithoutReplace(t *testin
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestSaveRefusesAnExplicitSpecAndWritesNothing(t *testing.T) {
+	home, wt := t.TempDir(), t.TempDir()
+	t.Setenv("KAPELLMEISTER_HOME", home)
+	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = ['claude']\n")
+	content := strings.Replace(sectionedEnsemble, `agents = ["claude"]`, `agents = ["p:planner:m"]`, 1)
+	var out, diag bytes.Buffer
+	err := saveCommand([]string{"-name=sample", "-worktree=" + wt, "-"}, strings.NewReader(content), &out, &diag)
+	if err == nil || !strings.Contains(out.String(), "text ensembles may only use names from [agents] available") {
+		t.Fatalf("%v %s", err, out.String())
+	}
+	if _, err := os.Stat(filepath.Join(home, "ensembles", "sample.toml")); !os.IsNotExist(err) {
+		t.Fatalf("saved: %v", err)
+	}
+}
+
+func TestAllSaveSourcesRefuseExplicitSpecsWithoutWriting(t *testing.T) {
+	for _, source := range []string{"file", "stdin", "run"} {
+		for _, repo := range []bool{false, true} {
+			for _, jsonOutput := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/repository=%t/json=%t", source, repo, jsonOutput), func(t *testing.T) {
+					home, wt, records := t.TempDir(), t.TempDir(), t.TempDir()
+					t.Setenv(loop.HomeEnv, home)
+					writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable=['claude']\n[report]\ndirs=['"+records+"']\n")
+					content := strings.Replace(sectionedEnsemble, `agents = ["claude"]`, `agents = ["p:planner:m"]`, 1)
+					path := filepath.Join(t.TempDir(), "input.toml")
+					writeFile(t, path, content)
+					reportFixture(t, records, "recorded", "", "app", "text", "approved")
+					writeFile(t, filepath.Join(records, "recorded", "ensemble.toml"), content)
+					args := []string{"-name=sample", "-worktree=" + wt}
+					if repo {
+						args = append(args, "-repository")
+					}
+					if jsonOutput {
+						args = append(args, "-json")
+					}
+					switch source {
+					case "file":
+						args = append(args, path)
+					case "stdin":
+						args = append(args, "-")
+					case "run":
+						args = append(args, "-run=recorded")
+					}
+					var out, diag bytes.Buffer
+					err := saveCommand(args, strings.NewReader(content), &out, &diag)
+					if err == nil || !strings.Contains(out.String(), "text ensembles may only use names from [agents] available") || !strings.Contains(out.String(), "p:planner:m") {
+						t.Fatal(err, out.String(), diag.String())
+					}
+					for _, dest := range []string{filepath.Join(home, "ensembles", "sample.toml"), filepath.Join(wt, ".kapellmeister", "ensembles", "sample.toml")} {
+						if _, err := os.Stat(dest); !os.IsNotExist(err) {
+							t.Fatalf("%s: %v", dest, err)
+						}
+					}
+				})
+			}
+		}
 	}
 }

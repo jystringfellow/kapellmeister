@@ -49,7 +49,7 @@ func saveCommand(args []string, in io.Reader, out, stderr io.Writer) error {
 	result := saveResult{Schema: 1, Name: *name, Errors: []string{}}
 	data, label, err := saveSource(fs.Args(), *runID, runSet, in, stderr)
 	if err == nil {
-		_, result.Reason, err = checkEnsemble(*name, label, string(data), *wt, stderr)
+		_, result.Reason, err = checkEnsemble(*name, label, string(data), *wt, stderr, true)
 	}
 	var settings loop.Settings
 	if err == nil {

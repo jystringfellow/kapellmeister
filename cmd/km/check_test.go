@@ -43,7 +43,7 @@ func TestChecksReportReadinessFitNamesAndInputLimits(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("KAPELLMEISTER_HOME", home)
 	wt := t.TempDir()
-	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = [\"claude\", \"codex\", \"copilot\"]\n")
+	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = [\"claude\", \"codex\", \"copilot\", \"agy\"]\n")
 	cases := []struct {
 		kind, name, content string
 		ok, ready           bool
@@ -148,7 +148,7 @@ func TestDefaultEnsembleCheckDoesNotReadRepositoryScores(t *testing.T) {
 func TestCheckCommandsReportTextJSONNamesAndUsage(t *testing.T) {
 	home, wt := t.TempDir(), t.TempDir()
 	t.Setenv(loop.HomeEnv, home)
-	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = [\"claude\", \"codex\", \"copilot\"]\n")
+	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = [\"claude\", \"codex\", \"copilot\", \"agy\"]\n")
 	for _, kind := range []string{"ensemble", "score"} {
 		content := sectionedEnsemble
 		if kind == "score" {
@@ -324,7 +324,7 @@ func TestChecksAndMcpChecksMakeNoRequestsAndWriteNoFiles(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1); http.Error(w, "unexpected", 500) }))
 	defer server.Close()
 	t.Setenv(loop.CAOURLEnv, server.URL)
-	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = [\"claude\", \"codex\", \"copilot\"]\n")
+	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = [\"claude\", \"codex\", \"copilot\", \"agy\"]\n")
 	snapshot := func() map[string]string {
 		result := map[string]string{}
 		for _, root := range []string{home, wt} {
@@ -373,7 +373,7 @@ func TestChecksAndMcpChecksMakeNoRequestsAndWriteNoFiles(t *testing.T) {
 func TestMcpChecksValidateContentAndRepertoireMatchesCommands(t *testing.T) {
 	home, wt := t.TempDir(), t.TempDir()
 	t.Setenv(loop.HomeEnv, home)
-	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = [\"claude\", \"codex\", \"copilot\"]\n")
+	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = [\"claude\", \"codex\", \"copilot\", \"agy\"]\n")
 	c := startMCPClient(t, false)
 	for _, worktree := range []string{"", wt} {
 		args := []string{"-json"}
@@ -419,7 +419,7 @@ func TestMcpChecksValidateContentAndRepertoireMatchesCommands(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = [\"claude\"]\n")
 	got := mcpData(t, c.call("check", map[string]any{"kind": "ensemble", "name": "sample", "content": sectionedEnsemble, "worktree": wt}))
-	if got["ok"] != true || got["ready"] != false || got["reason"] == "" {
+	if got["ok"] != false || !strings.Contains(got["errors"].([]any)[0].(string), "text ensembles may only use names") {
 		t.Fatal(got)
 	}
 }
@@ -460,7 +460,7 @@ func TestEnsembleCheckUsesItsNamedScoreBeforeReportingReadiness(t *testing.T) {
 func TestCheckCommandsExitWithTheirDocumentedStatusesAndHonorNameOverrides(t *testing.T) {
 	home, wt := t.TempDir(), t.TempDir()
 	t.Setenv(loop.HomeEnv, home)
-	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = [\"claude\", \"codex\", \"copilot\"]\n")
+	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = [\"claude\", \"codex\", \"copilot\", \"agy\"]\n")
 	for _, kind := range []string{"ensemble", "score"} {
 		text := sectionedEnsemble
 		if kind == "score" {
@@ -485,5 +485,50 @@ func TestCheckCommandsExitWithTheirDocumentedStatusesAndHonorNameOverrides(t *te
 				t.Fatal(kind, code, out, diag.String(), err)
 			}
 		}
+	}
+}
+
+func TestEnsembleCheckAppliesTheTextRuleOnlyWithText(t *testing.T) {
+	home, wt := t.TempDir(), t.TempDir()
+	t.Setenv("KAPELLMEISTER_HOME", home)
+	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = [\"claude\"]\n")
+	content := strings.Replace(sectionedEnsemble, `agents = ["claude"]`, `agents = ["p:planner:m"]`, 1)
+	for _, held := range []bool{false, true} {
+		args := []string{"-json", "-name=sample", "-worktree=" + wt}
+		if held {
+			args = append(args, "-text")
+		}
+		args = append(args, "-")
+		var out, diag bytes.Buffer
+		err := checkCommand("ensemble", args, strings.NewReader(content), &out, &diag, "")
+		if !held && err != nil {
+			t.Fatalf("ordinary check: %v %s", err, out.String())
+		}
+		if held && (err == nil || !strings.Contains(out.String(), "text ensembles may only use names from [agents] available") || !strings.Contains(out.String(), "p:planner:m")) {
+			t.Fatalf("text check: %v %s %s", err, out.String(), diag.String())
+		}
+	}
+}
+
+func TestScoreCheckDoesNotAcceptTextFlag(t *testing.T) {
+	var out, diag bytes.Buffer
+	err := checkCommand("score", []string{"-text", "-name=sample", "-"}, strings.NewReader(""), &out, &diag, "")
+	var status *exitStatusError
+	if !errors.As(err, &status) || status.code != 2 {
+		t.Fatal(err)
+	}
+}
+
+func TestTextEnsembleAcceptsAnAvailableNameWithATierPinAndAChairTier(t *testing.T) {
+	home, wt := t.TempDir(), t.TempDir()
+	t.Setenv(loop.HomeEnv, home)
+	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable=['claude']\n")
+	content := strings.ReplaceAll(sectionedEnsemble, `agents = ["codex", "claude"]`, `agents = ["claude"]`)
+	content = strings.ReplaceAll(content, `agents = ["copilot"]`, `agents = ["claude"]`)
+	content = strings.ReplaceAll(content, `agents = ["agy", "claude@large"]`, `agents = ["claude@large"]`)
+	content = strings.Replace(content, `part = "planner"`, "part = \"planner\"\ntier = \"large\"", 1)
+	var out, diag bytes.Buffer
+	if err := checkCommand("ensemble", []string{"-text", "-name=sample", "-worktree=" + wt, "-"}, strings.NewReader(content), &out, &diag, ""); err != nil {
+		t.Fatal(err, out.String(), diag.String())
 	}
 }
