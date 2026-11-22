@@ -27,9 +27,10 @@ type scoreStepFile struct {
 	Next        map[string]string `toml:"next"`
 }
 type scoreFile struct {
-	Rounds *int                     `toml:"rounds"`
-	Parts  map[string]scorePartFile `toml:"parts"`
-	Steps  []scoreStepFile          `toml:"steps"`
+	Description *string                  `toml:"description"`
+	Rounds      *int                     `toml:"rounds"`
+	Parts       map[string]scorePartFile `toml:"parts"`
+	Steps       []scoreStepFile          `toml:"steps"`
 }
 
 func scoreError(path, subject, format string, args ...any) error {
@@ -55,7 +56,7 @@ func decodeScoreWithPartText(text, path, name string, ownPartText bool) (Score, 
 	if _, err := toml.Decode(text, &raw); err != nil {
 		return Score{}, scoreError(path, "", "%v", err)
 	}
-	if err := scoreKeys(path, "", raw, "rounds", "parts", "steps"); err != nil {
+	if err := scoreKeys(path, "", raw, "description", "rounds", "parts", "steps"); err != nil {
 		return Score{}, err
 	}
 	if parts, ok := raw["parts"].(map[string]any); ok {
@@ -86,6 +87,12 @@ func decodeScoreWithPartText(text, path, name string, ownPartText bool) (Score, 
 		return Score{}, scoreError(path, "", "%v", err)
 	}
 	score := Score{Name: name, Classifier: "classifier"}
+	if f.Description != nil {
+		if strings.TrimSpace(*f.Description) == "" || len(*f.Description) > 512 {
+			return Score{}, scoreError(path, "", "description must be non-empty text of at most 512 bytes")
+		}
+		score.Description = *f.Description
+	}
 	if f.Rounds != nil {
 		if *f.Rounds < 1 {
 			return Score{}, scoreError(path, "", "rounds must be at least 1")

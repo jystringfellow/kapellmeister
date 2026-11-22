@@ -157,6 +157,7 @@ km audition -worktree DIR [-ensemble thorough]   # can this ensemble play? no re
 km rehearse -worktree DIR -task-file task.md [-ensemble thorough]  # brief and leave standing
 km play SESSION [-max-rounds N] [-verify CMD] [-timeout D] [-cao URL]  # run the score
 km reseat SESSION ADDRESS [-agent SPEC] [-timeout D] [-cao URL]  # replace one occupant
+km repertoire [-worktree DIR] [-json]           # list ensembles and scores available here
 km ensemble list                                # list standing ensembles
 km ensemble down SESSION                        # take one down
 km report [-parts] [-json] [-since DATE] [-repository NAME] [-max-depth N] [-max-entries N] [DIR...]  # summarize run records
@@ -663,6 +664,17 @@ old occupant and record intact and deletes any new terminal. `-timeout` defaults
 worktree. Reseat never deletes the session or changes the other chairs. Run `km play SESSION`
 when the ensemble is ready.
 
+## Repertoire
+
+`km repertoire [-worktree DIR] [-json]` lists user and repository ensemble files,
+config ensembles, built-in scores and user and repository scores. An ensemble is ready
+when its chairs have available agents and fit its score. The JSON object has schema 1,
+with `ensembles` and `scores` arrays; errors and readiness reasons appear on their rows.
+The command makes no CAO request and exits successfully when entries are not ready.
+Repository scores and parts are refused when `[run] repository_scores = false`.
+Repository scores come from the base commit; if it cannot be read, a note appears on
+standard error while built-in and user scores remain listed.
+
 ## Ensemble files
 
 An ensemble file seats chairs in sections. A repository can check one in at
@@ -709,6 +721,9 @@ agents = ["claude@small"]
 part = "tester"
 agents = ["claude"]
 ```
+
+An optional top-level `description` is nonempty text of at most 512 bytes.
+`km repertoire` shows it; it does not change how a run plays.
 
 Each chair has the address `section.chair@ensemble`, such as `review.security@thorough`, and
 plays one part. The built-in parts are `planner`, `implementer`, `reviewer`, `gate`, `classifier` and the optional `tester`.
@@ -919,7 +934,9 @@ classifier is a service and is always accepted. A review, decide or test step ne
 seated; custom parts need an ensemble file. Roles outside a file score are refused. With a
 built-in score, role flags outside the score are refused and unused roles from config are ignored.
 
-The only score keys are `rounds`, `[parts.NAME]` and `[[steps]]`. Part tables accept `memory`
+The only score keys are `description`, `rounds`, `[parts.NAME]` and `[[steps]]`.
+The optional `description` is nonempty text of at most 512 bytes, shown by
+`km repertoire` and `km score show`; it does not change how a run plays. Part tables accept `memory`
 (`fresh`, the default, or `resume`), `resume_tokens`, `resume_steps` and `optional` (default false).
 A part with a review-kind step or a `chairs = "all"` step is always fresh and is refused if
 it declares resume. Optional parts may play only test steps or the background step.

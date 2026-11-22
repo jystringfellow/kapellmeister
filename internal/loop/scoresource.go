@@ -42,15 +42,22 @@ func LoadScore(name string, src ScoreSource) (LoadedScore, error) {
 	if !scoreName.MatchString(name) {
 		return LoadedScore{}, fmt.Errorf("invalid score name %q", name)
 	}
+	r, err := newScoreReader(src)
+	if err != nil {
+		return LoadedScore{}, err
+	}
+	return r.load(name)
+}
+func newScoreReader(src ScoreSource) (scoreReader, error) {
 	r := scoreReader{src: src, engine: &Engine{Config: Config{Worktree: src.Worktree}}, tree: map[string][]string{}}
 	if src.Worktree != "" {
 		base, err := r.engine.gitOutput("rev-parse", "HEAD")
 		if err != nil {
-			return LoadedScore{}, err
+			return r, err
 		}
 		entries, err := r.engine.gitOutput("ls-tree", "-r", "-z", strings.TrimSpace(base), "--", ".kapellmeister/scores", ".kapellmeister/parts")
 		if err != nil {
-			return LoadedScore{}, err
+			return r, err
 		}
 		for _, entry := range strings.Split(entries, "\x00") {
 			meta, path, ok := strings.Cut(entry, "\t")
@@ -59,6 +66,9 @@ func LoadScore(name string, src ScoreSource) (LoadedScore, error) {
 			}
 		}
 	}
+	return r, nil
+}
+func (r scoreReader) load(name string) (LoadedScore, error) {
 	for _, builtin := range append([]string{"default"}, BuiltinScoreNames()...) {
 		if err := r.reserved("score", builtin); err != nil {
 			return LoadedScore{}, err
@@ -193,3 +203,40 @@ func (r scoreReader) read(kind, name string) (string, ScoreFile, error) {
 	return string(data), file, nil
 }
 func ScoreFileState(path string) string { return scriptState(path) }
+
+type ScoreEntry struct {
+	Name, Source string
+	Score        Score
+	Err          error
+}
+
+func ListScores(src ScoreSource) ([]ScoreEntry, error) {
+	r, note := newScoreReader(src)
+	entries := []ScoreEntry{{Name: "default", Source: "built-in", Score: DefaultScore()}}
+	for _, name := range BuiltinScoreNames() {
+		score, _ := BuiltinScore(name)
+		entries = append(entries, ScoreEntry{Name: name, Source: "built-in", Score: score})
+	}
+	names := map[string]string{}
+	for path := range r.tree {
+		const prefix = ".kapellmeister/scores/"
+		if strings.HasPrefix(path, prefix) {
+			name := strings.TrimSuffix(strings.TrimPrefix(path, prefix), ".toml")
+			if scoreName.MatchString(name) && path == prefix+name+".toml" {
+				names[name] = "repository"
+			}
+		}
+	}
+	paths, _ := filepath.Glob(filepath.Join(src.Home, "scores", "*.toml"))
+	for _, path := range paths {
+		name := strings.TrimSuffix(filepath.Base(path), ".toml")
+		if scoreName.MatchString(name) {
+			names[name] = "user"
+		}
+	}
+	for name, source := range names {
+		loaded, err := r.load(name)
+		entries = append(entries, ScoreEntry{Name: name, Source: source, Score: loaded.Score, Err: err})
+	}
+	return entries, note
+}

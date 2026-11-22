@@ -1,3 +1,4 @@
+description = "Two reviewers from different agents, a gate and a tester."
 [sections.leads.chairs.planner]
 part = "planner"
 agents = ["claude"]

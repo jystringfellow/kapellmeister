@@ -38,6 +38,7 @@ const usage = `usage:
   km rehearse -worktree DIR (-task TEXT | -task-file FILE) [-ensemble NAME]  brief the ensemble and leave it standing
   km play SESSION [-max-rounds N] [-verify CMD] [-timeout D] [-cao URL]  run the score on a standing ensemble
   km reseat SESSION ADDRESS [-agent SPEC] [-timeout D] [-cao URL]  replace one chair's occupant
+  km repertoire [-worktree DIR] [-json]                      list the ensembles and scores this machine can play
   km ensemble list                                         list standing ensembles
   km ensemble down [-cao URL] SESSION                       take down a standing ensemble
   km report [-json] [-since DATE] [-repository NAME] [-max-depth N] [-max-entries N] [DIR...]   summarize run records
@@ -100,6 +101,8 @@ func execute(args []string, stderr io.Writer) int {
 		err = playCommand(args[1:])
 	case "reseat":
 		err = reseatCommand(args[1:])
+	case "repertoire":
+		err = repertoireCommand(args[1:], os.Stdout, stderr)
 	case "ensemble":
 		err = ensembleCommand(args[1:], os.Stdout)
 	case "report":

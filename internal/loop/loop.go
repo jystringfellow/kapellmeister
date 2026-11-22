@@ -910,7 +910,10 @@ type review struct {
 func (e *Engine) parallelReplies(ctx context.Context, spec ScoreStep, round int, hand handoff, after func(int, []review, []Step)) ([]review, error) {
 	chairs := e.Config.Chairs.Of(spec.Part)
 	if len(chairs) == 0 {
-		return nil, errors.New("no reviewers configured")
+		if spec.Kind == KindReview && spec.Part == "reviewer" {
+			return nil, errors.New("no reviewers configured")
+		}
+		return nil, fmt.Errorf("no %s chairs configured", spec.Part)
 	}
 	if e.Reseater != nil {
 		label := "review chair"
