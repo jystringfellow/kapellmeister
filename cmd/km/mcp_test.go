@@ -22,12 +22,13 @@ import (
 )
 
 type kmMCPClient struct {
-	t    *testing.T
-	in   io.WriteCloser
-	out  *bufio.Reader
-	done chan error
-	seq  int
-	diag bytes.Buffer
+	initial map[string]any
+	t       *testing.T
+	in      io.WriteCloser
+	out     *bufio.Reader
+	done    chan error
+	seq     int
+	diag    bytes.Buffer
 }
 
 func startMCPClient(t *testing.T, process bool) *kmMCPClient {
@@ -61,7 +62,7 @@ func startMCPClient(t *testing.T, process bool) *kmMCPClient {
 		go func() { c.done <- mcpAt(context.Background(), r, ow); ow.Close() }()
 	}
 	t.Cleanup(func() { c.close() })
-	c.request("initialize", map[string]any{"protocolVersion": "2025-11-25", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "tests", "version": "1"}})
+	c.initial = c.request("initialize", map[string]any{"protocolVersion": "2025-11-25", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "tests", "version": "1"}})
 	return c
 }
 func (c *kmMCPClient) close() {
@@ -177,7 +178,7 @@ func TestTheRunToolSchemaOffersNoWayToPassACommand(t *testing.T) {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
-		if !reflect.DeepEqual(keys, []string{"base", "ensemble", "repo", "score", "task", "worktree"}) || schema["additionalProperties"] != false {
+		if !reflect.DeepEqual(keys, []string{"base", "ensemble", "ensemble_content", "repo", "score", "task", "why", "worktree"}) || schema["additionalProperties"] != false {
 			t.Fatal(schema)
 		}
 	}

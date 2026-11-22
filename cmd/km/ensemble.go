@@ -58,6 +58,12 @@ func lineUp(s loop.Settings, worktree, name string, roles map[string]*string) (l
 		}
 		return s, chairs, members, nil
 	}
+	return lineUpSpec(s, worktree, name, roles, spec)
+}
+
+func lineUpSpec(s loop.Settings, worktree, name string, roles map[string]*string, spec ensemble.Spec) (loop.Settings, loop.Chairs, []ensemble.Member, error) {
+	_, inConfig := s.Ensembles[name]
+	var err error
 	if s.ScoreName != "" {
 		return s, loop.Chairs{}, nil, fmt.Errorf("-score cannot override ensemble %s from %s; edit its score key", name, spec.Path)
 	}
@@ -208,4 +214,20 @@ func loadSelectedScore(s loop.Settings, worktree, name string) (loop.Settings, e
 
 func ensembleScoreName(name, worktree string) (string, error) {
 	return ensemble.ScoreName(name, loop.Home(), worktree)
+}
+
+func ensembleSourceOf(s loop.Settings, worktree, name string) string {
+	if name == "" {
+		return ""
+	}
+	if _, portable, found := ensemble.Locate(name, loop.Home(), worktree); found {
+		if portable {
+			return "repository"
+		}
+		return "user"
+	}
+	if _, found := s.Ensembles[name]; found {
+		return "config"
+	}
+	return ""
 }

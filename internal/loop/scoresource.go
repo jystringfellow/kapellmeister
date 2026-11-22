@@ -157,7 +157,7 @@ func (r scoreReader) read(kind, name string) (string, ScoreFile, error) {
 		return fmt.Errorf("%s: %s file is %d bytes, over the %d-byte limit", path, kind, size, limit)
 	}
 	if info, err := os.Stat(path); err == nil && info.Mode()&os.ModeNamedPipe != 0 {
-		return "", file, fmt.Errorf("%s: named pipe is not a regular file", path)
+		return "", file, NonRegularFileError(path, os.ModeNamedPipe)
 	}
 	var data []byte
 	input, err := os.Open(path)
@@ -280,4 +280,11 @@ func LoadScoreLenient(name string, src ScoreSource) (LoadedScore, error, error) 
 	r, note := newScoreReader(src)
 	loaded, err := r.load(name)
 	return loaded, note, err
+}
+
+func NonRegularFileError(path string, mode os.FileMode) error {
+	if mode&os.ModeNamedPipe != 0 {
+		return fmt.Errorf("%s: named pipe is not a regular file", path)
+	}
+	return fmt.Errorf("%s: not a regular file", path)
 }

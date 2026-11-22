@@ -11,6 +11,7 @@ import (
 
 	"github.com/jystringfellow/kapellmeister/internal/ensemble"
 	"github.com/jystringfellow/kapellmeister/internal/loop"
+	"golang.org/x/sys/unix"
 )
 
 type checkResult struct {
@@ -54,24 +55,7 @@ func checkCommand(kind string, args []string, in io.Reader, out, stderr io.Write
 		ready := false
 		result.Ready = &ready
 	}
-	var err error
-	if path != "-" {
-		var f *os.File
-		f, err = os.Open(path)
-		if err != nil {
-			err = fmt.Errorf("%s: %w", label, err)
-		} else {
-			defer f.Close()
-			in = f
-		}
-	}
-	var data []byte
-	if err == nil {
-		data, err = io.ReadAll(io.LimitReader(in, loop.ScoreSizeLimit+1))
-	}
-	if err == nil && len(data) > loop.ScoreSizeLimit {
-		err = fmt.Errorf("%s: %s file is %d bytes, over the %d-byte limit", label, kind, len(data), loop.ScoreSizeLimit)
-	}
+	data, err := readTextFile(kind, label, path, in)
 	if err == nil {
 		err = checkContent(&result, label, string(data), *worktree, stderr)
 	}
@@ -119,23 +103,69 @@ func checkContent(result *checkResult, label, content, worktree string, stderr i
 		}
 		return err
 	}
-	spec, err := ensemble.Check(result.Name, label, content, settings.Defined)
+	_, reason, err := checkEnsemble(result.Name, label, content, worktree, stderr)
 	if err != nil {
 		return err
+	}
+	result.Reason = reason
+	*result.Ready = reason == ""
+	return nil
+}
+
+func checkEnsemble(name, label, content, worktree string, stderr io.Writer) (ensemble.Spec, string, error) {
+	home := loop.Home()
+	settings, err := loop.LoadSettings(home, worktree)
+	if err != nil {
+		return ensemble.Spec{}, "", err
+	}
+	source := loop.ScoreSource{Home: home, Worktree: worktree, AllowRepository: settings.RepositoryScores}
+	note := func(err error) {
+		if err != nil {
+			fmt.Fprintf(stderr, "note: repository scores not read: %v\n", err)
+		}
+	}
+	spec, err := ensemble.Check(name, label, content, settings.Defined)
+	if err != nil {
+		return spec, "", err
 	}
 	score := loop.DefaultScore()
 	if spec.Score != "" {
 		loaded, n, e := loop.LoadScoreLenient(spec.Score, source)
 		note(n)
 		if e != nil {
-			return fmt.Errorf("%s: %w", label, e)
+			return spec, "", fmt.Errorf("%s: %w", label, e)
 		}
 		score = loaded.Score
 	}
 	if err := spec.Fits(score); err != nil {
-		return err
+		return spec, "", err
 	}
-	result.Reason = repertoireReadiness(spec, score, settings)
-	*result.Ready = result.Reason == ""
-	return nil
+	return spec, repertoireReadiness(spec, score, settings), nil
+}
+
+func readTextFile(kind, label, path string, in io.Reader) ([]byte, error) {
+	if path != "-" || in == nil {
+		fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", label, err)
+		}
+		f := os.NewFile(uintptr(fd), path)
+		defer f.Close()
+		info, err := f.Stat()
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", label, err)
+		}
+		if !info.Mode().IsRegular() {
+			return nil, loop.NonRegularFileError(label, info.Mode())
+		}
+		in = f
+	}
+	data, err := io.ReadAll(io.LimitReader(in, loop.ScoreSizeLimit+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > loop.ScoreSizeLimit {
+		return nil, fmt.Errorf("%s: %s file is %d bytes, over the %d-byte limit", label, kind, len(data), loop.ScoreSizeLimit)
+	}
+	return data, nil
 }

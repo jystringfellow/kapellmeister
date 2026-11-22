@@ -130,7 +130,7 @@ func playCommand(args []string) error {
 	sum, err := runEnsemble(ctx, ensembleRun{
 		Reseater: reseater,
 		Score:    s.Score.Score, ScoreFiles: s.Score.Files, Members: members, Agents: s.Defined, CAOURL: client.BaseURL, Terminals: terminals,
-		Command: "play", RunID: runID, StateDir: runDir, Ensemble: standing.Ensemble, Meter: loop.NewLogMeter(),
+		Command: "play", RunID: runID, StateDir: runDir, Ensemble: standing.Ensemble, EnsembleSource: ensembleSourceOf(s, standing.Worktree, standing.Ensemble), Meter: loop.NewLogMeter(),
 		Config: loop.Config{
 			ScratchDir: scratch, MinFreeMB: s.MinFreeMB, CAOURL: s.CAOURL, StateDir: loop.StateDir(), RunID: runID, Task: text, Worktree: standing.Worktree, Chairs: chairs, GateWhen: firstNonEmpty(standing.GateWhen, s.GateWhen),
 			Lessons: s.Lessons, LessonsTimeout: s.LessonsTimeout,

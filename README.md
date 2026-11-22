@@ -152,7 +152,7 @@ km init [-worktree DIR] [-dry-run] [-json] [-verify CMD] [-check CMD] [-no-run] 
 km tune verify [-worktree DIR] [-require SUITE]... [-known-failure LABEL]... [-time-bounded] [-detach] [-timeout D] [-budget D] [-verify-timeout D] [-json] [-again] [-guide]  # write and prove verify
 km tune strict [-worktree DIR] [-strict-timeout D] [-budget D] [-timeout D] [-detach] [-json] [-again] [-guide]  # write and prove strict: what verify had to leave out
 km prove [-worktree DIR] [-level verify|strict] [-break PATCH]... [-timeout D] [-json]  # prove verify or strict on clean copies and broken code
-km run -repo ~/Code/app [-base BRANCH] -task-file task.md [-ensemble thorough | -score NAME] [-reply-nudge D] [-reply-grace D] [-detach]  # one ensemble
+km run -repo ~/Code/app [-base BRANCH] -task-file task.md [-ensemble NAME | -ensemble-file FILE [-ensemble NAME] | -score NAME] [-why TEXT] [-reply-nudge D] [-reply-grace D] [-detach]  # one ensemble
 km audition -worktree DIR [-ensemble thorough]   # can this ensemble play? no real work
 km rehearse -worktree DIR -task-file task.md [-ensemble thorough]  # brief and leave standing
 km play SESSION [-max-rounds N] [-verify CMD] [-timeout D] [-cao URL]  # run the score
@@ -355,13 +355,23 @@ records live outside the default state directory. In Claude Code, register it wi
 
 | Tool | Arguments | Structured result |
 | --- | --- | --- |
-| `run` | Required `task` text (at most 1 MiB) and exactly one of `repo` or `worktree`; optional `base` (only with `repo`) and `ensemble` or `score` (not both) | `run_id`, `pid`, `worktree`, `output` (log path); always detached |
+| `run` | Required `task` text (at most 1 MiB) and exactly one of `repo` or `worktree`; optional `base` (only with `repo`), `ensemble`, `ensemble_content` (at most 64 KiB, requires `ensemble`), `why`, or `score` (not with `ensemble` or `ensemble_content`) | `run_id`, `pid`, `worktree`, `output` (log path); always detached |
 | `repertoire` | Optional `worktree` | The `km repertoire -json` document |
 | `check` | Required `kind` (`ensemble` or `score`), `name`, and TOML `content` (at most 64 KiB); optional `worktree` | The corresponding check JSON document |
 | `wait` | Required `run` id or unique prefix; optional integer `timeout_seconds`, default 30, minimum 1, capped at **55 seconds** | The `km wait -json` document: `run_id`, `state`, `exit_status`, `reason`, and `result` when finished |
 | `status` | None | The same `km status -json` document of runs in progress, with the `ensemble` object, score, current steps, trail and measured usage |
 | `report` | Optional `since` (YYYY-MM-DD or RFC3339) and `repository` | The `km report -json` summary with those filters |
 | `output` | Required `run`; optional integer `max_bytes`, default 16384, minimum 1, capped at **65536 bytes** | `run_id`, `path`, total byte `size`, byte count `returned`, `truncated`, and tail `text` |
+
+To choose an ensemble:
+
+1. Call `repertoire` first.
+2. Prefer a ready ensemble whose score and chairs fit the task.
+3. When none fits, write an ensemble that plays an existing score where one fits, give each reviewer a `focus`, and use the fewest chairs that cover the task.
+4. Call `check` until the result is ok and ready, then call `run` with `ensemble`, `ensemble_content` and `why`.
+5. In `why`, say which existing ensembles were considered and why they did or did not fit.
+
+The `run` tool is open world and is not read-only or idempotent. The other tools are read-only and idempotent. None is destructive.
 
 Run prefixes must have at least two characters; an exact id always works. `wait` state `timeout`
 means **still running; call again**. It never stops the run. `unfinished` means the process is gone
@@ -698,6 +708,11 @@ An ensemble file seats chairs in sections. A repository can check one in at
 `.kapellmeister/ensembles/NAME.toml` for everyone who works in it, and you can keep your own at
 `~/.kapellmeister/ensembles/NAME.toml`. Yours wins when both have the same name. Select one with
 `-ensemble NAME` on `km run`, `km audition` or `km rehearse`.
+
+`km run -ensemble-file FILE` plays the checked file; `-ensemble NAME` names it, or its base
+name without `.toml` is used. The name must not already identify a configured ensemble. The
+run record keeps the exact file as `ensemble.toml` and records `ensemble_source` as `text`.
+Any run can use `-why TEXT` to record the reason for the choice (up to 1024 bytes of UTF-8).
 
 ```toml
 # .kapellmeister/ensembles/thorough.toml
