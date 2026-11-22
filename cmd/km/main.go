@@ -41,6 +41,7 @@ const usage = `usage:
   km reseat SESSION ADDRESS [-agent SPEC] [-timeout D] [-cao URL]  replace one chair's occupant
   km repertoire [-worktree DIR] [-json]                      list the ensembles and scores this machine can play
   km ensemble check [-worktree DIR] [-name NAME] [-json] FILE  check an ensemble file
+  km ensemble save -name NAME [-worktree DIR] [-repository] [-replace] [-json] (FILE | - | -run RUN)  save an ensemble
   km score check [-worktree DIR] [-name NAME] [-json] FILE     check a score file
   km ensemble list                                         list standing ensembles
   km ensemble down [-cao URL] SESSION                       take down a standing ensemble
@@ -113,6 +114,8 @@ func execute(args []string, stderr io.Writer) int {
 	case "ensemble":
 		if len(args) > 1 && args[1] == "check" {
 			err = checkCommand("ensemble", args[2:], os.Stdin, os.Stdout, stderr, "")
+		} else if len(args) > 1 && args[1] == "save" {
+			err = saveCommand(args[2:], os.Stdin, os.Stdout, stderr)
 		} else {
 			err = ensembleCommand(args[1:], os.Stdout)
 		}

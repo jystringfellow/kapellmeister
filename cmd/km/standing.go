@@ -17,7 +17,7 @@ import (
 )
 
 func ensembleCommand(args []string, w io.Writer) error {
-	const usage = "usage: km ensemble (check [-worktree DIR] [-name NAME] [-json] FILE | list | down [-cao URL] SESSION)"
+	const usage = "usage: km ensemble (check [-worktree DIR] [-name NAME] [-json] FILE | save -name NAME [-worktree DIR] [-repository] [-replace] [-json] (FILE | - | -run RUN) | list | down [-cao URL] SESSION)"
 	if len(args) == 0 {
 		return errors.New(usage)
 	}

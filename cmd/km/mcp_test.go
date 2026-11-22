@@ -146,7 +146,7 @@ func mcpRecords(t *testing.T) string {
 	t.Setenv(loop.CAOURLEnv, "http://127.0.0.1:1")
 	return filepath.Join(state, "runs")
 }
-func TestKmMcpListsSevenToolsWithSchemasAndNothingElse(t *testing.T) {
+func TestKmMcpListsEightToolsWithSchemasAndNothingElse(t *testing.T) {
 	mcpRecords(t)
 	c := startMCPClient(t, true)
 	ts := c.request("tools/list", map[string]any{})["result"].(map[string]any)["tools"].([]any)
@@ -159,7 +159,7 @@ func TestKmMcpListsSevenToolsWithSchemasAndNothingElse(t *testing.T) {
 		}
 	}
 	sort.Strings(names)
-	if !reflect.DeepEqual(names, []string{"check", "output", "repertoire", "report", "run", "status", "wait"}) {
+	if !reflect.DeepEqual(names, []string{"check", "output", "repertoire", "report", "run", "save", "status", "wait"}) {
 		t.Fatal(names)
 	}
 }

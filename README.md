@@ -159,6 +159,7 @@ km play SESSION [-max-rounds N] [-verify CMD] [-timeout D] [-cao URL]  # run the
 km reseat SESSION ADDRESS [-agent SPEC] [-timeout D] [-cao URL]  # replace one occupant
 km repertoire [-worktree DIR] [-json]           # list ensembles and scores available here
 km ensemble check [-worktree DIR] [-name NAME] [-json] FILE  # check an ensemble file
+km ensemble save -name NAME [-worktree DIR] [-repository] [-replace] [-json] (FILE | - | -run RUN)  # save an ensemble
 km score check [-worktree DIR] [-name NAME] [-json] FILE     # check a score file
 km ensemble list                                # list standing ensembles
 km ensemble down SESSION                        # take one down
@@ -358,6 +359,7 @@ records live outside the default state directory. In Claude Code, register it wi
 | `run` | Required `task` text (at most 1 MiB) and exactly one of `repo` or `worktree`; optional `base` (only with `repo`), `ensemble`, `ensemble_content` (at most 64 KiB, requires `ensemble`), `why`, or `score` (not with `ensemble` or `ensemble_content`) | `run_id`, `pid`, `worktree`, `output` (log path); always detached |
 | `repertoire` | Optional `worktree` | The `km repertoire -json` document |
 | `check` | Required `kind` (`ensemble` or `score`), `name`, and TOML `content` (at most 64 KiB); optional `worktree` | The corresponding check JSON document |
+| `save` | Required `name` and exactly one of `content` (at most 64 KiB) or `run`; optional `location` (`user` or `repository`), `worktree`, and `replace` | The `km ensemble save -json` document |
 | `wait` | Required `run` id or unique prefix; optional integer `timeout_seconds`, default 30, minimum 1, capped at **55 seconds** | The `km wait -json` document: `run_id`, `state`, `exit_status`, `reason`, and `result` when finished |
 | `status` | None | The same `km status -json` document of runs in progress, with the `ensemble` object, score, current steps, trail and measured usage |
 | `report` | Optional `since` (YYYY-MM-DD or RFC3339) and `repository` | The `km report -json` summary with those filters |
@@ -370,8 +372,9 @@ To choose an ensemble:
 3. When none fits, write an ensemble that plays an existing score where one fits, give each reviewer a `focus`, and use the fewest chairs that cover the task.
 4. Call `check` until the result is ok and ready, then call `run` with `ensemble`, `ensemble_content` and `why`.
 5. In `why`, say which existing ensembles were considered and why they did or did not fit.
+6. Save an ensemble only when the user asks to keep it, and replace one only when the user says to.
 
-The `run` tool is open world and is not read-only or idempotent. The other tools are read-only and idempotent. None is destructive.
+The `run` tool is open world and is not read-only or idempotent. The `save` tool writes files and can replace them; it is idempotent. The remaining tools are read-only and idempotent.
 
 Run prefixes must have at least two characters; an exact id always works. `wait` state `timeout`
 means **still running; call again**. It never stops the run. `unfinished` means the process is gone
@@ -701,6 +704,26 @@ They print `ok` on success, or `ok, not ready: REASON` when an ensemble fits but
 agents are unavailable. Errors name the file and exit 1; usage errors exit 2.
 With `-json`, the schema 1 object contains `kind`, `name`, `ok`, `reason`, and an
 `errors` array; ensembles also have `ready`.
+
+## Save an ensemble
+
+Start with `repertoire`, write an ensemble if none fits, and `check` it. Play the
+text with `run` and record the choice in `why`. When asked to keep it, use
+`km ensemble save -name NAME FILE`, `-` for standard input, or `-run RUN` for a
+run that played ensemble text. A run id or unique prefix identifies its record.
+
+The command checks the text against `-worktree` (default `.`) before saving it.
+It writes to the user ensemble directory by default; `-repository` writes to the
+worktree's `.kapellmeister/ensembles/` directory, left uncommitted. Existing files
+require `-replace`. A repository save is refused when a user file of the same
+name would shadow it, even with `-replace`. A name defined by `[ensembles.NAME]`
+must be renamed or removed first. Saving to the user directory over a repository
+name requires `-replace` to allow shadowing.
+Writes use a temporary file and an atomic rename. The exact input bytes are kept.
+
+Success prints `saved NAME to PATH` and a readiness reason when applicable. A
+check error or other refusal exits 1; a usage error exits 2. `-json` returns schema
+1 with `name`, `path`, `replaced`, `ready`, `reason`, and `errors`.
 
 ## Ensemble files
 
