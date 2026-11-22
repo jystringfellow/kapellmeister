@@ -135,6 +135,13 @@ func Check(name, path, text string, agents loop.Agents) (Spec, error) {
 	return parse(name, path, text, false, agents)
 }
 
+func CheckPortable(name, path, text string, agents loop.Agents) (Spec, error) {
+	if err := checkName(name, path); err != nil {
+		return Spec{}, err
+	}
+	return parse(name, path, text, true, agents)
+}
+
 func parse(name, path, text string, portable bool, agents loop.Agents) (Spec, error) {
 	spec := Spec{Name: name, Path: path, portable: portable}
 	fail := func(key, format string, args ...any) (Spec, error) {
