@@ -118,6 +118,9 @@ func load(name, path string, portable bool, agents loop.Agents) (Spec, error) {
 	fail := func(key, format string, args ...any) (Spec, error) {
 		return Spec{}, fmt.Errorf("%s: %s: %s", path, key, fmt.Sprintf(format, args...))
 	}
+	if message, ok := loop.ReservedNameMessage(name); ok {
+		return fail(fmt.Sprintf("ensemble %q", name), "%s", message)
+	}
 	var f file
 	md, err := toml.DecodeFile(path, &f)
 	if err != nil {
@@ -136,6 +139,9 @@ func load(name, path string, portable bool, agents loop.Agents) (Spec, error) {
 	if md.IsDefined("score") && !validName.MatchString(f.Score) {
 		return fail("score", "invalid name %q", f.Score)
 	}
+	if message, ok := loop.ReservedNameMessage(f.Score); ok {
+		return fail(fmt.Sprintf("score %q", f.Score), "%s", message)
+	}
 	spec.Score = f.Score
 	spec.GateWhen = f.GateWhen
 	if spec.Timeout, err = duration(f.Timeout); err != nil {
@@ -147,6 +153,9 @@ func load(name, path string, portable bool, agents loop.Agents) (Spec, error) {
 		if !validName.MatchString(sectionName) {
 			return fail(key, "want a lowercase name of letters, digits and dashes")
 		}
+		if message, ok := loop.ReservedNameMessage(sectionName); ok {
+			return fail(fmt.Sprintf("section %q", sectionName), "%s", message)
+		}
 		raw := f.Sections[sectionName]
 		section := Section{Name: sectionName}
 		if section.Timeout, err = duration(raw.Timeout); err != nil {
@@ -156,6 +165,9 @@ func load(name, path string, portable bool, agents loop.Agents) (Spec, error) {
 			key := key + ".chairs." + chairName
 			if !validName.MatchString(chairName) {
 				return fail(key, "want a lowercase name of letters, digits and dashes")
+			}
+			if message, ok := loop.ReservedNameMessage(chairName); ok {
+				return fail(fmt.Sprintf("chair %q", chairName), "%s", message)
 			}
 			c := raw.Chairs[chairName]
 			chair := ChairSpec{Name: chairName, Part: c.Part, Agents: c.Agents, Tier: c.Tier}
@@ -357,6 +369,9 @@ func ScoreName(name, home, worktree string) (string, error) {
 	if !found {
 		return "", nil
 	}
+	if message, ok := loop.ReservedNameMessage(name); ok {
+		return "", fmt.Errorf("%s: ensemble %q: %s", path, name, message)
+	}
 	var f struct {
 		Score string `toml:"score"`
 	}
@@ -366,6 +381,9 @@ func ScoreName(name, home, worktree string) (string, error) {
 	}
 	if md.IsDefined("score") && !validName.MatchString(f.Score) {
 		return "", fmt.Errorf("%s: score: invalid name %q", path, f.Score)
+	}
+	if message, ok := loop.ReservedNameMessage(f.Score); ok {
+		return "", fmt.Errorf("%s: score %q: %s", path, f.Score, message)
 	}
 	return f.Score, nil
 }

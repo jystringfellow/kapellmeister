@@ -79,6 +79,9 @@ func LoadScore(name string, src ScoreSource) (LoadedScore, error) {
 	if err != nil {
 		return LoadedScore{}, err
 	}
+	if message, ok := ReservedNameMessage(name); ok {
+		return LoadedScore{}, fmt.Errorf("%s: score %q: %s", file.Path, name, message)
+	}
 	score, err := decodeScore(text, file.Path, name)
 	if err != nil {
 		return LoadedScore{}, err

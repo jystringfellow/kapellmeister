@@ -59,6 +59,9 @@ func decodeScoreWithPartText(text, path, name string, ownPartText bool) (Score, 
 	}
 	if parts, ok := raw["parts"].(map[string]any); ok {
 		for _, name := range sortedKeys(parts) {
+			if message, ok := ReservedNameMessage(name); ok {
+				return Score{}, scoreError(path, "part "+name, "%s", message)
+			}
 			if p, ok := parts[name].(map[string]any); ok {
 				if err := scoreKeys(path, "part "+name, p, "memory", "optional", "resume_tokens", "resume_steps"); err != nil {
 					return Score{}, err
@@ -100,11 +103,17 @@ func decodeScoreWithPartText(text, path, name string, ownPartText bool) (Score, 
 		if slices.Contains([]string{"approved", "changes_requested", "verify", "strict", "lessons"}, step.Name) || strings.HasPrefix(step.Name, "classify-") {
 			return Score{}, scoreError(path, subject, "step name is reserved")
 		}
+		if message, ok := ReservedNameMessage(step.Name); ok {
+			return Score{}, scoreError(path, subject, "%s", message)
+		}
 		if score.Index(step.Name) >= 0 {
 			return Score{}, scoreError(path, subject, "duplicate step name")
 		}
 		if !scoreName.MatchString(step.Part) || step.Part == "classifier" {
 			return Score{}, scoreError(path, subject, "invalid step part %q", step.Part)
+		}
+		if message, ok := ReservedNameMessage(step.Part); ok {
+			return Score{}, scoreError(path, subject, "part %q: %s", step.Part, message)
 		}
 		writes, approval := "", ""
 		if step.Writes != nil {

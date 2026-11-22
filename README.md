@@ -822,6 +822,7 @@ scores and parts resolve independently. Names use lowercase letters, digits and 
 with a letter or digit. The score names `default` and `review` and the part names `planner`,
 `implementer`, `reviewer`, `gate`, `tester` and `classifier` are reserved: a file with one is refused,
 naming it.
+Ensemble, section, chair, score, part and step names cannot be `podium` (the idle terminal that keeps a run's CAO session alive), `hall` (reserved for something that holds many ensembles) or `conductor` (km itself).
 A score file larger than 64 KiB or a part file larger than 256 KiB is refused in either
 directory, naming the file, its size and the limit. Files exactly at the limit are accepted.
 A user score or part that is a named pipe, including a symlink to one, is refused before opening it.
