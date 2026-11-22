@@ -16,7 +16,10 @@ func TestRunAndAuditionRefuseAReservedSectionBeforeSeating(t *testing.T) {
 		t.Run(command, func(t *testing.T) {
 			t.Setenv(loop.HomeEnv, t.TempDir())
 			t.Setenv(loop.StateEnv, t.TempDir())
-			wt := t.TempDir()
+			wt, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
 			path := filepath.Join(wt, ensemble.RepoDir, "duo.toml")
 			writeFile(t, path, "[sections.podium.chairs.lead]\npart = 'planner'\nagents = ['codex']\n")
 			created := 0
@@ -28,7 +31,6 @@ func TestRunAndAuditionRefuseAReservedSectionBeforeSeating(t *testing.T) {
 			}))
 			defer srv.Close()
 			args := []string{"-worktree", wt, "-ensemble", "duo", "-cao", srv.URL}
-			var err error
 			if command == "run" {
 				err = runCommand(append(args, "-task", "test"))
 			} else {
