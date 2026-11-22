@@ -344,6 +344,9 @@ func LoadSettings(home, worktree string) (Settings, error) {
 		s.Chairs[role] = user.Chairs[role].Spec
 	}
 	for _, name := range sortedKeys(user.Ensembles) {
+		if message, ok := ReservedNameMessage(name); ok {
+			return s, fmt.Errorf("%s: ensembles.%s: %s", userPath, name, message)
+		}
 		ensemble := user.Ensembles[name]
 		specs := map[string]ChairSpec{"planner": ensemble.Planner, "implementer": ensemble.Implementer, "reviewer": ensemble.Reviewer, "gate": ensemble.Gate, "classifier": ensemble.Classifier, "tester": ensemble.Tester}
 		for _, role := range AllRoles() {
