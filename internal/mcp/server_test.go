@@ -23,7 +23,7 @@ func newClient(t *testing.T, tools []Tool) *client {
 	r, w := io.Pipe()
 	or, ow := io.Pipe()
 	c := &client{t, w, bufio.NewReader(or), make(chan error, 1)}
-	go func() { c.done <- Serve(context.Background(), r, ow, "test", tools); ow.Close() }()
+	go func() { c.done <- Serve(context.Background(), r, ow, "test", "test instructions", tools); ow.Close() }()
 	t.Cleanup(func() {
 		w.Close()
 		select {
@@ -203,7 +203,7 @@ func TestASlowToolDoesNotBlockPingAndCancellationAndEOFCancelAndDrainCalls(t *te
 }
 func TestAnUnterminatedFinalLineIsStillServed(t *testing.T) {
 	var out strings.Builder
-	if e := Serve(context.Background(), strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`), &out, "test", nil); e != nil || !strings.Contains(out.String(), `"result":{}`) {
+	if e := Serve(context.Background(), strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`), &out, "test", "test instructions", nil); e != nil || !strings.Contains(out.String(), `"result":{}`) {
 		t.Fatalf("%v %s", e, &out)
 	}
 }
@@ -240,5 +240,13 @@ func TestRequestFieldNamesAreCaseSensitiveAndNumericIdsAreEchoedExactly(t *testi
 	}
 	if json.Unmarshal(line, &r) != nil || string(r.ID) != "9007199254740993" {
 		t.Fatal(string(line))
+	}
+}
+
+func TestInitializeUsesTheCallersInstructions(t *testing.T) {
+	c := newClient(t, nil)
+	got := c.init("future")["result"].(map[string]any)["instructions"]
+	if got != "test instructions" {
+		t.Fatal(got)
 	}
 }

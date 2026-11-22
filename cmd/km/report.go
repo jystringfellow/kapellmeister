@@ -25,6 +25,8 @@ import (
 )
 
 type reportRun struct {
+	EnsembleSource string `json:"ensemble_source,omitempty"`
+	Why            string `json:"why,omitempty"`
 	*ReportCost
 	Retries       int                `json:"retries,omitempty"`
 	Restores      int                `json:"restores,omitempty"`
@@ -227,17 +229,19 @@ func readReportRun(dir *os.File, hasResult, hasTelemetry, hasCurrent, hasConfig 
 		path := filepath.Join(dir.Name(), "result.json")
 		data, err := readReportFile(dir, "result.json", false)
 		var recorded *struct {
-			Restores      []loop.Restore     `json:"restores"`
-			VerifyRetried []loop.VerifyRetry `json:"verify_retried"`
-			Command       string             `json:"command"`
-			RunID         string             `json:"run_id"`
-			Repository    string             `json:"repository"`
-			Ensemble      string             `json:"ensemble"`
-			Outcome       string             `json:"outcome"`
-			Reason        string             `json:"reason"`
-			Usage         json.RawMessage    `json:"usage"`
-			Rounds        *int               `json:"rounds"`
-			DurationMS    *int64             `json:"duration_ms"`
+			EnsembleSource string             `json:"ensemble_source"`
+			Why            string             `json:"why"`
+			Restores       []loop.Restore     `json:"restores"`
+			VerifyRetried  []loop.VerifyRetry `json:"verify_retried"`
+			Command        string             `json:"command"`
+			RunID          string             `json:"run_id"`
+			Repository     string             `json:"repository"`
+			Ensemble       string             `json:"ensemble"`
+			Outcome        string             `json:"outcome"`
+			Reason         string             `json:"reason"`
+			Usage          json.RawMessage    `json:"usage"`
+			Rounds         *int               `json:"rounds"`
+			DurationMS     *int64             `json:"duration_ms"`
 		}
 		if err == nil {
 			err = json.Unmarshal(data, &recorded)
@@ -254,6 +258,7 @@ func readReportRun(dir *os.File, hasResult, hasTelemetry, hasCurrent, hasConfig 
 			hasRecordedID = true
 		}
 		run.Repository, run.Ensemble = recorded.Repository, recorded.Ensemble
+		run.EnsembleSource, run.Why = recorded.EnsembleSource, recorded.Why
 		run.Command = recorded.Command
 		run.Restores = len(recorded.Restores)
 		run.VerifyRetried = recorded.VerifyRetried
@@ -284,6 +289,7 @@ func readReportRun(dir *os.File, hasResult, hasTelemetry, hasCurrent, hasConfig 
 				run.Command = state.Command
 			}
 			run.Repository, run.Ensemble = state.Repository, state.Ensemble
+			run.EnsembleSource, run.Why = state.EnsembleSource, state.Why
 			started := state.Started.UTC()
 			run.Started, run.roughStart = &started, true
 			if state.RunID != "" {

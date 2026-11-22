@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"text/tabwriter"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jystringfellow/kapellmeister/internal/cao"
 	"github.com/jystringfellow/kapellmeister/internal/ensemble"
@@ -33,7 +34,7 @@ const usage = `usage:
   km tune verify [-worktree DIR] [-require SUITE]... [-known-failure LABEL]... [-time-bounded] [-detach] [-timeout D] [-json] [-again] [-guide]   write and prove verify
   km tune strict [-worktree DIR] [-strict-timeout D] [-budget D] [-detach] [-timeout D] [-json] [-again] [-guide]   write and prove strict: what verify had to leave out
   km prove [-worktree DIR] [-level verify|strict] [-break PATCH]... [-timeout D] [-json]   prove verify or strict on clean copies and broken code
-  km run -repo DIR [-base BRANCH] (-task TEXT | -task-file FILE) [-ensemble NAME | -score NAME] [-detach] [flags]   one ensemble
+  km run -repo DIR [-base BRANCH] (-task TEXT | -task-file FILE) [-ensemble NAME | -ensemble-file FILE [-ensemble NAME] | -score NAME] [-why TEXT] [-detach] [flags]   one ensemble
   km audition -worktree DIR [-ensemble NAME] [-keep]       boot the ensemble, cue every chair once, tear down
   km rehearse -worktree DIR (-task TEXT | -task-file FILE) [-ensemble NAME]  brief the ensemble and leave it standing
   km play SESSION [-max-rounds N] [-verify CMD] [-timeout D] [-cao URL]  run the score on a standing ensemble
@@ -367,13 +368,31 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 	detachedLaunch := fs.String("detached-launch", "", "internal detached run hand-off")
 	worktree := fs.String("worktree", "", "use this existing worktree instead of creating one")
 	roles := chairFlags(fs, loop.AllRoles()...)
-	ensemble := fs.String("ensemble", "", ensembleHelp)
+	ensembleName := fs.String("ensemble", "", ensembleHelp)
+	ensembleFile := fs.String("ensemble-file", "", "ensemble TOML file")
+	why := fs.String("why", "", "why the ensemble and score fit the task")
 	fs.String("score", "", "name of a built-in or file score to play (role flags and chairs from config supply its parts)")
 	hideFlags(fs, "detached-launch")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	set := flagsSet(fs)
+	if set["why"] && (strings.TrimSpace(*why) == "" || len(*why) > 1024 || !utf8.ValidString(*why)) {
+		return errors.New("-why must be non-blank text of at most 1024 bytes of UTF-8")
+	}
+	if set["ensemble-file"] {
+		if *ensembleFile == "" {
+			return errors.New("-ensemble-file must not be empty")
+		}
+		if set["score"] {
+			return errors.New("-score does not go with -ensemble-file: the ensemble names its score")
+		}
+		for _, role := range loop.AllRoles() {
+			if set[role] {
+				return fmt.Errorf("-%s does not go with -ensemble-file: the ensemble seats its own chairs", role)
+			}
+		}
+	}
 	if set["base"] {
 		if set["worktree"] {
 			return errors.New("-base and -worktree do not go together: -worktree plays on the checkout it is given")
@@ -417,15 +436,73 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 	if err != nil {
 		return err
 	}
-	scoreName, err := ensembleScoreName(*ensemble, firstNonEmpty(*worktree, *c.repo))
-	if err != nil {
-		return err
+	lookup := firstNonEmpty(*worktree, *c.repo)
+	var content []byte
+	var textSpec ensemble.Spec
+	source := ""
+	if set["ensemble-file"] {
+		if lookup == "" && *detachedLaunch == "" {
+			return errors.New("-repo or -worktree is required")
+		}
+		if *ensembleName == "" {
+			*ensembleName = strings.TrimSuffix(filepath.Base(*ensembleFile), ".toml")
+		}
+		if *detachedLaunch != "" {
+			content, err = os.ReadFile(filepath.Join(loop.StateDir(), "runs", launch.RunID, "ensemble.toml"))
+		} else {
+			content, err = readTextFile("ensemble", *ensembleFile, *ensembleFile, nil)
+		}
+		if err != nil {
+			return err
+		}
+		if *detachedLaunch != "" {
+			childSettings, e := c.settings(launch.Worktree)
+			if e != nil {
+				return e
+			}
+			textSpec, err = ensemble.Check(*ensembleName, *ensembleFile, string(content), childSettings.Defined)
+			if err != nil {
+				return err
+			}
+		} else {
+			var reason string
+			textSpec, reason, err = checkEnsemble(*ensembleName, *ensembleFile, string(content), lookup, stderr)
+			if err != nil {
+				return err
+			}
+			if reason != "" {
+				return fmt.Errorf("%s: ensemble %s is not ready here: %s", *ensembleFile, *ensembleName, reason)
+			}
+			if path, _, found := ensemble.Locate(*ensembleName, loop.Home(), lookup); found {
+				return fmt.Errorf("ensemble name %q is already defined by %s; choose another name", *ensembleName, path)
+			}
+			if _, found := userSettings.Ensembles[*ensembleName]; found {
+				return fmt.Errorf("ensemble name %q is already defined by [ensembles.%s] in %s; choose another name", *ensembleName, *ensembleName, loop.UserConfigPath(loop.Home()))
+			}
+		}
+		source = "text"
+	} else {
+		source = ensembleSourceOf(userSettings, lookup, *ensembleName)
+	}
+
+	scoreName := textSpec.Score
+	if source != "text" {
+		scoreName, err = ensembleScoreName(*ensembleName, lookup)
+		if err != nil {
+			return err
+		}
+	}
+	lineUpChosen := func(s loop.Settings, wt string) (loop.Settings, loop.Chairs, []ensemble.Member, error) {
+		if source == "text" {
+			return lineUpSpec(s, wt, *ensembleName, roles, textSpec)
+		}
+		return lineUp(s, wt, *ensembleName, roles)
 	}
 	if selected, ok := loop.BuiltinScore(firstNonEmpty(userSettings.ScoreName, scoreName)); ok && !selected.EditsWorktree() && *worktree == "" && *detachedLaunch == "" {
 		return fmt.Errorf("score %s reviews the uncommitted change in an existing worktree; pass -worktree DIR (with -repo the run starts from a clean checkout and has nothing to review)", selected.Name)
 	}
-	if userSettings.ScoreName == "" && scoreName == "" {
-		if _, _, _, err := lineUp(userSettings, firstNonEmpty(*worktree, *c.repo), *ensemble, roles); err != nil {
+	if userSettings.ScoreName == "" && scoreName == "" && *detachedLaunch == "" && !(source == "" && *ensembleName != "" && *worktree == "" && *c.repo != "" && set["base"]) {
+		if _, _, _, err := lineUpChosen(userSettings, firstNonEmpty(*worktree, *c.repo)); err != nil {
 			return err
 		}
 	}
@@ -479,10 +556,13 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 	if err != nil {
 		return err
 	}
+	if source != "text" {
+		source = ensembleSourceOf(s, wt, *ensembleName)
+	}
 	if launch.Score != nil {
 		s.Score = *launch.Score
 	}
-	s, chairs, members, err := lineUp(s, wt, *ensemble, roles)
+	s, chairs, members, err := lineUpChosen(s, wt)
 	if err != nil {
 		return err
 	}
@@ -495,7 +575,14 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 			return fmt.Errorf("score %s: the worktree has no uncommitted change to review", s.Score.Score.Name)
 		}
 	}
-	seated, err := addressedChairs(wt, *ensemble, chairs, members, s.Score.Score)
+	seated, err := addressedChairs(wt, *ensembleName, chairs, members, s.Score.Score)
+	if source == "text" {
+		seatedMembers := slices.Clone(members)
+		for i, m := range seatedMembers {
+			seatedMembers[i].Chair.Address = m.Address(*ensembleName)
+		}
+		seated, err = ensemble.ChairsFor(s.Score.Score, seatedMembers)
+	}
 	if err != nil {
 		return err
 	}
@@ -540,7 +627,8 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 	}
 	client := newClient(s.CAOURL, s, output)
 	if *detachedLaunch != "" {
-		state := initialRunState(runID, "run", wt, *ensemble, s.Rounds, time.Now(), s.Score.Score)
+		state := initialRunState(runID, "run", wt, *ensembleName, s.Rounds, time.Now(), s.Score.Score)
+		state.EnsembleSource, state.Why = source, *why
 		if err := os.MkdirAll(runDir, 0755); err != nil {
 			return err
 		}
@@ -560,8 +648,8 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 	} else {
 		printSources(output, s)
 		printScoreFiles(output, s.Score.Files)
-		if *ensemble != "" {
-			fmt.Fprintf(output, "ensemble %s\n", *ensemble)
+		if *ensembleName != "" {
+			fmt.Fprintf(output, "ensemble %s\n", *ensembleName)
 		}
 		printPolicy(output, &policy, s.Score.Score, len(stepChairs(chairs, s.Score.Score)["classify"]) > 0)
 		if s.Score.Score.Source == "" {
@@ -570,6 +658,27 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 	}
 	if err := ensureProfilesTo(ctx, client, &policy, stepChairs(chairs, s.Score.Score), output); err != nil {
 		return err
+	}
+	if source == "text" && *detachedLaunch == "" {
+		if err := os.MkdirAll(runDir, 0755); err != nil {
+			return err
+		}
+		file, err := os.CreateTemp(runDir, ".ensemble-*")
+		if err != nil {
+			return err
+		}
+		defer os.Remove(file.Name())
+		_, err = file.Write(content)
+		closeErr := file.Close()
+		if err != nil {
+			return err
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		if err := os.Rename(file.Name(), filepath.Join(runDir, "ensemble.toml")); err != nil {
+			return err
+		}
 	}
 	if *detach && *detachedLaunch == "" {
 		launch := detachedLaunchRecord{RunID: runID, Worktree: wt, BaseBranch: baseBranch, CreatedWorktree: createdWorktree, Task: text}
@@ -588,8 +697,9 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		_, err = fmt.Fprintf(stdout, "run       %s\npid       %d\nworktree  %s\noutput    %s\n", h.RunID, h.PID, h.Worktree, h.Output)
 		return err
 	}
-	preflighting := initialRunState(runID, "run", wt, *ensemble, s.Rounds, time.Now(), s.Score.Score)
-	describeRun(&preflighting, ensembleRun{Score: s.Score.Score, Members: members, Agents: s.Defined, CAOURL: client.BaseURL, Ensemble: *ensemble, Config: loop.Config{Worktree: wt, Chairs: seated, CAOURL: s.CAOURL, VerifyCommand: verifyCmd, StrictCommand: tested.Strict}})
+	preflighting := initialRunState(runID, "run", wt, *ensembleName, s.Rounds, time.Now(), s.Score.Score)
+	preflighting.EnsembleSource, preflighting.Why = source, *why
+	describeRun(&preflighting, ensembleRun{Score: s.Score.Score, Members: members, Agents: s.Defined, CAOURL: client.BaseURL, Ensemble: *ensembleName, EnsembleSource: source, Why: *why, Config: loop.Config{Worktree: wt, Chairs: seated, CAOURL: s.CAOURL, VerifyCommand: verifyCmd, StrictCommand: tested.Strict}})
 	preflighting.Playing = []loop.ActiveStep{{Step: "preflight", Started: preflighting.Started}}
 	if err := os.MkdirAll(runDir, 0755); err == nil {
 		err = writeRunState(runDir, preflighting)
@@ -600,6 +710,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 	if err := preflight(ctx, client, wt, s.PreflightTimeout, s.PreflightRetryWait, defaultChairs(&policy, chairs, s.Score.Score)...); err != nil {
 		if *detachedLaunch == "" {
 			_ = os.Remove(filepath.Join(runDir, "current.json"))
+			_ = os.Remove(filepath.Join(runDir, "ensemble.toml"))
 			_ = os.Remove(runDir)
 		}
 		return err
@@ -621,7 +732,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 	}()
 	sum, err := runEnsemble(ctx, ensembleRun{
 		Score: s.Score.Score, ScoreFiles: s.Score.Files, Members: members, Agents: s.Defined, CAOURL: client.BaseURL,
-		RunID: runID, StateDir: runDir, Ensemble: *ensemble, BaseBranch: baseBranch, Meter: loop.NewLogMeter(),
+		RunID: runID, StateDir: runDir, Ensemble: *ensembleName, EnsembleSource: source, Why: *why, BaseBranch: baseBranch, Meter: loop.NewLogMeter(),
 		Config: loop.Config{
 			ScratchDir: scratch, MinFreeMB: s.MinFreeMB, CAOURL: s.CAOURL, StateDir: loop.StateDir(), RunID: runID, Task: text, Worktree: wt, Chairs: seated, GateWhen: s.GateWhen,
 			Lessons: s.Lessons, LessonsTimeout: s.LessonsTimeout,
@@ -1132,30 +1243,34 @@ func firstNonEmpty(values ...string) string {
 }
 
 type ensembleRun struct {
-	Reseater     loop.Reseater
-	Score        loop.Score
-	ScoreFiles   []loop.ScoreFile
-	Members      []ensemble.Member
-	Agents       loop.Agents
-	CAOURL       string
-	Terminals    map[string]string
-	Tune         *loop.TuneHooks
-	TuneSummary  *tuneSummary
-	TuneCheckout string
-	Meter        loop.UsageMeter
-	BaseBranch   string
-	Ensemble     string
-	Watcher      loop.Watcher
-	Command      string
-	RunID        string
-	StateDir     string
-	Config       loop.Config
-	Stepper      loop.Stepper
-	Verify       loop.Verifier
-	Progress     io.Writer
+	EnsembleSource string
+	Why            string
+	Reseater       loop.Reseater
+	Score          loop.Score
+	ScoreFiles     []loop.ScoreFile
+	Members        []ensemble.Member
+	Agents         loop.Agents
+	CAOURL         string
+	Terminals      map[string]string
+	Tune           *loop.TuneHooks
+	TuneSummary    *tuneSummary
+	TuneCheckout   string
+	Meter          loop.UsageMeter
+	BaseBranch     string
+	Ensemble       string
+	Watcher        loop.Watcher
+	Command        string
+	RunID          string
+	StateDir       string
+	Config         loop.Config
+	Stepper        loop.Stepper
+	Verify         loop.Verifier
+	Progress       io.Writer
 }
 
 type ensembleSummary struct {
+	EnsembleSource    string           `json:"ensemble_source,omitempty"`
+	Why               string           `json:"why,omitempty"`
 	Score             string           `json:"score,omitempty"`
 	ScoreSource       string           `json:"score_source,omitempty"`
 	ScoreFiles        []loop.ScoreFile `json:"score_files,omitempty"`
@@ -1248,7 +1363,7 @@ func runEnsemble(ctx context.Context, p ensembleRun) (sum ensembleSummary, runEr
 				res.RunDir = filepath.Join(p.Config.Worktree, loop.RunDirRel(p.RunID))
 			}
 			res.Outcome, res.Reason = loop.Failed, reason
-			sum = ensembleSummary{Result: res, DurationMS: time.Since(start).Milliseconds(), Ensemble: p.Ensemble, Repository: repository, Base: base, BaseBranch: p.BaseBranch}
+			sum = ensembleSummary{Result: res, DurationMS: time.Since(start).Milliseconds(), Ensemble: p.Ensemble, EnsembleSource: p.EnsembleSource, Why: p.Why, Repository: repository, Base: base, BaseBranch: p.BaseBranch}
 			recordScore(&sum)
 			if p.Tune != nil {
 				sum.Command, sum.Tune = p.Command, p.TuneSummary
@@ -1274,6 +1389,7 @@ func runEnsemble(ctx context.Context, p ensembleRun) (sum ensembleSummary, runEr
 	fmt.Fprintf(p.Progress, "  state     %s\n", p.StateDir)
 	eng := &loop.Engine{Reseater: p.Reseater, Score: p.Score, Meter: p.Meter, Watcher: p.Watcher, Config: p.Config, Stepper: p.Stepper, Verify: p.Verify, Records: telemetry, Progress: p.Progress}
 	state := initialRunState(p.RunID, firstNonEmpty(p.Command, "run"), p.Config.Worktree, p.Ensemble, p.Config.MaxRounds, start, p.Score)
+	state.EnsembleSource, state.Why = p.EnsembleSource, p.Why
 	if p.Tune == nil {
 		describeRun(&state, p)
 	}
@@ -1319,7 +1435,7 @@ func runEnsemble(ctx context.Context, p ensembleRun) (sum ensembleSummary, runEr
 			res.Lessons = &loop.LessonsReport{Reason: "writing lessons.json: " + err.Error()}
 		}
 	}
-	sum = ensembleSummary{Result: res, DurationMS: time.Since(start).Milliseconds(), DiffStat: stat, Ensemble: p.Ensemble, Repository: repository, Base: base, BaseBranch: p.BaseBranch}
+	sum = ensembleSummary{Result: res, DurationMS: time.Since(start).Milliseconds(), DiffStat: stat, Ensemble: p.Ensemble, EnsembleSource: p.EnsembleSource, Why: p.Why, Repository: repository, Base: base, BaseBranch: p.BaseBranch}
 	recordScore(&sum)
 	if head != base {
 		sum.Head, sum.HeadMoved = head, true

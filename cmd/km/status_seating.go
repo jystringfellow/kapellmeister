@@ -9,11 +9,13 @@ import (
 )
 
 func recordSeating(p ensembleRun, score loop.Score) *statusSeating {
-	source := ""
-	if path, found := ensemble.Path(p.Ensemble, loop.Home(), p.Config.Worktree); found {
-		source = "repository"
-		if filepath.Dir(path) == filepath.Join(loop.Home(), ensemble.UserDir) {
-			source = "user"
+	source := p.EnsembleSource
+	if source == "" {
+		if path, found := ensemble.Path(p.Ensemble, loop.Home(), p.Config.Worktree); found {
+			source = "repository"
+			if filepath.Dir(path) == filepath.Join(loop.Home(), ensemble.UserDir) {
+				source = "user"
+			}
 		}
 	}
 	seating := &statusSeating{Name: p.Ensemble, Source: source, Sections: []statusSection{}}
@@ -31,7 +33,7 @@ func recordSeating(p ensembleRun, score loop.Score) *statusSeating {
 				section, name = s, n
 			}
 		}
-		if source == "" {
+		if source == "" || source == "config" {
 			section = "chairs"
 		}
 		if address == "" {
