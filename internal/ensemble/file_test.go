@@ -1,6 +1,8 @@
 package ensemble
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -201,6 +203,43 @@ func TestAnEnsembleThatIsNotDefinedIsNotFound(t *testing.T) {
 	}
 	if names := Names(home, ""); len(names) != 0 {
 		t.Fatalf("names without a worktree = %v, want none", names)
+	}
+}
+
+func TestEnsembleSymlinksKeepTheirSourceAndLoadTheirTargets(t *testing.T) {
+	for _, repository := range []bool{true, false} {
+		for _, dangling := range []bool{true, false} {
+			t.Run(fmt.Sprintf("repository=%t/dangling=%t", repository, dangling), func(t *testing.T) {
+				home, wt := t.TempDir(), t.TempDir()
+				dir := filepath.Join(wt, RepoDir)
+				if !repository {
+					dir = filepath.Join(home, UserDir)
+					writeEnsemble(t, filepath.Join(wt, RepoDir), "linked", thorough)
+				}
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if !dangling {
+					writeEnsemble(t, dir, "target", thorough)
+				}
+				path := filepath.Join(dir, "linked.toml")
+				if err := os.Symlink("target.toml", path); err != nil {
+					t.Fatal(err)
+				}
+				located, portable, found := Locate("linked", home, wt)
+				if !found || located != path || portable != repository {
+					t.Errorf("Locate = (%q, %t, %t), want (%q, %t, true)", located, portable, found, path, repository)
+				}
+				spec, found, err := Find("linked", home, wt, loop.BuiltInAgents())
+				if dangling {
+					if found || err == nil || !strings.Contains(err.Error(), path) || !os.IsNotExist(errors.Unwrap(err)) {
+						t.Fatalf("Find = (%+v, %t, %v), want a load error naming %s", spec, found, err, path)
+					}
+				} else if err != nil || !found || spec.Path != path || spec.portable != repository || len(spec.Sections) == 0 {
+					t.Fatalf("Find = (%+v, %t, %v), want the linked ensemble", spec, found, err)
+				}
+			})
+		}
 	}
 }
 

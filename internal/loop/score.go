@@ -55,21 +55,23 @@ type Part struct {
 }
 
 type Score struct {
-	Source     string
-	Name       string
-	Rounds     int
-	Parts      []Part
-	Steps      []ScoreStep
-	LessonsBy  string
-	Classifier string
+	Description string
+	Source      string
+	Name        string
+	Rounds      int
+	Parts       []Part
+	Steps       []ScoreStep
+	LessonsBy   string
+	Classifier  string
 }
 
 func DefaultScore() Score {
 	return Score{
-		Name:       "default",
-		Rounds:     3,
-		LessonsBy:  "gate",
-		Classifier: "classifier",
+		Name:        "default",
+		Description: "Plan, implement, review, gate and an optional test, up to three rounds.",
+		Rounds:      3,
+		LessonsBy:   "gate",
+		Classifier:  "classifier",
 		Parts: []Part{
 			{Name: "planner", Memory: MemoryFresh, Prompt: map[string]string{"plan": planInstructions}},
 			{Name: "implementer", Memory: MemoryResume, Prompt: map[string]string{"implement": implementInstructions}},

@@ -1,3 +1,4 @@
+description = "Review a change that already exists: reviewers and a gate, no editing."
 [parts.reviewer]
 memory = "fresh"
 

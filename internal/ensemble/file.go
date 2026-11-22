@@ -19,13 +19,14 @@ const (
 )
 
 type Spec struct {
-	Score    string
-	Name     string
-	Path     string
-	GateWhen string
-	Timeout  time.Duration
-	Sections []Section
-	portable bool
+	Description string
+	Score       string
+	Name        string
+	Path        string
+	GateWhen    string
+	Timeout     time.Duration
+	Sections    []Section
+	portable    bool
 }
 
 type Section struct {
@@ -44,10 +45,11 @@ type ChairSpec struct {
 }
 
 type file struct {
-	Score    string `toml:"score"`
-	GateWhen string `toml:"gate_when"`
-	Timeout  string `toml:"timeout"`
-	Sections map[string]struct {
+	Description string `toml:"description"`
+	Score       string `toml:"score"`
+	GateWhen    string `toml:"gate_when"`
+	Timeout     string `toml:"timeout"`
+	Sections    map[string]struct {
 		Timeout string `toml:"timeout"`
 		Chairs  map[string]struct {
 			Focus   string   `toml:"focus"`
@@ -62,7 +64,7 @@ type file struct {
 var validName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 func Find(name, home, worktree string, agents loop.Agents) (Spec, bool, error) {
-	path, portable, found := locate(name, home, worktree)
+	path, portable, found := Locate(name, home, worktree)
 	if !found {
 		return Spec{}, false, nil
 	}
@@ -71,17 +73,17 @@ func Find(name, home, worktree string, agents loop.Agents) (Spec, bool, error) {
 }
 
 func Path(name, home, worktree string) (string, bool) {
-	path, _, found := locate(name, home, worktree)
+	path, _, found := Locate(name, home, worktree)
 	return path, found
 }
 
-func locate(name, home, worktree string) (string, bool, bool) {
+func Locate(name, home, worktree string) (string, bool, bool) {
 	if !validName.MatchString(name) {
 		return "", false, false
 	}
 	for _, dir := range dirs(home, worktree) {
 		path := filepath.Join(dir.path, name+".toml")
-		if _, err := os.Stat(path); err == nil {
+		if _, err := os.Lstat(path); err == nil {
 			return path, dir.portable, true
 		}
 	}
@@ -131,6 +133,10 @@ func load(name, path string, portable bool, agents loop.Agents) (Spec, error) {
 	if extra := md.Undecoded(); len(extra) > 0 {
 		return Spec{}, fmt.Errorf("%s: unknown keys %v", path, extra)
 	}
+	if md.IsDefined("description") && (strings.TrimSpace(f.Description) == "" || len(f.Description) > 512) {
+		return fail("description", "must be non-empty text of at most 512 bytes")
+	}
+	spec.Description = f.Description
 	if md.IsDefined("gate_when") {
 		switch f.GateWhen {
 		case loop.GateWhenAny, loop.GateWhenAll, loop.GateWhenAlways:
@@ -262,9 +268,9 @@ func (s Spec) Bind(agents loop.Agents, available []string) ([]Member, error) {
 	for _, section := range s.Sections {
 		for _, c := range section.Chairs {
 			m := Member{Section: section.Name, Part: c.Part, Name: c.Name}
-			agent, ok := firstAvailable(c.Agents, available)
+			agent, ok := FirstAvailable(c.Agents, available)
 			if !ok {
-				return nil, fmt.Errorf("%s: %s: none of %s is in [agents] available (%s)", s.Path, m.Address(s.Name), strings.Join(c.Agents, ", "), strings.Join(available, ", "))
+				return nil, &UnavailableError{Path: s.Path, Address: m.Address(s.Name), Section: section.Name, Chair: c.Name, Agents: c.Agents, Available: available}
 			}
 			if c.Tier != "" {
 				_, pin, _ := loop.SplitTier(agent)
@@ -285,7 +291,7 @@ func (s Spec) Bind(agents loop.Agents, available []string) ([]Member, error) {
 	return members, nil
 }
 
-func firstAvailable(agents, available []string) (string, bool) {
+func FirstAvailable(agents, available []string) (string, bool) {
 	for _, agent := range agents {
 		base, _, _ := loop.SplitTier(agent)
 		if strings.Contains(base, ":") || slices.Contains(available, base) {
@@ -387,7 +393,7 @@ func ChairsFor(score loop.Score, members []Member) (loop.Chairs, error) {
 }
 
 func ScoreName(name, home, worktree string) (string, error) {
-	path, _, found := locate(name, home, worktree)
+	path, _, found := Locate(name, home, worktree)
 	if !found {
 		return "", nil
 	}
@@ -408,4 +414,21 @@ func ScoreName(name, home, worktree string) (string, error) {
 		return "", fmt.Errorf("%s: score %q: %s", path, f.Score, message)
 	}
 	return f.Score, nil
+}
+
+type UnavailableError struct {
+	Path, Address, Section, Chair string
+	Agents, Available             []string
+}
+
+func (e *UnavailableError) Error() string {
+	return fmt.Sprintf("%s: %s: none of %s is in [agents] available (%s)", e.Path, e.Address, strings.Join(e.Agents, ", "), strings.Join(e.Available, ", "))
+}
+func (s Spec) Ready(score loop.Score, agents loop.Agents, available []string) error {
+	members, err := s.Bind(agents, available)
+	if err != nil {
+		return err
+	}
+	_, err = ChairsFor(score, members)
+	return err
 }

@@ -11,6 +11,9 @@ func (s Score) File() string {
 	if s.Name == "default" {
 		out.WriteString("# File scores omit sizing, lesson proposals, and the test-plan tier policy alias.\n")
 	}
+	if s.Description != "" {
+		fmt.Fprintf(&out, "description = %q\n", s.Description)
+	}
 	if s.Rounds > 0 {
 		fmt.Fprintf(&out, "rounds = %d\n", s.Rounds)
 	}
