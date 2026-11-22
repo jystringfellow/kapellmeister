@@ -180,14 +180,7 @@ func repertoireFileEnsemble(name, home, worktree string, settings loop.Settings,
 		}
 		score = entry.Score
 	}
-	if err := spec.Ready(score, settings.Defined, settings.Agents); err != nil {
-		var unavailable *ensemble.UnavailableError
-		if errors.As(err, &unavailable) {
-			row.Reason = fmt.Sprintf("%s.%s: none of %s is available", unavailable.Section, unavailable.Chair, strings.Join(unavailable.Agents, ", "))
-		} else {
-			row.Reason = strings.TrimPrefix(err.Error(), spec.Path+": ")
-		}
-	}
+	row.Reason = repertoireReadiness(spec, score, settings)
 	row.Ready = row.Reason == ""
 	return row
 }
@@ -238,4 +231,15 @@ func repertoireConfigEnsemble(name, home, worktree string, settings loop.Setting
 	}
 	row.Ready = row.Reason == ""
 	return row
+}
+
+func repertoireReadiness(spec ensemble.Spec, score loop.Score, settings loop.Settings) string {
+	if err := spec.Ready(score, settings.Defined, settings.Agents); err != nil {
+		var unavailable *ensemble.UnavailableError
+		if errors.As(err, &unavailable) {
+			return fmt.Sprintf("%s.%s: none of %s is available", unavailable.Section, unavailable.Chair, strings.Join(unavailable.Agents, ", "))
+		}
+		return strings.TrimPrefix(err.Error(), spec.Path+": ")
+	}
+	return ""
 }

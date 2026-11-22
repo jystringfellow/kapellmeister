@@ -33,6 +33,8 @@ type scoreReader struct {
 	tree   map[string][]string
 }
 
+const ScoreSizeLimit = 64 << 10
+
 var scoreName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 func LoadScore(name string, src ScoreSource) (LoadedScore, error) {
@@ -89,6 +91,9 @@ func (r scoreReader) load(name string) (LoadedScore, error) {
 	if err != nil {
 		return LoadedScore{}, err
 	}
+	return r.loadText(name, text, file)
+}
+func (r scoreReader) loadText(name, text string, file ScoreFile) (LoadedScore, error) {
 	if message, ok := ReservedNameMessage(name); ok {
 		return LoadedScore{}, fmt.Errorf("%s: score %q: %s", file.Path, name, message)
 	}
@@ -144,7 +149,7 @@ func (r scoreReader) read(kind, name string) (string, ScoreFile, error) {
 	rel := scorePath(kind, name)
 	path := filepath.Join(r.src.Home, rel)
 	file := ScoreFile{Kind: kind, Name: name, Source: "user", Path: path}
-	limit := int64(64 << 10)
+	limit := int64(ScoreSizeLimit)
 	if kind == "part" {
 		limit = 256 << 10
 	}
@@ -239,4 +244,40 @@ func ListScores(src ScoreSource) ([]ScoreEntry, error) {
 		entries = append(entries, ScoreEntry{Name: name, Source: source, Score: loaded.Score, Err: err})
 	}
 	return entries, note
+}
+
+func CheckScore(name, path, text string, src ScoreSource) (LoadedScore, error, error) {
+	if !scoreName.MatchString(name) {
+		return LoadedScore{}, nil, fmt.Errorf("%s: invalid score name %q", path, name)
+	}
+	if name == "default" {
+		return LoadedScore{}, nil, fmt.Errorf("%s: built-in name is reserved", path)
+	}
+	for _, builtin := range BuiltinScoreNames() {
+		if name == builtin {
+			return LoadedScore{}, nil, fmt.Errorf("%s: built-in name is reserved", path)
+		}
+	}
+	r, note := newScoreReader(src)
+	for _, builtin := range append([]string{"default"}, BuiltinScoreNames()...) {
+		if err := r.reserved("score", builtin); err != nil {
+			return LoadedScore{}, note, err
+		}
+	}
+	for _, part := range AllRoles() {
+		if err := r.reserved("part", part); err != nil {
+			return LoadedScore{}, note, err
+		}
+	}
+	loaded, err := r.loadText(name, text, ScoreFile{Kind: "score", Name: name, Source: "user", Path: path})
+	return loaded, note, err
+}
+
+func LoadScoreLenient(name string, src ScoreSource) (LoadedScore, error, error) {
+	if !scoreName.MatchString(name) {
+		return LoadedScore{}, nil, fmt.Errorf("invalid score name %q", name)
+	}
+	r, note := newScoreReader(src)
+	loaded, err := r.load(name)
+	return loaded, note, err
 }

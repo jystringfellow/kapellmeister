@@ -118,6 +118,21 @@ func dirs(home, worktree string) []source {
 }
 
 func load(name, path string, portable bool, agents loop.Agents) (Spec, error) {
+	if message, ok := loop.ReservedNameMessage(name); ok {
+		return Spec{}, fmt.Errorf("%s: ensemble %q: %s", path, name, message)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Spec{}, fmt.Errorf("%s: %w", path, err)
+	}
+	return parse(name, path, string(data), portable, agents)
+}
+
+func Check(name, path, text string, agents loop.Agents) (Spec, error) {
+	return parse(name, path, text, false, agents)
+}
+
+func parse(name, path, text string, portable bool, agents loop.Agents) (Spec, error) {
 	spec := Spec{Name: name, Path: path, portable: portable}
 	fail := func(key, format string, args ...any) (Spec, error) {
 		return Spec{}, fmt.Errorf("%s: %s: %s", path, key, fmt.Sprintf(format, args...))
@@ -125,8 +140,11 @@ func load(name, path string, portable bool, agents loop.Agents) (Spec, error) {
 	if message, ok := loop.ReservedNameMessage(name); ok {
 		return fail(fmt.Sprintf("ensemble %q", name), "%s", message)
 	}
+	if !validName.MatchString(name) {
+		return fail(fmt.Sprintf("ensemble %q", name), "want a lowercase name of letters, digits and dashes")
+	}
 	var f file
-	md, err := toml.DecodeFile(path, &f)
+	md, err := toml.Decode(text, &f)
 	if err != nil {
 		return Spec{}, fmt.Errorf("%s: %w", path, err)
 	}
@@ -431,4 +449,18 @@ func (s Spec) Ready(score loop.Score, agents loop.Agents, available []string) er
 	}
 	_, err = ChairsFor(score, members)
 	return err
+}
+
+func (s Spec) Fits(score loop.Score) error {
+	var members []Member
+	for _, section := range s.Sections {
+		for _, chair := range section.Chairs {
+			members = append(members, Member{Section: section.Name, Name: chair.Name, Part: chair.Part})
+		}
+	}
+	_, err := ChairsFor(score, members)
+	if err != nil {
+		return fmt.Errorf("%s: %w", s.Path, err)
+	}
+	return nil
 }
