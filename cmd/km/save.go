@@ -144,6 +144,13 @@ func saveEnsemble(name, wt string, data []byte, repo, replace bool, settings loo
 	if _, ok := settings.Ensembles[name]; ok {
 		return "", false, fmt.Errorf("ensemble name %q is defined by [ensembles.%s] in %s; rename or remove the table", name, name, loop.UserConfigPath(home))
 	}
+	if repo {
+		for _, dir := range []string{filepath.Dir(filepath.Dir(repository)), filepath.Dir(repository)} {
+			if info, err := os.Lstat(dir); err == nil && !info.IsDir() {
+				return "", false, fmt.Errorf("%s is a link or not a directory; a repository save writes only inside the worktree", dir)
+			}
+		}
+	}
 	if err := os.MkdirAll(home, 0o755); err != nil {
 		return "", false, err
 	}
