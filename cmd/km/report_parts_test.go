@@ -573,3 +573,19 @@ func TestTheReadmesReportCommandSynopsisListsThePartsFlag(t *testing.T) {
 		t.Fatalf("README report command synopsis omits [-parts]: km report %s", synopsis)
 	}
 }
+
+func TestReportPartsCountsEveryChairOfAParallelProduceStep(t *testing.T) {
+	root := recordRoot(t)
+	a := partStep("research", "alpha", "scout-1", 0)
+	a["part"] = "scout"
+	b := partStep("research", "alpha", "scout-2", 0)
+	b["part"] = "scout"
+	c := partStep("research", "beta", "scout-3", 0)
+	c["part"] = "scout"
+	partsFixture(t, root, "one", "approved", 0, a, b, c)
+	rows := partRows(t, root)
+	requireNumbers(t, partRow(t, rows, "scout", "alpha"), map[string]int{"steps": 2})
+	requireNumbers(t, partRow(t, rows, "scout", "beta"), map[string]int{"steps": 1})
+	requireNumbers(t, partRow(t, rows, "scout", "alpha")["usage"].(map[string]any), map[string]int{"input_tokens": 200})
+	requireNumbers(t, partRow(t, rows, "scout", "beta")["usage"].(map[string]any), map[string]int{"input_tokens": 100})
+}

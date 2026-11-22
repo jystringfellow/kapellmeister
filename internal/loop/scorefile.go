@@ -15,6 +15,7 @@ type scorePartFile struct {
 	Optional     bool    `toml:"optional"`
 }
 type scoreStepFile struct {
+	Chairs      *string           `toml:"chairs"`
 	Name        string            `toml:"name"`
 	Kind        StepKind          `toml:"kind"`
 	Part        string            `toml:"part"`
@@ -75,7 +76,7 @@ func decodeScoreWithPartText(text, path, name string, ownPartText bool) (Score, 
 			if name, ok := step["name"].(string); ok {
 				subject = "step " + name
 			}
-			if err := scoreKeys(path, subject, step, "name", "kind", "part", "reads", "writes", "background", "approve_when", "escalate", "next"); err != nil {
+			if err := scoreKeys(path, subject, step, "name", "kind", "part", "reads", "writes", "chairs", "background", "approve_when", "escalate", "next"); err != nil {
 				return Score{}, err
 			}
 		}
@@ -128,7 +129,16 @@ func decodeScoreWithPartText(text, path, name string, ownPartText bool) (Score, 
 				return Score{}, scoreError(path, subject, "unknown approve_when %q (want any, all or always)", approval)
 			}
 		}
-		spec := ScoreStep{Name: step.Name, Kind: step.Kind, Part: step.Part, Reads: step.Reads, Writes: writes, Background: step.Background, ApproveWhen: approval, Escalate: step.Escalate}
+		chairs := ""
+		if step.Chairs != nil {
+			if *step.Chairs != ChairsFirst && *step.Chairs != ChairsAll {
+				return Score{}, scoreError(path, subject, "chairs %q (want first or all)", *step.Chairs)
+			}
+			if *step.Chairs == ChairsAll {
+				chairs = ChairsAll
+			}
+		}
+		spec := ScoreStep{Chairs: chairs, Name: step.Name, Kind: step.Kind, Part: step.Part, Reads: step.Reads, Writes: writes, Background: step.Background, ApproveWhen: approval, Escalate: step.Escalate}
 		for _, exit := range sortedKeys(step.Next) {
 			spec.Exits = append(spec.Exits, Exit{exit, step.Next[exit]})
 		}
@@ -141,6 +151,21 @@ func decodeScoreWithPartText(text, path, name string, ownPartText bool) (Score, 
 		step := &score.Steps[i]
 		subject := "step " + step.Name
 		exits := []string{}
+		if step.Chairs == ChairsAll {
+			if step.Background {
+				return Score{}, scoreError(path, subject, "chairs = all cannot be a background step")
+			}
+			switch step.Kind {
+			case KindProduce:
+				if step.Writes != "reply" {
+					return Score{}, scoreError(path, subject, "chairs = all needs writes = reply: two chairs would edit one worktree")
+				}
+			case KindReview:
+				return Score{}, scoreError(path, subject, "chairs = all is not for review steps: review already plays every chair of its part")
+			case KindDecide, KindTest:
+				return Score{}, scoreError(path, subject, "chairs = all is not for decide or test steps: each is one voice")
+			}
+		}
 		switch step.Kind {
 		case KindProduce:
 			exits = []string{"done"}
@@ -256,6 +281,9 @@ func decodeScoreWithPartText(text, path, name string, ownPartText bool) (Score, 
 			return Score{}, scoreError(path, "part "+name, "unknown memory %q (want fresh or resume)", memory)
 		}
 		for _, step := range score.StepsOf(name) {
+			if step.Chairs == ChairsAll && memory == MemoryResume {
+				return Score{}, scoreError(path, "step "+step.Name, "chairs = all cannot play part %s with memory = resume: every chair plays in a fresh terminal", name)
+			}
 			if step.Kind == KindReview && memory == MemoryResume {
 				return Score{}, scoreError(path, "part "+name, "review steps cannot resume")
 			}

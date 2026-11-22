@@ -540,3 +540,19 @@ func TestStatusJSONUsesTelemetryOrderForTheLatestInputReason(t *testing.T) {
 		t.Fatal(c)
 	}
 }
+
+func TestStatusListsAllChairsPlayingAParallelProduceStep(t *testing.T) {
+	root, state := statusDataFixture(t)
+	state["score"] = map[string]any{"name": "research", "steps": []any{map[string]any{"name": "research", "kind": "produce", "part": "auditor"}}}
+	state["playing"] = []any{map[string]any{"step": "research", "chair": "winds.one@voices", "started": statusNow}, map[string]any{"step": "research", "chair": "winds.two@voices", "started": statusNow}}
+	saveStatusData(t, root, state)
+	row := statusDataRow(t, root)
+	current := row["current"].([]any)
+	if len(current) != 1 || !reflect.DeepEqual(current[0].(map[string]any)["chairs"], []any{"winds.one@voices", "winds.two@voices"}) {
+		t.Fatal(current)
+	}
+	chairs := dataChairs(t, row)
+	if chairs[1]["state"] != "playing" || chairs[2]["state"] != "playing" {
+		t.Fatal(chairs)
+	}
+}

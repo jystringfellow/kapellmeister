@@ -73,3 +73,18 @@ func TestAProduceOnlyScoreNeedsNoClassifier(t *testing.T) {
 		t.Fatalf("chairs = %+v, error = %v", chairs, err)
 	}
 }
+
+func TestSeveralChairsCanPlayAParallelReplyPart(t *testing.T) {
+	for _, part := range []string{"scout", "planner"} {
+		score := loop.Score{Parts: []loop.Part{{Name: part}}, Steps: []loop.ScoreStep{{Name: "research", Part: part, Kind: loop.KindProduce, Chairs: loop.ChairsAll}}}
+		members := []Member{{Part: part, Chair: loop.Chair{Profile: "one"}}, {Part: part, Chair: loop.Chair{Profile: "two"}}, {Part: part, Chair: loop.Chair{Profile: "three"}}}
+		chairs, err := ChairsFor(score, members)
+		if err != nil || len(chairs.Of(part)) != 3 {
+			t.Fatalf("chairs = %+v, error = %v", chairs, err)
+		}
+		score.Steps[0].Chairs = ""
+		if _, err := ChairsFor(score, members); err == nil || !strings.Contains(err.Error(), "the score has one") {
+			t.Fatalf("error = %v", err)
+		}
+	}
+}

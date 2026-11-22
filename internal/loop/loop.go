@@ -907,25 +907,29 @@ type review struct {
 	Err     error
 }
 
-func (e *Engine) reviewRound(ctx context.Context, spec ScoreStep, round int, hand handoff) ([]review, error) {
+func (e *Engine) parallelReplies(ctx context.Context, spec ScoreStep, round int, hand handoff, after func(int, []review, []Step)) ([]review, error) {
 	chairs := e.Config.Chairs.Of(spec.Part)
 	if len(chairs) == 0 {
 		return nil, errors.New("no reviewers configured")
 	}
 	if e.Reseater != nil {
+		label := "review chair"
+		if spec.Kind != KindReview {
+			label = "chair"
+		}
 		seated := map[string]bool{}
 		for _, chair := range chairs {
 			if seated[chair.Address] {
 				continue
 			}
 			seated[chair.Address] = true
-			e.progress("  reseating review chair %s", chair.Address)
+			e.progress("  reseating %s %s", label, chair.Address)
 			result, err := e.Reseater.Reseat(ctx, chair)
 			if result.New != "" {
 				e.record(Record{RunID: e.Config.RunID, Round: round, Step: "reseat", Part: spec.Part, Chair: &chair, TerminalID: result.New, Detail: "replaced " + result.Old})
 			}
 			if err != nil {
-				return nil, fmt.Errorf("reseating review chair %s: %w", chair.Address, err)
+				return nil, fmt.Errorf("reseating %s %s: %w", label, chair.Address, err)
 			}
 			e.progress("  %s: %s → %s", chair.Address, result.Old, result.New)
 		}
@@ -943,9 +947,11 @@ func (e *Engine) reviewRound(ctx context.Context, spec ScoreStep, round int, han
 		steps[i] = Step{Name: spec.Name, Round: round, Chair: chair, ChairName: chairName,
 			Prompt: e.brief(spec, hand, path, chair), ReplyPath: path}
 	}
-	classifyErrs := make([]error, len(chairs))
+
 	errs, err := e.readOnlyStepsThen(ctx, steps, func(i int) {
-		reviews[i].Verdict, classifyErrs[i] = e.verdict(ctx, round, spec.Name, reviews[i].Path, steps[i].ChairName)
+		if after != nil {
+			after(i, reviews, steps)
+		}
 	})
 	if err != nil {
 		return nil, err
@@ -957,8 +963,9 @@ func (e *Engine) reviewRound(ctx context.Context, spec ScoreStep, round int, han
 		}
 		reviews[i].Err, reviews[i].Verdict = err, VerdictFailed
 		failures = append(failures, fmt.Errorf("%s: %w", reviews[i].Name, err))
-		e.record(Record{RunID: e.Config.RunID, Round: round, Step: "verdict-" + spec.Name, ChairName: steps[i].ChairName,
-			Verdict: VerdictFailed, Reply: reviews[i].Path, Error: cancellationReason(ctx, err)})
+		if spec.Kind == KindReview {
+			e.record(Record{RunID: e.Config.RunID, Round: round, Step: "verdict-" + spec.Name, ChairName: steps[i].ChairName, Verdict: VerdictFailed, Reply: reviews[i].Path, Error: cancellationReason(ctx, err)})
+		}
 	}
 	if len(failures) == len(chairs) {
 		if len(chairs) == 1 {
@@ -968,7 +975,21 @@ func (e *Engine) reviewRound(ctx context.Context, spec ScoreStep, round int, han
 		for _, failure := range failures[1:] {
 			combined = fmt.Errorf("%w; %w", combined, failure)
 		}
-		return nil, fmt.Errorf("every reviewer failed: %w", combined)
+		if spec.Kind == KindReview {
+			return nil, fmt.Errorf("every reviewer failed: %w", combined)
+		}
+		return nil, fmt.Errorf("every %s chair failed: %w", spec.Part, combined)
+	}
+	return reviews, nil
+}
+
+func (e *Engine) reviewRound(ctx context.Context, spec ScoreStep, round int, hand handoff) ([]review, error) {
+	classifyErrs := make([]error, len(e.Config.Chairs.Of(spec.Part)))
+	reviews, err := e.parallelReplies(ctx, spec, round, hand, func(i int, reviews []review, steps []Step) {
+		reviews[i].Verdict, classifyErrs[i] = e.verdict(ctx, round, spec.Name, reviews[i].Path, steps[i].ChairName)
+	})
+	if err != nil {
+		return nil, err
 	}
 	for _, err := range classifyErrs {
 		if err != nil {
@@ -1411,6 +1432,9 @@ func tail(s string, lines int) string {
 }
 
 func (c Chairs) Of(part string) []Chair {
+	if len(c.Parts[part]) > 0 {
+		return c.Parts[part]
+	}
 	switch part {
 	case "planner":
 		return []Chair{c.Planner}
