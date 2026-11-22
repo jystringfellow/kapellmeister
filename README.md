@@ -917,8 +917,10 @@ Every exit targets another step or an ending, `approved` or `changes_requested`.
 (to the same or an earlier step) needs `rounds`; `[run] rounds` and `-rounds` override it. One
 produce step may set `background = true` and `writes = "reply"`, with no `next`. It starts when
 the step before it exits and is joined before its first reader. It cannot be first or an exit
-target. Baseline verify, verify after worktree-writing produce steps and strict after approval
-stay under the conductor's control. A decide step takes `changes` while verify is failing.
+target. Foreground produce steps with `writes = "reply"` write only their reply file and are
+checked like review steps. Background steps are not checked because other steps may change the
+worktree while they run. Baseline verify, verify after worktree-writing produce steps and strict
+after approval stay under the conductor's control. A decide step takes `changes` while verify is failing.
 
 A part file is plain Markdown, without front matter. With no step headings its text applies to
 every step it plays. A part playing several steps can separate their instructions with exact
@@ -1300,7 +1302,8 @@ that the previous attempt changed the worktree. A second change is restored agai
 the run, naming the whole group. This also applies when a review errors or another review
 has already been classified.
 
-The gate, tester, tune reviewer and lessons step use the same recovery. Snapshots preserve tracked
+The planner, other foreground reply-only produce steps, gate, tester, tune reviewer and lessons
+step use the same recovery. The background `test-plan` is not checked. Snapshots preserve tracked
 and non-ignored untracked files, deletions, file modes, symlinks and the separate staged state.
 Ignored files, empty directories and nested repositories' contents are not restored.
 A read-only chair's commit is not undone: the run fails and reports that HEAD moved.

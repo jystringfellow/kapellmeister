@@ -132,7 +132,16 @@ func (e *Engine) walkScore(ctx context.Context, res Result, verify VerifyResult,
 			step := Step{Name: spec.Name, Round: round, Chair: chair, ReplyPath: path, Prompt: e.brief(spec, hand, path, chair)}
 			switch spec.Kind {
 			case KindProduce:
-				_, err := e.step(ctx, step)
+				var err error
+				if spec.Writes == "reply" {
+					var errs []error
+					errs, err = e.readOnlySteps(ctx, []Step{step})
+					if err == nil {
+						err = errs[0]
+					}
+				} else {
+					_, err = e.step(ctx, step)
+				}
 				if err != nil {
 					return e.fail(res, err), nil
 				}
