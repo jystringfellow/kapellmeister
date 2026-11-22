@@ -99,7 +99,7 @@ func (e *Engine) loadLessons() {
 		for _, part := range score.Parts {
 			priority, review := 0, false
 			for _, step := range score.StepsOf(part.Name) {
-				review = review || step.Kind == KindReview
+				review = review || step.Kind == KindReview || step.Chairs == ChairsAll
 			}
 			if review {
 				priority = 1

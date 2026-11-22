@@ -133,6 +133,23 @@ func (e *Engine) walkScore(ctx context.Context, res Result, verify VerifyResult,
 			switch spec.Kind {
 			case KindProduce:
 				var err error
+				if spec.Chairs == ChairsAll {
+					replies, parallelErr := e.parallelReplies(ctx, spec, round, hand, nil)
+					if parallelErr != nil {
+						return e.fail(res, parallelErr), nil
+					}
+					reply := stepReply{}
+					for _, r := range replies {
+						if r.Err != nil {
+							reply.failed = append(reply.failed, fmt.Sprintf("%s (%s)", r.Name, r.Chair))
+						} else {
+							reply.files = append(reply.files, r.Path)
+						}
+					}
+					played[spec.Name] = reply
+					exit = "done"
+					break
+				}
 				if spec.Writes == "reply" {
 					var errs []error
 					errs, err = e.readOnlySteps(ctx, []Step{step})

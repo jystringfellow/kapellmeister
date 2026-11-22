@@ -329,7 +329,7 @@ func ChairsFor(score loop.Score, members []Member) (loop.Chairs, error) {
 			return loop.Chairs{}, fmt.Errorf("ensemble seats no %s; the score needs one", part.Name)
 		}
 		review := slices.ContainsFunc(score.StepsOf(part.Name), func(step loop.ScoreStep) bool {
-			return step.Kind == loop.KindReview
+			return step.Kind == loop.KindReview || step.Chairs == loop.ChairsAll
 		})
 		if review {
 			for _, m := range seated {
@@ -341,6 +341,19 @@ func ChairsFor(score loop.Score, members []Member) (loop.Chairs, error) {
 					}
 					chairs.Parts[part.Name] = append(chairs.Parts[part.Name], m.Chair)
 				}
+			}
+			if part.Name == "planner" {
+				chairs.Planner = seated[0].Chair
+			}
+			if part.Name == "implementer" {
+				chairs.Implementer = seated[0].Chair
+			}
+			if part.Name == "gate" {
+				chairs.Gate = seated[0].Chair
+			}
+			if part.Name == "tester" {
+				c := seated[0].Chair
+				chairs.Tester = &c
 			}
 			continue
 		}

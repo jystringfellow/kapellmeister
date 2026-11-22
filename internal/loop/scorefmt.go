@@ -45,6 +45,9 @@ func (s Score) File() string {
 		if step.Writes != "" {
 			fmt.Fprintf(&out, "writes = %q\n", step.Writes)
 		}
+		if step.Chairs == ChairsAll {
+			out.WriteString("chairs = \"all\"\n")
+		}
 		if step.Background {
 			out.WriteString("background = true\n")
 		}

@@ -623,18 +623,19 @@ when CAO says the session is already gone.
 
 `km play SESSION [-max-rounds N] [-verify CMD] [-timeout D] [-cao URL]` runs the score on a
 standing ensemble. It uses the recorded worktree, task and chairs, rereading the task file when
-one was recorded. Before each review step, including the first, `km play` reseats every chair
-that will play it, as `km reseat` does: a new terminal in the same session, with the same address,
-section, agent, profile, model and tier, briefed before the old terminal is released. Review is
+one was recorded. Before each review step and each `chairs = "all"` step, including the first,
+`km play` reseats every chair that will play it, as `km reseat` does: a new terminal in the same
+session, with the same address, section, agent, profile, model and tier, briefed before the old
+terminal is released. Review is
 always fresh under every command: a reviewer that remembers its last verdict reviews its memory.
-This follows the score's step kinds, whatever the steps and parts are named. All other chairs
+This follows the score, whatever the steps and parts are named. All other chairs
 keep their terminals for the whole play, including non-review parts declaring `memory = "resume"`.
 Steps sharing an occupant run one at a time.
 
-A progress line names each chair being reseated before the review step. All review chairs are
-reseated before any plays, and they still play in parallel under one snapshot. The standing record
+A progress line names each chair being reseated before a review or parallel reply step. All chairs
+are reseated before any plays, and they still play in parallel under one snapshot. The standing record
 names the new terminals, and `km status -json` shows them once the chairs play. A failed reseat
-stops the play naming the chair and the failure; no review step falls back to an old terminal.
+stops the play naming the chair and the failure; no such step falls back to an old terminal.
 The standing record keeps an existing terminal for every other chair.
 
 Sizing and tier escalation are off: each occupant keeps its recorded provider, profile and model.
@@ -737,6 +738,59 @@ file selects a score with the top-level key `score = "NAME"`. Without it the ens
 built-in `default`, with the same steps, prompts, reply files and outcomes as before. `km run -score NAME` selects one when seating from `[chairs]`; it cannot override an ensemble file.
 `km rehearse`, `km audition` and `km play` use the ensemble file's key. Play reads that key again
 when it starts; the standing record does not store the choice.
+
+### Research in parallel
+
+A part in `parts/researcher.md` can give each researcher the same task:
+
+```md
+Research your focus and write useful notes to {reply}.
+```
+
+A score in `scores/research.toml` collects those notes for the built-in planner:
+
+```toml
+[[steps]]
+name = "research"
+kind = "produce"
+part = "researcher"
+writes = "reply"
+chairs = "all"
+next = { done = "plan" }
+
+[[steps]]
+name = "plan"
+kind = "produce"
+part = "planner"
+reads = ["research"]
+writes = "reply"
+next = { done = "approved" }
+```
+
+An ensemble can seat three researchers with different focuses and a planner:
+
+```toml
+score = "research"
+
+[sections.research.chairs.code]
+part = "researcher"
+agents = ["AGENT_A"]
+focus = "The code"
+
+[sections.research.chairs.tests]
+part = "researcher"
+agents = ["AGENT_B"]
+focus = "The tests and CI"
+
+[sections.research.chairs.docs]
+part = "researcher"
+agents = ["AGENT_C"]
+focus = "The docs and history"
+
+[sections.planning.chairs.plan]
+part = "planner"
+agents = ["AGENT_D"]
+```
 
 ### Review an existing change
 
@@ -859,15 +913,15 @@ next = { approve = "approved", changes = "draft" }
 
 Seat `drafter`, `inspector` and `classifier` chairs in an ensemble file with `score = "small"`,
 and supply `parts/drafter.md` and `parts/inspector.md`. Required parts need a chair; review steps
-use all chairs of their part, and other kinds accept one. Every seated part must belong to the
-score; the classifier is a service and is always accepted. A review, decide or test step needs a
-classifier. With `-score` and `[chairs]`, only the built-in roles those settings supply can be
+use all chairs of their part; reply-only produce steps can also play all chairs with
+`chairs = "all"`. Other parts accept one chair. Every seated part must belong to the score; the
+classifier is a service and is always accepted. A review, decide or test step needs a classifier. With `-score` and `[chairs]`, only the built-in roles those settings supply can be
 seated; custom parts need an ensemble file. Roles outside a file score are refused. With a
 built-in score, role flags outside the score are refused and unused roles from config are ignored.
 
 The only score keys are `rounds`, `[parts.NAME]` and `[[steps]]`. Part tables accept `memory`
 (`fresh`, the default, or `resume`), `resume_tokens`, `resume_steps` and `optional` (default false).
-Any non-review part may resume. A part with a review-kind step is always fresh and is refused if
+A part with a review-kind step or a `chairs = "all"` step is always fresh and is refused if
 it declares resume. Optional parts may play only test steps or the background step.
 
 Resume keeps the chair's terminal between its steps and sends its next step to that terminal.
@@ -908,10 +962,19 @@ when usage is unmeasured. Both limits are refused on a fresh part and on values 
 is set in the default score.
 
 Each step accepts `name`, `kind`, `part`, `reads`, `writes`, `background`,
-`approve_when`, `escalate` and `next`. Reads name steps whose newest reply files are handed over.
+`approve_when`, `escalate`, `chairs` and `next`. Reads name steps whose newest reply files are
+handed over.
 Writes may be `"reply"` on produce steps; otherwise a produce step may change the worktree and
 is followed by verify. Approval policy is `any`, `all` or `always`, only on review steps; an
 ensemble's explicit `gate_when` overrides it. Escalate is a produce-step option.
+
+`chairs = "first"` is the default and plays the first chair. `chairs = "all"` plays every chair
+of the part in parallel, and is allowed only on a foreground produce step with `writes = "reply"`
+whose part uses fresh memory. Every chair plays in a fresh terminal with its own focus and reply
+file. One read-only check covers all chairs together: a worktree change is restored and all chairs
+are retried once; a second change fails the run. The step takes `done` if at least one chair
+writes a reply and fails if all fail. A later reader receives every written reply in chair order
+and is told which chairs failed.
 
 | Kind | Required exits in `next` |
 | --- | --- |
@@ -951,8 +1014,8 @@ part text and a fixed block naming the files to
 read and the reply to write. Review, decide and test steps end that block with
 `Put APPROVE or CHANGES alone on the last line of the reply file.` A part cannot remove or reword
 that block. Test steps also get the scratch-directory constraint. Reply files are named by the
-conductor: `STEP.md` before the loop, `STEP-ROUND.md` inside it, and `STEP-ROUND-N.md` for several
-review chairs.
+conductor: `STEP.md` before the loop and `STEP-ROUND.md` inside it. For several chairs,
+they are `STEP-N.md` before the loop and `STEP-ROUND-N.md` inside it.
 
 A file score may use a built-in part. Its prompt depends on part and kind, regardless of step
 name: planner plays produce (plan prompt), implementer plays produce (implement prompt), reviewer
@@ -960,7 +1023,8 @@ plays review, gate plays decide (gate prompt), and tester plays test or produce 
 Other kinds are refused. Reads are handed positionally as in
 those prompts: implement needs plan; review needs plan and implementation summary; gate needs
 plan, summary and reviews; test needs plan, test plan and summary; test-plan needs plan. At least
-that many reads are required. Planner and tester's produce steps need `writes = "reply"`.
+that many reads are required. The planner prompt also names every file it reads. Planner and
+tester's produce steps need `writes = "reply"`.
 File scores do not request or apply sizing. Steps whose names match a default policy key keep
 that policy. Other steps get a policy by kind:
 
@@ -982,7 +1046,8 @@ Before any chair is seated, loading refuses unknown keys, kinds, parts, reads, w
 approval policies, exit names, targets or placeholders; missing exits; invalid, duplicate or
 reserved step names; unused part tables; unreachable steps or steps with no path to an ending;
 backward exits without rounds; invalid background or optional steps; review memory; missing
-required chairs, extra parts, several non-review chairs or a verdict step without a classifier.
+required chairs, extra parts, several chairs of a part without review or `chairs = "all"`, or a
+verdict step without a classifier.
 Messages name the file and the affected step or part. Reserved step names include `approved`,
 `changes_requested`, `verify`, `strict`, `lessons` and names starting with `classify-`.
 

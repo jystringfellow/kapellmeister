@@ -23,7 +23,13 @@ type Exit struct {
 	To   string
 }
 
+const (
+	ChairsFirst = "first"
+	ChairsAll   = "all"
+)
+
 type ScoreStep struct {
+	Chairs      string
 	Reads       []string
 	Sizes       bool
 	Sized       bool

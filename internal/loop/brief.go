@@ -18,7 +18,7 @@ func (e *Engine) brief(spec ScoreStep, h handoff, path string, chair Chair) stri
 	switch spec.Brief {
 	case "plan":
 		askSize := spec.Sizes && e.sizing().Mode != SizingOff && e.sizing().Decider == DeciderPlanner
-		return planPrompt(cfg.Task, path, askSize, lessons) + FocusBlock(chair.Focus)
+		return planPrompt(cfg.Task, path, askSize, lessons) + inputNotes(h) + FocusBlock(chair.Focus)
 	case "implement":
 		return implementPrompt(cfg.Task, h.path(0), path, cfg.CheckCommand, cfg.VerifyCommand, h.feedback, h.decide, h.test, lessons) + FocusBlock(chair.Focus)
 	case "review":
@@ -38,9 +38,7 @@ func (e *Engine) brief(spec ScoreStep, h handoff, path string, chair Chair) stri
 	part, _ := e.playingScore().Part(spec.Part)
 	instructions := strings.NewReplacer("{reply}", path, "{inputs}", strings.Join(h.files, ", "), "{plan}", h.path(0), "{verify}", h.verifyPath, "{verification}", strings.TrimRight(verifyLine(cfg.VerifyCommand, h.verify, h.verifyPath), "\n"), "{check}", cfg.CheckCommand, "{scratch}", cfg.ScratchDir).Replace(part.Prompt[spec.Name])
 	prompt := preamble(spec.Part) + taskBlock(cfg.Task) + lessons + instructions + "\n" + FocusBlock(chair.Focus)
-	if len(h.files) > 0 {
-		prompt += "Read " + strings.Join(h.files, ", ") + ".\n"
-	}
+	prompt += inputNotes(h)
 	if spec.Kind == KindTest {
 		prompt += "Everything you create stays under " + cfg.ScratchDir + ".\n"
 	}
@@ -67,4 +65,19 @@ func (e *Engine) classifyBrief(subject, path, out string) string {
 	}
 	step, _ := score.Step(subject)
 	return classifyPartPrompt(part, step.Kind, subject, path, out, e.lessonsFor("classify-"+subject, e.classifierChair())) + FocusBlock(e.classifierChair().Focus)
+}
+
+func inputNotes(h handoff) string {
+	var out string
+	if len(h.files) > 0 {
+		out += "Read " + strings.Join(h.files, ", ") + ".\n"
+	}
+	var failed []string
+	for _, input := range h.inputs {
+		failed = append(failed, input.failed...)
+	}
+	if len(failed) > 0 {
+		out += "These chairs failed to finish their reply: " + strings.Join(failed, ", ") + ". Their reply files are missing.\n"
+	}
+	return out
 }
