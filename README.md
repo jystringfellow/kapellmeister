@@ -689,10 +689,12 @@ timeout = "15m"
 [sections.review.chairs.security]
 part = "reviewer"
 agents = ["claude"]
+focus = "security: input handling, secrets, permissions, injection"
 
 [sections.review.chairs.style]
 part = "reviewer"
 agents = ["copilot", "claude"]
+focus = "style: naming, readability, consistency with the surrounding code"
 
 [sections.leads.chairs.gate]
 part = "gate"
@@ -713,6 +715,10 @@ The default score needs exactly one planner, implementer, gate and classifier, a
 and at most one tester. Parts are roles with plain names; chairs may carry orchestral names,
 such as `tonmeister` for the tester. Section and chair names are lowercase letters, digits and dashes. Sections keep the order they first appear in the file,
 and chairs keep their order within a section.
+
+A chair may set `focus` to nonempty text of at most 1024 bytes. km inserts it literally after
+the part text in every prompt, and tells the chair that others playing the same part may cover
+other angles. `km rehearse` includes it in the briefing, and `km status -json` shows it.
 
 A chair plays the first of its `agents` that is in your `[agents] available`, which has no default.
 A repository's file names only agents defined on your machine, built-in or user-defined, each with

@@ -48,6 +48,7 @@ type statusSection struct {
 }
 
 type statusChair struct {
+	Focus      string           `json:"focus,omitempty"`
 	Address    string           `json:"address"`
 	Name       string           `json:"name"`
 	Part       string           `json:"part"`

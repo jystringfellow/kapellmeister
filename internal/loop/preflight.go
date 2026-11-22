@@ -42,11 +42,12 @@ type PreflightResult struct {
 var blockerRE = regexp.MustCompile(`(?i)requires confirmation|do you want to proceed|needs review|do you trust|trust (this|all|the)|sign in|log ?in|authenticat|approve|allow .* to`)
 
 func UniqueChairs(chairs ...Chair) []Chair {
-	seen := map[Chair]bool{}
+	seen := map[struct{ provider, profile, model, tier string }]bool{}
 	var out []Chair
 	for _, s := range chairs {
-		if !seen[s] {
-			seen[s] = true
+		key := struct{ provider, profile, model, tier string }{s.Provider, s.Profile, s.Model, s.Tier}
+		if !seen[key] {
+			seen[key] = true
 			out = append(out, s)
 		}
 	}

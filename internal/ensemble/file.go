@@ -35,6 +35,7 @@ type Section struct {
 }
 
 type ChairSpec struct {
+	Focus   string
 	Tier    string
 	Name    string
 	Part    string
@@ -49,6 +50,7 @@ type file struct {
 	Sections map[string]struct {
 		Timeout string `toml:"timeout"`
 		Chairs  map[string]struct {
+			Focus   string   `toml:"focus"`
 			Part    string   `toml:"part"`
 			Tier    string   `toml:"tier"`
 			Agents  []string `toml:"agents"`
@@ -170,7 +172,13 @@ func load(name, path string, portable bool, agents loop.Agents) (Spec, error) {
 				return fail(fmt.Sprintf("chair %q", chairName), "%s", message)
 			}
 			c := raw.Chairs[chairName]
-			chair := ChairSpec{Name: chairName, Part: c.Part, Agents: c.Agents, Tier: c.Tier}
+			chair := ChairSpec{Name: chairName, Part: c.Part, Agents: c.Agents, Tier: c.Tier, Focus: c.Focus}
+			if md.IsDefined("sections", sectionName, "chairs", chairName, "focus") && strings.TrimSpace(c.Focus) == "" {
+				return fail(key+".focus", "want text, not an empty or whitespace-only focus")
+			}
+			if len(c.Focus) > 1024 {
+				return fail(key+".focus", "is %d bytes; the limit is 1024", len(c.Focus))
+			}
 			if (f.Score == "" || f.Score == "default") && !slices.Contains(loop.AllRoles(), c.Part) {
 				return fail(key+".part", "unknown part %q (want %s); optional parts: %s", c.Part, strings.Join(loop.ChairRoles, ", "), strings.Join(loop.OptionalRoles, ", "))
 			}
@@ -268,6 +276,7 @@ func (s Spec) Bind(agents loop.Agents, available []string) ([]Member, error) {
 			if err != nil {
 				return nil, fmt.Errorf("%s: %s: %w", s.Path, m.Address(s.Name), err)
 			}
+			chair.Focus = c.Focus
 			chair.Timeout = firstDuration(c.Timeout, section.Timeout, s.Timeout)
 			m.Chair = chair
 			members = append(members, m)
