@@ -39,6 +39,7 @@ func TestMcpSaveRejectsInvalidSourcesAndOversizedContent(t *testing.T) {
 
 func TestMcpSaveUsesRunRecordsRepositoryLocationAndReplace(t *testing.T) {
 	home, wt, records := t.TempDir(), t.TempDir(), t.TempDir()
+	safetyGit(t, wt, "init", "-q")
 	t.Setenv("KAPELLMEISTER_HOME", home)
 	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable=['claude','codex','copilot','agy']\n[report]\ndirs=['"+records+"']\n")
 	reportFixture(t, records, "recorded", "", "app", "text", "approved")

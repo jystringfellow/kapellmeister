@@ -45,6 +45,7 @@ func TestSaveRefusesConflictsAndLinksAndReplacesOnlyWhenAllowed(t *testing.T) {
 		for _, replace := range []bool{false, true} {
 			t.Run(fmt.Sprintf("repo=%t/replace=%t", repo, replace), func(t *testing.T) {
 				home, wt := t.TempDir(), t.TempDir()
+				safetyGit(t, wt, "init", "-q")
 				t.Setenv("KAPELLMEISTER_HOME", home)
 				writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = ['claude', 'codex', 'copilot', 'agy']\n")
 				dest := filepath.Join(home, "ensembles", "sample.toml")
@@ -113,6 +114,7 @@ func TestSaveReportsCheckErrorsAndReadiness(t *testing.T) {
 
 func TestSaveReadsARunRecordByPrefixAndRefusesANamedRun(t *testing.T) {
 	home, wt, records := t.TempDir(), t.TempDir(), t.TempDir()
+	safetyGit(t, wt, "init", "-q")
 	t.Setenv("KAPELLMEISTER_HOME", home)
 	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = ['claude', 'codex', 'copilot', 'agy']\n[report]\ndirs = ['"+records+"']\n")
 	reportFixture(t, records, "recorded", "", "app", "original", "approved")
@@ -141,6 +143,7 @@ func TestSaveHonorsShadowingAndConfiguredNames(t *testing.T) {
 		for _, replace := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/%t", kind, replace), func(t *testing.T) {
 				home, wt := t.TempDir(), t.TempDir()
+				safetyGit(t, wt, "init", "-q")
 				t.Setenv("KAPELLMEISTER_HOME", home)
 				config := "[agents]\navailable = ['claude','codex','copilot','agy']\n"
 				existing := filepath.Join(wt, ".kapellmeister", "ensembles", "sample.toml")
@@ -226,6 +229,7 @@ func TestSaveNamesRunRecordErrorsAndOmitsAnUnknownSource(t *testing.T) {
 
 func TestSaveReportsTheUserFileWhenBothDestinationsExist(t *testing.T) {
 	home, wt := t.TempDir(), t.TempDir()
+	safetyGit(t, wt, "init", "-q")
 	t.Setenv("KAPELLMEISTER_HOME", home)
 	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = ['claude','codex','copilot','agy']\n")
 	user := filepath.Join(home, "ensembles", "sample.toml")
@@ -244,6 +248,7 @@ func TestSaveSourcesAppearInRepertoireWithTheirFitAndReadiness(t *testing.T) {
 		for _, location := range []string{"user", "repository"} {
 			t.Run(source+"/"+location, func(t *testing.T) {
 				home, wt, records := t.TempDir(), t.TempDir(), t.TempDir()
+				safetyGit(t, wt, "init", "-q")
 				t.Setenv(loop.HomeEnv, home)
 				writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = ['claude','codex','copilot','agy']\n[report]\ndirs = ['"+records+"']\n")
 				content := strings.TrimSuffix(sectionedEnsemble, "\n") + "  "
@@ -506,6 +511,7 @@ func TestSaveRefusesConfiguredNamesInTheRepositoryWithOrWithoutReplace(t *testin
 	for _, replace := range []bool{false, true} {
 		t.Run(fmt.Sprint(replace), func(t *testing.T) {
 			home, wt := t.TempDir(), t.TempDir()
+			safetyGit(t, wt, "init", "-q")
 			t.Setenv(loop.HomeEnv, home)
 			config := filepath.Join(home, "config.toml")
 			writeFile(t, config, "[agents]\navailable=['claude','codex','copilot','agy']\n[ensembles.sample]\ngate='claude'\n")
