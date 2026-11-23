@@ -1,0 +1,52 @@
+#!/bin/sh
+set -eu
+
+refuse() {
+  printf 'homebrew-formula: %s\n' "$1" >&2
+  exit 1
+}
+
+if [ "$#" -ne 3 ]; then
+  printf 'usage: homebrew-formula <tag> <SHA256SUMS path> <template path>\n' >&2
+  exit 2
+fi
+
+tag=$1
+sums=$2
+template=$3
+case "$tag" in
+  v?*) version=${tag#v} ;;
+  *) refuse "invalid tag: $tag" ;;
+esac
+case "$version" in
+  *[!0-9A-Za-z.-]*) refuse "invalid tag: $tag" ;;
+esac
+[ -f "$sums" ] && [ -r "$sums" ] || refuse "cannot read $sums"
+[ -f "$template" ] && [ -r "$template" ] || refuse "cannot read $template"
+
+checksum() {
+  archive="km_${tag}_${1}.tar.gz"
+  hash=$(awk -v name="$archive" '$2 == name || $2 == "*" name { print $1; exit }' "$sums")
+  [ -n "$hash" ] || refuse "no checksum for $archive in $sums"
+  [ "${#hash}" -eq 64 ] || refuse "malformed checksum for $archive"
+  case "$hash" in
+    *[!0123456789abcdef]*) refuse "malformed checksum for $archive" ;;
+  esac
+  printf '%s' "$hash"
+}
+darwin_arm64=$(checksum darwin_arm64)
+darwin_amd64=$(checksum darwin_amd64)
+linux_arm64=$(checksum linux_arm64)
+linux_amd64=$(checksum linux_amd64)
+
+rendered=$(mktemp "${TMPDIR:-/tmp}/homebrew-formula.XXXXXX")
+trap 'rm -f "$rendered"' 0
+sed -e "s/{{VERSION}}/$version/g" \
+    -e "s/{{DARWIN_ARM64_SHA256}}/$darwin_arm64/g" \
+    -e "s/{{DARWIN_AMD64_SHA256}}/$darwin_amd64/g" \
+    -e "s/{{LINUX_ARM64_SHA256}}/$linux_arm64/g" \
+    -e "s/{{LINUX_AMD64_SHA256}}/$linux_amd64/g" "$template" > "$rendered"
+if leftover=$(grep -F '{{' "$rendered"); then
+  refuse "unrendered placeholder: $leftover"
+fi
+cat "$rendered"
