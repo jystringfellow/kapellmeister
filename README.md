@@ -158,7 +158,7 @@ km rehearse -worktree DIR -task-file task.md [-ensemble thorough]  # brief and l
 km play SESSION [-max-rounds N] [-verify CMD] [-timeout D] [-cao URL]  # run the score
 km reseat SESSION ADDRESS [-agent SPEC] [-timeout D] [-cao URL]  # replace one occupant
 km repertoire [-worktree DIR] [-json]           # list ensembles and scores available here
-km ensemble check [-worktree DIR] [-name NAME] [-json] FILE  # check an ensemble file
+km ensemble check [-worktree DIR] [-name NAME] [-json] [-text] FILE  # check an ensemble file
 km ensemble save -name NAME [-worktree DIR] [-repository] [-replace] [-json] (FILE | - | -run RUN)  # save an ensemble
 km score check [-worktree DIR] [-name NAME] [-json] FILE     # check a score file
 km ensemble list                                # list standing ensembles
@@ -356,10 +356,10 @@ records live outside the default state directory. In Claude Code, register it wi
 
 | Tool | Arguments | Structured result |
 | --- | --- | --- |
-| `run` | Required `task` text (at most 1 MiB) and exactly one of `repo` or `worktree`; optional `base` (only with `repo`), `ensemble`, `ensemble_content` (at most 64 KiB, requires `ensemble`), `why`, or `score` (not with `ensemble` or `ensemble_content`) | `run_id`, `pid`, `worktree`, `output` (log path); always detached |
+| `run` | Required `task` text (at most 1 MiB) and exactly one of `repo` or `worktree`; optional `base` (only with `repo`), `ensemble`, `ensemble_content` (at most 64 KiB, requires `ensemble`), `why`, or `score` (not with `ensemble` or `ensemble_content`). Ensemble content may only name agents from `[agents] available`, optionally with a tier | `run_id`, `pid`, `worktree`, `output` (log path); always detached |
 | `repertoire` | Optional `worktree` | The `km repertoire -json` document |
-| `check` | Required `kind` (`ensemble` or `score`), `name`, and TOML `content` (at most 64 KiB); optional `worktree` | The corresponding check JSON document |
-| `save` | Required `name` and exactly one of `content` (at most 64 KiB) or `run`; optional `location` (`user` or `repository`), `worktree`, and `replace` | The `km ensemble save -json` document |
+| `check` | Required `kind` (`ensemble` or `score`), `name`, and TOML `content` (at most 64 KiB); optional `worktree`. Ensemble text may only name agents from `[agents] available`, optionally with a tier | The corresponding check JSON document |
+| `save` | Required `name` and exactly one of `content` (at most 64 KiB) or `run`; optional `location` (`user` or `repository`), `worktree`, and `replace`. Ensemble text may only name agents from `[agents] available`, optionally with a tier | The `km ensemble save -json` document |
 | `wait` | Required `run` id or unique prefix; optional integer `timeout_seconds`, default 30, minimum 1, capped at **55 seconds** | The `km wait -json` document: `run_id`, `state`, `exit_status`, `reason`, and `result` when finished |
 | `status` | None | The same `km status -json` document of runs in progress, with the `ensemble` object, score, current steps, trail and measured usage |
 | `report` | Optional `since` (YYYY-MM-DD or RFC3339) and `repository` | The `km report -json` summary with those filters |
@@ -696,7 +696,9 @@ standard error while built-in and user scores remain listed.
 
 `km ensemble check [-worktree DIR] [-name NAME] [-json] FILE` checks an ensemble's
 syntax, score fit, and agent readiness. `km score check` accepts the same flags and
-checks a score and its parts. The default name is the file basename without `.toml`;
+checks a score and its parts. With `-text`, ensemble entries must name agents from
+`[agents] available`, optionally with a tier (`claude@large`).
+The default name is the file basename without `.toml`;
 use `-name` to override it or when reading standard input with `-`. Input is limited
 to 64 KiB. These commands write nothing and make no CAO request.
 
@@ -711,6 +713,7 @@ Start with `repertoire`, write an ensemble if none fits, and `check` it. Play th
 text with `run` and record the choice in `why`. When asked to keep it, use
 `km ensemble save -name NAME FILE`, `-` for standard input, or `-run RUN` for a
 run that played ensemble text. A run id or unique prefix identifies its record.
+Saved text may only name agents from `[agents] available`, optionally with a tier (`claude@large`).
 
 The command checks the text against `-worktree` (default `.`) before saving it.
 It writes to the user ensemble directory by default; `-repository` writes to the
@@ -735,6 +738,7 @@ An ensemble file seats chairs in sections. A repository can check one in at
 `km run -ensemble-file FILE` plays the checked file; `-ensemble NAME` names it, or its base
 name without `.toml` is used. The name must not already identify a configured ensemble. The
 run record keeps the exact file as `ensemble.toml` and records `ensemble_source` as `text`.
+Ensemble text may only name agents from `[agents] available`, optionally with a tier (`claude@large`).
 Any run can use `-why TEXT` to record the reason for the choice (up to 1024 bytes of UTF-8).
 
 ```toml

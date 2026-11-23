@@ -13,7 +13,7 @@ import (
 func TestMcpSaveKeepsContentWhenAsked(t *testing.T) {
 	home, wt := t.TempDir(), t.TempDir()
 	t.Setenv("KAPELLMEISTER_HOME", home)
-	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = [\"claude\", \"codex\", \"copilot\"]\n")
+	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable = [\"claude\", \"codex\", \"copilot\", \"agy\"]\n")
 	c := startMCPClient(t, false)
 	result := mcpData(t, c.call("save", map[string]any{"name": "sample", "content": sectionedEnsemble, "worktree": wt}))
 	if result["ready"] != true || result["path"] != filepath.Join(home, "ensembles", "sample.toml") {
@@ -39,8 +39,9 @@ func TestMcpSaveRejectsInvalidSourcesAndOversizedContent(t *testing.T) {
 
 func TestMcpSaveUsesRunRecordsRepositoryLocationAndReplace(t *testing.T) {
 	home, wt, records := t.TempDir(), t.TempDir(), t.TempDir()
+	safetyGit(t, wt, "init", "-q")
 	t.Setenv("KAPELLMEISTER_HOME", home)
-	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable=['claude','codex','copilot']\n[report]\ndirs=['"+records+"']\n")
+	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable=['claude','codex','copilot','agy']\n[report]\ndirs=['"+records+"']\n")
 	reportFixture(t, records, "recorded", "", "app", "text", "approved")
 	content := strings.TrimSuffix(sectionedEnsemble, "\n")
 	writeFile(t, filepath.Join(records, "recorded", "ensemble.toml"), content)
@@ -94,4 +95,23 @@ func TestMcpSaveDescriptionSaysWhenItWritesAFile(t *testing.T) {
 		}
 	}
 	t.Fatal("save tool missing")
+}
+
+func TestMcpSaveRefusesAnExplicitSpecWithoutWriting(t *testing.T) {
+	home, wt := t.TempDir(), t.TempDir()
+	t.Setenv("KAPELLMEISTER_HOME", home)
+	writeFile(t, filepath.Join(home, "config.toml"), "[agents]\navailable=['claude']\n")
+	content := strings.Replace(sectionedEnsemble, `agents = ["claude"]`, `agents = ["p:planner:m"]`, 1)
+	c := startMCPClient(t, false)
+	for _, location := range []string{"user", "repository"} {
+		got := mcpData(t, c.call("save", map[string]any{"name": "sample", "content": content, "worktree": wt, "location": location}))
+		if !strings.Contains(got["errors"].([]any)[0].(string), "text ensembles may only use names from [agents] available") {
+			t.Fatal(got)
+		}
+	}
+	for _, dest := range []string{filepath.Join(home, "ensembles", "sample.toml"), filepath.Join(wt, ".kapellmeister", "ensembles", "sample.toml")} {
+		if _, err := os.Stat(dest); !os.IsNotExist(err) {
+			t.Fatal(dest, err)
+		}
+	}
 }

@@ -18,6 +18,12 @@ import (
 	"time"
 )
 
+func recordedText(t *testing.T) string {
+	t.Helper()
+	writeFile(t, loop.UserConfigPath(loop.Home()), "[agents]\navailable = ['mock']\n[agents.define]\nmock = 'p:planner'\n")
+	return regexp.MustCompile(`p:[a-z]+:m`).ReplaceAllString(recordedEnsemble, "mock")
+}
+
 func TestEnsembleFileDoesNotGoWithScoreOrChairFlags(t *testing.T) {
 	for _, tc := range []struct{ flag, want string }{{"-score=default", "-score does not go with -ensemble-file"}, {"-planner=codex", "-planner does not go with -ensemble-file"}} {
 		t.Run(tc.flag, func(t *testing.T) {
@@ -44,13 +50,14 @@ func TestARunPlaysAndRecordsAnEnsembleGivenAsAFile(t *testing.T) {
 	f := &runCAO{}
 	_, args := runSessionArgs(t, f)
 	path := filepath.Join(t.TempDir(), "custom.toml")
-	writeFile(t, path, recordedEnsemble)
+	content := recordedText(t)
+	writeFile(t, path, content)
 	if err := runCommand(append(args[:6:6], "-ensemble-file", path, "-why", "fits")); err != nil {
 		t.Fatal(err)
 	}
 	dir := onlyRunRecord(t)
 	data, err := os.ReadFile(filepath.Join(dir, "ensemble.toml"))
-	if err != nil || string(data) != recordedEnsemble {
+	if err != nil || string(data) != content {
 		t.Fatalf("copy: %q, %v", data, err)
 	}
 	result := recordedResult(t, dir)
@@ -89,7 +96,7 @@ func TestATextEnsembleLeavesNoRecordWhenDiskSpaceIsInsufficient(t *testing.T) {
 	f := &runCAO{}
 	_, args := runSessionArgs(t, f)
 	path := filepath.Join(t.TempDir(), "sample.toml")
-	writeFile(t, path, recordedEnsemble)
+	writeFile(t, path, recordedText(t))
 	original := loop.FreeBytes
 	loop.FreeBytes = func(string) (uint64, error) { return 10 << 20, nil }
 	t.Cleanup(func() { loop.FreeBytes = original })
@@ -158,7 +165,7 @@ func TestADetachedRunPlaysItsRecordedEnsembleAfterTheFileChangesOrDisappears(t *
 			f := &runCAO{hold: hold}
 			_, args := runSessionArgs(t, f)
 			path := filepath.Join(t.TempDir(), "original.toml")
-			content := strings.ReplaceAll(recordedEnsemble, "\n", "\r\n") + "  \r\n"
+			content := strings.ReplaceAll(recordedText(t), "\n", "\r\n") + "  \r\n"
 			writeFile(t, path, content)
 			h, _ := launchDetached(t, append(args[:6:6], "-ensemble-file", path, "-ensemble", "chosen", "-why", "fits"))
 			dir := filepath.Dir(h["output"])
@@ -197,7 +204,7 @@ func TestADetachedRunPlaysItsRecordedEnsembleAfterTheFileChangesOrDisappears(t *
 
 func TestInvalidTextEnsemblesAreRefusedBeforeAnyWork(t *testing.T) {
 	cases := []struct{ name, want string }{
-		{"load", "unknown"}, {"fit", "planner"}, {"not-ready", "not ready here"}, {"reserved", "reserved"},
+		{"spec-model", "p:planner:m"}, {"spec-profile", "p:planner"}, {"unavailable", "codex"}, {"load", "unknown"}, {"fit", "planner"}, {"not-ready", "text ensembles may only use names"}, {"reserved", "reserved"},
 		{"user", "choose another"}, {"repository", "choose another"}, {"config", "choose another"},
 		{"score", "-score does not go with -ensemble-file"}, {"chair", "-planner does not go with -ensemble-file"}, {"pipe", "named pipe is not a regular file"},
 	}
@@ -210,14 +217,17 @@ func TestInvalidTextEnsemblesAreRefusedBeforeAnyWork(t *testing.T) {
 				server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
 				defer server.Close()
 				path := filepath.Join(t.TempDir(), "custom.toml")
-				content := recordedEnsemble
+				content := recordedText(t)
 				name := "custom"
 				var extra []string
 				switch tc.name {
+				case "spec-model", "spec-profile", "unavailable":
+					entry := map[string]string{"spec-model": "p:planner:m", "spec-profile": "p:planner", "unavailable": "codex"}[tc.name]
+					content = strings.Replace(content, `agents = ["mock"]`, `agents = ["`+entry+`"]`, 1)
 				case "load":
 					content = "unknown = true\n"
 				case "fit":
-					content = strings.Replace(recordedEnsemble, `part = "gate"`, `part = "planner"`, 1)
+					content = strings.Replace(content, `part = "gate"`, `part = "planner"`, 1)
 				case "not-ready":
 					content = sectionedEnsemble
 					writeFile(t, loop.UserConfigPath(loop.Home()), "[agents]\navailable = ['claude']\n")
@@ -228,7 +238,7 @@ func TestInvalidTextEnsemblesAreRefusedBeforeAnyWork(t *testing.T) {
 				case "repository":
 					writeFile(t, filepath.Join(wt, ".kapellmeister/ensembles/custom.toml"), recordedEnsemble)
 				case "config":
-					writeFile(t, loop.UserConfigPath(loop.Home()), "[ensembles.custom]\ngate = 'claude'\n")
+					writeFile(t, loop.UserConfigPath(loop.Home()), "[agents]\navailable=['mock']\n[agents.define]\nmock='p:planner'\n[ensembles.custom]\ngate = 'claude'\n")
 				case "score":
 					extra = append(extra, "-score=default")
 				case "chair":
@@ -248,15 +258,22 @@ func TestInvalidTextEnsemblesAreRefusedBeforeAnyWork(t *testing.T) {
 				}
 				args = append(args, extra...)
 				var out, diag bytes.Buffer
+				var runErr error
 				done := make(chan error, 1)
 				go func() { done <- runAt(context.Background(), args, &out, &diag, nil) }()
 				select {
 				case err := <-done:
+					runErr = err
 					if err == nil || !strings.Contains(err.Error(), tc.want) || ((tc.name == "load" || tc.name == "pipe") && !strings.Contains(err.Error(), path)) {
 						t.Fatalf("err=%v out=%s diag=%s", err, out.String(), diag.String())
 					}
 				case <-time.After(2 * time.Second):
 					t.Fatal("run blocked")
+				}
+				if strings.HasPrefix(tc.name, "spec-") || tc.name == "unavailable" {
+					if !strings.Contains(runErr.Error(), path) || !strings.Contains(runErr.Error(), "(mock)") || !strings.Contains(runErr.Error(), "leads.planner@custom") || !strings.Contains(runErr.Error(), "text ensembles may only use names from [agents] available") {
+						t.Fatal(runErr)
+					}
 				}
 				if calls.Load() != 0 || before != safetyGit(t, wt, "worktree", "list", "--porcelain") {
 					t.Fatalf("requests=%d or worktrees changed", calls.Load())
@@ -285,7 +302,7 @@ func TestEachEnsembleSourceAndWhyAppearInTheRecordStatusAndReport(t *testing.T) 
 			switch source {
 			case "text":
 				path := filepath.Join(t.TempDir(), "original.toml")
-				writeFile(t, path, recordedEnsemble)
+				writeFile(t, path, recordedText(t))
 				args = append(args, "-ensemble-file", path, "-ensemble", "chosen")
 			case "user":
 				writeFile(t, filepath.Join(loop.Home(), "ensembles/chosen.toml"), recordedEnsemble)
@@ -386,5 +403,62 @@ func TestAWhyOf1024BytesIsAcceptedAndRecorded(t *testing.T) {
 	}
 	if got := recordedResult(t, onlyRunRecord(t))["why"]; got != why {
 		t.Fatal(got)
+	}
+}
+
+func TestAHandWrittenUserEnsembleWithExplicitSpecsChecksAndPlays(t *testing.T) {
+	f := &runCAO{}
+	wt, args := runSessionArgs(t, f)
+	path := filepath.Join(loop.Home(), "ensembles", "custom.toml")
+	writeFile(t, path, recordedEnsemble)
+	for _, jsonOutput := range []bool{false, true} {
+		for _, held := range []bool{false, true} {
+			flags := []string{"-worktree=" + wt, "-name=custom"}
+			if jsonOutput {
+				flags = append(flags, "-json")
+			}
+			if held {
+				flags = append(flags, "-text")
+			}
+			flags = append(flags, path)
+			var out, diag bytes.Buffer
+			err := checkCommand("ensemble", flags, nil, &out, &diag, "")
+			if held && (err == nil || !strings.Contains(out.String(), "text ensembles may only use names")) {
+				t.Fatal(err, out.String())
+			}
+			if !held && err != nil {
+				t.Fatal(err, out.String())
+			}
+		}
+	}
+	if err := runCommand(append(args[:6:6], "-ensemble=custom")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestADetachedChildPlaysItsRecordedEnsembleAfterAvailableChanges(t *testing.T) {
+	f := &runCAO{}
+	wt, args := runSessionArgs(t, f)
+	content := strings.Replace(recordedText(t), `agents = ["mock"]`, `agents = ["mock", "claude"]`, 1)
+	writeFile(t, loop.UserConfigPath(loop.Home()), "[agents]\navailable=['mock','claude']\n[agents.define]\nmock='p:planner'\n")
+	var diag bytes.Buffer
+	if _, reason, err := checkEnsemble("custom", "source.toml", content, wt, &diag, true); err != nil || reason != "" {
+		t.Fatal(err, reason, diag.String())
+	}
+	id := "20260101-000000-abcdef"
+	dir := filepath.Join(loop.StateDir(), "runs", id)
+	writeFile(t, filepath.Join(dir, "ensemble.toml"), content)
+	launch := detachedLaunchRecord{RunID: id, Worktree: wt, Task: "probe"}
+	if err := writeJSON(filepath.Join(dir, "launch.json"), launch); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, loop.UserConfigPath(loop.Home()), "[agents]\navailable=['mock']\n[agents.define]\nmock='p:planner'\n")
+	var out bytes.Buffer
+	err := runAt(context.Background(), append(args[:6:6], "-ensemble-file=source.toml", "-ensemble=custom", "-detached-launch="+filepath.Join(dir, "launch.json")), &out, &diag, nil)
+	if err != nil {
+		t.Fatal(err, out.String(), diag.String())
+	}
+	if result := recordedResult(t, dir); result["ensemble_source"] != "text" {
+		t.Fatal(result)
 	}
 }

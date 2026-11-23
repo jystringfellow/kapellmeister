@@ -49,7 +49,7 @@ func saveCommand(args []string, in io.Reader, out, stderr io.Writer) error {
 	result := saveResult{Schema: 1, Name: *name, Errors: []string{}}
 	data, label, err := saveSource(fs.Args(), *runID, runSet, in, stderr)
 	if err == nil {
-		_, result.Reason, err = checkEnsemble(*name, label, string(data), *wt, stderr)
+		_, result.Reason, err = checkEnsemble(*name, label, string(data), *wt, stderr, true)
 	}
 	var settings loop.Settings
 	if err == nil {
@@ -64,6 +64,9 @@ func saveCommand(args []string, in io.Reader, out, stderr io.Writer) error {
 		if err == nil && !info.IsDir() {
 			err = fmt.Errorf("%s: worktree is not a directory", *wt)
 		}
+	}
+	if err == nil && *repo {
+		err = repositoryCheckout(*wt)
 	}
 	if err == nil {
 		result.Path, result.Replaced, err = saveEnsemble(*name, *wt, data, *repo, *replace, settings)
@@ -192,4 +195,27 @@ func saveEnsemble(name, wt string, data []byte, repo, replace bool, settings loo
 		return "", false, err
 	}
 	return dest, exists, nil
+}
+
+func repositoryCheckout(wt string) error {
+	top, err := gitOutput(wt, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return fmt.Errorf("%s is not a git checkout; -repository saves only into the top level of one", wt)
+	}
+	abs, err := filepath.Abs(wt)
+	if err != nil {
+		return err
+	}
+	here, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return err
+	}
+	root, err := filepath.EvalSymlinks(top)
+	if err != nil {
+		return err
+	}
+	if here != root {
+		return fmt.Errorf("%s is not the top level of its git checkout; -repository saves only into %s", wt, top)
+	}
+	return nil
 }

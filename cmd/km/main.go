@@ -469,7 +469,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 			}
 		} else {
 			var reason string
-			textSpec, reason, err = checkEnsemble(*ensembleName, *ensembleFile, string(content), lookup, stderr)
+			textSpec, reason, err = checkEnsemble(*ensembleName, *ensembleFile, string(content), lookup, stderr, true)
 			if err != nil {
 				return err
 			}

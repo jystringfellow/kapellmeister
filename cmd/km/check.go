@@ -29,12 +29,20 @@ func checkCommand(kind string, args []string, in io.Reader, out, stderr io.Write
 	fs.SetOutput(stderr)
 	worktree := fs.String("worktree", ".", "repository directory")
 	name := fs.String("name", "", "file name")
+	held := false
+	if kind == "ensemble" {
+		fs.BoolVar(&held, "text", false, "check text ensemble agent names")
+	}
 	asJSON := fs.Bool("json", false, "print JSON")
 	if err := fs.Parse(args); err != nil {
 		return &exitStatusError{code: 2, err: err}
 	}
 	if fs.NArg() != 1 {
-		return &exitStatusError{code: 2, err: fmt.Errorf("usage: km %s check [-worktree DIR] [-name NAME] [-json] FILE", kind)}
+		usage := "usage: km " + kind + " check [-worktree DIR] [-name NAME] [-json]"
+		if kind == "ensemble" {
+			usage += " [-text]"
+		}
+		return &exitStatusError{code: 2, err: fmt.Errorf("%s FILE", usage)}
 	}
 	path := fs.Arg(0)
 	if path == "-" && *name == "" {
@@ -57,7 +65,7 @@ func checkCommand(kind string, args []string, in io.Reader, out, stderr io.Write
 	}
 	data, err := readTextFile(kind, label, path, in)
 	if err == nil {
-		err = checkContent(&result, label, string(data), *worktree, stderr)
+		err = checkContent(&result, label, string(data), *worktree, stderr, held)
 	}
 	if err != nil {
 		result.Errors = append(result.Errors, err.Error())
@@ -83,7 +91,7 @@ func checkCommand(kind string, args []string, in io.Reader, out, stderr io.Write
 	return nil
 }
 
-func checkContent(result *checkResult, label, content, worktree string, stderr io.Writer) error {
+func checkContent(result *checkResult, label, content, worktree string, stderr io.Writer, held bool) error {
 	home := loop.Home()
 	settings, err := loop.LoadSettings(home, worktree)
 	if err != nil {
@@ -103,7 +111,7 @@ func checkContent(result *checkResult, label, content, worktree string, stderr i
 		}
 		return err
 	}
-	_, reason, err := checkEnsemble(result.Name, label, content, worktree, stderr)
+	_, reason, err := checkEnsemble(result.Name, label, content, worktree, stderr, held)
 	if err != nil {
 		return err
 	}
@@ -112,7 +120,7 @@ func checkContent(result *checkResult, label, content, worktree string, stderr i
 	return nil
 }
 
-func checkEnsemble(name, label, content, worktree string, stderr io.Writer) (ensemble.Spec, string, error) {
+func checkEnsemble(name, label, content, worktree string, stderr io.Writer, held bool) (ensemble.Spec, string, error) {
 	home := loop.Home()
 	settings, err := loop.LoadSettings(home, worktree)
 	if err != nil {
@@ -124,7 +132,12 @@ func checkEnsemble(name, label, content, worktree string, stderr io.Writer) (ens
 			fmt.Fprintf(stderr, "note: repository scores not read: %v\n", err)
 		}
 	}
-	spec, err := ensemble.Check(name, label, content, settings.Defined)
+	var spec ensemble.Spec
+	if held {
+		spec, err = ensemble.CheckText(name, label, content, settings.Defined, settings.Agents)
+	} else {
+		spec, err = ensemble.Check(name, label, content, settings.Defined)
+	}
 	if err != nil {
 		return spec, "", err
 	}
