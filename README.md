@@ -14,7 +14,14 @@ leaves its change uncommitted for you to ship. You can also write
 
 ## Install
 
-Download the archive for your OS and architecture and `SHA256SUMS` from the same
+Install with Homebrew on macOS or Linux:
+
+```sh
+brew install jystringfellow/tap/kapellmeister
+km version
+```
+
+Or download the archive for your OS and architecture and `SHA256SUMS` from the same
 [GitHub release](https://github.com/jystringfellow/kapellmeister/releases). Releases support
 macOS and Linux on amd64 and arm64; Windows uses WSL2. For example, on Linux arm64,
 replace `vX.Y.Z` with the release tag:
@@ -2731,6 +2738,12 @@ value wins. Progress reports a new or changed blocker once:
 Use the attachment command to inspect and answer the prompt. km only reports it. Telemetry records
 `blocked` and `unblocked` with the step, round, chair, terminal and blocker line. A forced kill or crash
 can leave the session running.
+
+## Releasing
+
+Pushing a `vX.Y.Z` tag on main builds and publishes the release, then pushes the formula to the tap.
+Set `HOMEBREW_TAP_TOKEN` to a token that can write contents on `jystringfellow/homebrew-tap` only, with no other access.
+Without the secret, the tap step is skipped and the release still succeeds.
 
 ## License
 
