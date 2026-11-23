@@ -129,5 +129,5 @@ jobs:
             exit 0
           fi
           git add Formula/kapellmeister.rb
-          git -c user.name='github-actions[bot]' -c user.email='41898729+github-actions[bot]@users.noreply.github.com' commit --quiet -m "kapellmeister $TAG"
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit --quiet -m "kapellmeister $TAG"
           git -c "$header" push --quiet origin HEAD
