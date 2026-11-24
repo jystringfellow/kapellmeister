@@ -133,6 +133,7 @@ type VerifyResult struct {
 	ExitCode int
 	Output   string
 	Attempts int
+	Retries  int
 	Known    []KnownFailure
 	Mismatch string
 	TimedOut bool
@@ -415,7 +416,7 @@ func (e *Engine) play(ctx context.Context) (Result, error) {
 			return e.fail(res, fmt.Errorf("verify could not run (exit %d); see %s\n%s", baseline.ExitCode, baselinePath, tail(strings.TrimRight(baseline.Output, "\n"), 20))), nil
 		}
 		if baseline.ExitCode != 0 && e.playingScore().EditsWorktree() {
-			return e.fail(res, fmt.Errorf("verify already fails before any change (exit %d); see %s\n%s", baseline.ExitCode, baselinePath, tail(strings.TrimRight(baseline.Output, "\n"), 20))), nil
+			return e.fail(res, fmt.Errorf("verify already fails before any change (exit %d%s); see %s\n%s", baseline.ExitCode, attemptsNote(baseline.Attempts), baselinePath, tail(strings.TrimRight(baseline.Output, "\n"), 20))), nil
 		}
 		if !e.playingScore().EditsWorktree() {
 			verify, verifyPath = baseline, baselinePath
@@ -1094,6 +1095,9 @@ func (e *Engine) runVerify(ctx context.Context, round int, path string) (VerifyR
 		e.progress("  did not finish within %s; stopped after %s", v.Limit, secs(rec.DurationMS))
 	} else {
 		e.progress("  exit %d in %s%s", code, secs(rec.DurationMS), attemptsNote(v.Attempts))
+		if reason := v.RetryReason(); reason != "" {
+			e.progress("  %s", reason)
+		}
 	}
 	if code == 0 && v.Attempts > 1 {
 		e.verifyRetried = append(e.verifyRetried, VerifyRetry{Round: round, Attempts: v.Attempts})
@@ -1289,6 +1293,7 @@ func Retrying(v Verifier, retries int) Verifier {
 			out.WriteString(r.Output)
 			if r.ExitCode == 0 || r.TimedOut || attempt > retries {
 				r.Attempts = attempt
+				r.Retries = retries
 				r.Output = out.String()
 				return r, nil
 			}
@@ -1362,6 +1367,13 @@ func verifyStepName(round int) string {
 		return "verify-baseline"
 	}
 	return "verify"
+}
+
+func (v VerifyResult) RetryReason() string {
+	if v.ExitCode == 0 || v.TimedOut || v.Mismatch != "" || v.Attempts <= 1 {
+		return ""
+	}
+	return fmt.Sprintf("every attempt failed; [run] verify_retries = %d reran it to rule out a flaky test: set it to 0 (or pass -verify-retries 0) for a suite that fails the same way every time", v.Retries)
 }
 
 func attemptsNote(n int) string {

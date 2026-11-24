@@ -86,12 +86,23 @@ func TestRehearseRetriesTheBaselineUsingTheConfiguredRetryCount(t *testing.T) {
 		t.Fatal(err)
 	}
 	err := rehearseCommand([]string{"-worktree", wt, "-task", "task", "-cao", unreachableCAO, "-verify", "echo attempt >> attempts; exit 3"})
-	if err == nil || !strings.Contains(err.Error(), "3 attempt(s)") {
+	if err == nil || !strings.Contains(err.Error(), "3 attempt(s)") || !strings.Contains(err.Error(), "every attempt failed; [run] verify_retries = 2 reran it to rule out a flaky test") {
 		t.Fatalf("error = %v", err)
 	}
 	data, readErr := os.ReadFile(filepath.Join(wt, "attempts"))
 	if readErr != nil || string(data) != "attempt\nattempt\nattempt\n" {
 		t.Fatalf("attempts = %q, %v", data, readErr)
+	}
+}
+
+func TestRehearseDoesNotExplainRetriesWhenTheBaselineRunsOnce(t *testing.T) {
+	t.Setenv(loop.HomeEnv, t.TempDir())
+	writeFile(t, loop.UserConfigPath(loop.Home()), builtInAgentConfig)
+	wt := t.TempDir()
+	writeFile(t, filepath.Join(wt, loop.ConfigFile), "[run]\nverify_retries = 0\n")
+	err := rehearseCommand([]string{"-worktree", wt, "-task", "task", "-cao", unreachableCAO, "-verify", "exit 3"})
+	if err == nil || !strings.Contains(err.Error(), "1 attempt(s)") || strings.Contains(err.Error(), "every attempt failed") {
+		t.Fatalf("error = %v", err)
 	}
 }
 

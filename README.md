@@ -1464,8 +1464,10 @@ A read-only chair's commit is not undone: the run fails and reports that HEAD mo
 A timeout or cancellation restores changes but does not retry. Lessons that violate the rule
 twice have their proposals discarded without changing the run's outcome.
 
-A failing verify is run again, once by default (`[run] verify_retries`). When verify passed only
-because of that, the final summary says so with the attempt count
+A failing verify is run again to rule out a flaky test, once by default (`[run] verify_retries`).
+Set it to `0` for a suite that fails the same way every time. When every attempt fails, the
+progress line says so. When verify passed only because of a retry, the final summary says so with
+the attempt count
 (`retried   verify[1] passed only on attempt 2: an earlier attempt failed, so a test may be
 flaky`), and the JSON summary lists it under `verify_retried` (`round`, `attempts`; round 0 is
 the baseline). A change that makes a test fail now and then can pass this way, so read that line

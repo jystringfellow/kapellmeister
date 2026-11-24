@@ -443,6 +443,107 @@ func TestFailingBaselineStopsBeforePlanning(t *testing.T) {
 	}
 }
 
+func TestABaselineVerifyThatFailsOnEveryAttemptSaysWhyItRanTwiceAndHowToStopIt(t *testing.T) {
+	verify := func(context.Context, string) (VerifyResult, error) { return VerifyResult{ExitCode: 1}, nil }
+	eng, _, _ := newEngine(t, Retrying(verify, 1))
+	var progress bytes.Buffer
+	eng.Progress = &progress
+	res := run(t, eng)
+	want := "every attempt failed; [run] verify_retries = 1 reran it to rule out a flaky test: set it to 0 (or pass -verify-retries 0) for a suite that fails the same way every time"
+	if !strings.Contains(progress.String(), "exit 1 in") || !strings.Contains(progress.String(), "after 2 attempts\n  "+want) || !strings.Contains(res.Reason, "exit 1 after 2 attempts") {
+		t.Fatalf("progress = %q, reason = %q", progress.String(), res.Reason)
+	}
+}
+
+func TestARoundsVerifyThatFailsOnEveryAttemptNamesTheEffectiveRetries(t *testing.T) {
+	calls := 0
+	verify := func(context.Context, string) (VerifyResult, error) {
+		calls++
+		if calls == 1 {
+			return VerifyResult{}, nil
+		}
+		return VerifyResult{ExitCode: 1}, nil
+	}
+	eng, _, _ := newEngine(t, Retrying(verify, 2))
+	eng.Config.MaxRounds = 1
+	var progress bytes.Buffer
+	eng.Progress = &progress
+	run(t, eng)
+	got := progress.String()
+	if !strings.Contains(got, "after 3 attempts\n  every attempt failed; [run] verify_retries = 2 reran it") || strings.Contains(got, "verify_retries = 1") {
+		t.Fatalf("progress = %q", got)
+	}
+}
+
+func TestNoRetryReasonIsGivenForAVerifyThatRanOnceOrPassedOnALaterAttemptOrTimedOut(t *testing.T) {
+	for _, scenario := range []string{"once", "flaky", "timeout"} {
+		t.Run(scenario, func(t *testing.T) {
+			calls := 0
+			verify := func(context.Context, string) (VerifyResult, error) {
+				calls++
+				switch scenario {
+				case "flaky":
+					if calls != 2 {
+						return VerifyResult{}, nil
+					}
+				case "timeout":
+					return VerifyResult{ExitCode: 1, TimedOut: true, Attempts: 2}, nil
+				}
+				return VerifyResult{ExitCode: 1}, nil
+			}
+			var v Verifier = verify
+			if scenario == "once" {
+				v = Retrying(v, 0)
+			}
+			if scenario == "flaky" {
+				v = Retrying(v, 1)
+			}
+			eng, _, _ := newEngine(t, v)
+			var progress bytes.Buffer
+			eng.Progress = &progress
+			res := run(t, eng)
+			if strings.Contains(progress.String(), "every attempt failed") {
+				t.Fatalf("progress = %q", progress.String())
+			}
+			if scenario == "once" && (!strings.Contains(progress.String(), "exit 1") || strings.Contains(res.Reason, "attempts")) {
+				t.Fatalf("progress = %q, reason = %q", progress.String(), res.Reason)
+			}
+			if scenario == "flaky" && (len(res.VerifyRetried) != 1 || res.VerifyRetried[0] != (VerifyRetry{Round: 1, Attempts: 2})) {
+				t.Fatalf("result = %+v", res)
+			}
+		})
+	}
+}
+
+func TestRetryingRecordsTheRetriesItWasGiven(t *testing.T) {
+	failing := func(context.Context, string) (VerifyResult, error) { return VerifyResult{ExitCode: 1}, nil }
+	result, err := Retrying(failing, 2)(context.Background(), "")
+	if err != nil || result.Retries != 2 || result.Attempts != 3 {
+		t.Fatalf("result = %+v, error = %v", result, err)
+	}
+}
+
+func TestRetryReasonOnlyExplainsRepeatedFailuresWithoutTimeoutOrMismatch(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result VerifyResult
+		want   bool
+	}{
+		{"passed", VerifyResult{Attempts: 2}, false},
+		{"timeout", VerifyResult{ExitCode: 1, Attempts: 2, TimedOut: true}, false},
+		{"once", VerifyResult{ExitCode: 1, Attempts: 1}, false},
+		{"mismatch", VerifyResult{ExitCode: 16, Attempts: 2, Mismatch: "mismatch"}, false},
+		{"failed", VerifyResult{ExitCode: 1, Attempts: 2, Retries: 3}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.result.RetryReason()
+			if tc.want && !strings.Contains(got, "verify_retries = 3 reran it") || !tc.want && got != "" {
+				t.Fatalf("reason = %q", got)
+			}
+		})
+	}
+}
+
 func TestRetryingVerifierPassesAFlakeAndKeepsBothOutputs(t *testing.T) {
 	calls := 0
 	flaky := func(context.Context, string) (VerifyResult, error) {
