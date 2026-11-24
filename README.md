@@ -475,9 +475,10 @@ verify = "scripts/verify"
 
 The book keeps km's run records and CAO's database and logs as takes. Add the session
 directories of the agents you use to your own takes if you want token usage to survive the
-sandbox. The kit's `km` argument and its two checksum arguments pin the release; change all three
-together. The kit in `.scoring-stage/kits/` is different: it is for working on km itself and
-builds km from the workspace.
+sandbox. The kit's `km` argument and its two checksum arguments pin the release. A release opens
+a pull request that bumps all three, and merging it tags the book. The kit in
+`.scoring-stage/kits/` is different: it is for working on km itself and builds km from the
+workspace.
 
 ## Preflight
 
@@ -2744,6 +2745,16 @@ can leave the session running.
 Pushing a `vX.Y.Z` tag on main builds and publishes the release, then pushes the formula to the tap.
 Set `HOMEBREW_TAP_TOKEN` to a token that can write contents on `jystringfellow/homebrew-tap` only, with no other access.
 Without the secret, the tap step is skipped and the release still succeeds.
+
+The release workflow's `book` job takes checksums from the release's `SHA256SUMS` and opens a
+pull request to bump the book kit's km pin. Merging the pull request causes `book-tag.yml` to
+push the next `book/vX.Y.Z` tag. Set the repository variable `BOOK_APP_CLIENT_ID` and secret
+`BOOK_APP_PRIVATE_KEY` for a GitHub App installed on this repository only, with Contents read and
+write and Pull requests read and write permissions. The App must be a bypass actor on the tag
+ruleset for `book/v*`. Without either credential, both the bump and tag steps are skipped. The App
+token allows CI to run on the pull request; branches and pull requests made with `GITHUB_TOKEN`
+start no workflows. The `book-pin` check turns red when the pin is behind the latest release; it
+is required only if repository settings make it so.
 
 ## License
 

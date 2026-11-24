@@ -1,0 +1,64 @@
+name: Book tag
+on:
+  push:
+    branches: [main]
+    paths: ['book/**']
+permissions: {}
+concurrency:
+  group: book-tag
+  cancel-in-progress: false
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Check credentials
+        id: credentials
+        env:
+          BOOK_APP_CLIENT_ID: ${{ vars.BOOK_APP_CLIENT_ID }}
+          BOOK_APP_PRIVATE_KEY: ${{ secrets.BOOK_APP_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BOOK_APP_CLIENT_ID:-}" ] || [ -z "${BOOK_APP_PRIVATE_KEY:-}" ]; then
+            echo "BOOK_APP_CLIENT_ID or BOOK_APP_PRIVATE_KEY is empty; skipping the book tag"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Create App token
+        id: app-token
+        if: steps.credentials.outputs.enabled == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.BOOK_APP_CLIENT_ID }}
+          private-key: ${{ secrets.BOOK_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.credentials.outputs.enabled == 'true'
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: steps.credentials.outputs.enabled == 'true'
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Tag book
+        if: steps.credentials.outputs.enabled == 'true'
+        env:
+          TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          existing=$(git tag --points-at HEAD -l 'book/v*')
+          if [ -n "$existing" ]; then
+            echo "HEAD already has book tag $existing"
+            exit 0
+          fi
+          tag=$(git tag -l 'book/v*' | go run ./scripts/bookpin next-book-tag)
+          git tag "$tag" HEAD
+          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')
+          echo "::add-mask::$auth"
+          header="http.https://github.com/.extraheader=AUTHORIZATION: basic $auth"
+          git -c "$header" push --quiet origin "refs/tags/$tag"
