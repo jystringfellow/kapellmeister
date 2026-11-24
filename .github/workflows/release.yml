@@ -140,12 +140,12 @@ jobs:
       - name: Check credentials
         id: credentials
         env:
-          BOOK_APP_CLIENT_ID: ${{ vars.BOOK_APP_CLIENT_ID }}
-          BOOK_APP_PRIVATE_KEY: ${{ secrets.BOOK_APP_PRIVATE_KEY }}
+          PUBLISHER_APP_CLIENT_ID: ${{ vars.PUBLISHER_APP_CLIENT_ID }}
+          PUBLISHER_APP_PRIVATE_KEY: ${{ secrets.PUBLISHER_APP_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          if [ -z "${BOOK_APP_CLIENT_ID:-}" ] || [ -z "${BOOK_APP_PRIVATE_KEY:-}" ]; then
-            echo "BOOK_APP_CLIENT_ID or BOOK_APP_PRIVATE_KEY is empty; skipping the book bump"
+          if [ -z "${PUBLISHER_APP_CLIENT_ID:-}" ] || [ -z "${PUBLISHER_APP_PRIVATE_KEY:-}" ]; then
+            echo "PUBLISHER_APP_CLIENT_ID or PUBLISHER_APP_PRIVATE_KEY is empty; skipping the book bump"
             echo "enabled=false" >> "$GITHUB_OUTPUT"
           else
             echo "enabled=true" >> "$GITHUB_OUTPUT"
@@ -155,8 +155,8 @@ jobs:
         if: steps.credentials.outputs.enabled == 'true'
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
-          client-id: ${{ vars.BOOK_APP_CLIENT_ID }}
-          private-key: ${{ secrets.BOOK_APP_PRIVATE_KEY }}
+          client-id: ${{ vars.PUBLISHER_APP_CLIENT_ID }}
+          private-key: ${{ secrets.PUBLISHER_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
