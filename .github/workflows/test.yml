@@ -39,3 +39,21 @@ jobs:
         env:
           KAPELLMEISTER_TEST_NO_NETWORK_METHOD: ${{ runner.os == 'Linux' && 'network namespace' || 'sandbox profile' }}
         run: go test ./...
+  book-pin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Check book pin
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          git ls-remote --tags --refs "https://github.com/$REPOSITORY" |
+            sed 's#.*refs/tags/##' |
+            go run ./scripts/bookpin check book/kits/kapellmeister/kapellmeister.yaml

@@ -131,3 +131,86 @@ jobs:
           git add Formula/kapellmeister.rb
           git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit --quiet -m "kapellmeister $TAG"
           git -c "$header" push --quiet origin HEAD
+  book:
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions: {}
+    steps:
+      - name: Check credentials
+        id: credentials
+        env:
+          PUBLISHER_APP_CLIENT_ID: ${{ vars.PUBLISHER_APP_CLIENT_ID }}
+          PUBLISHER_APP_PRIVATE_KEY: ${{ secrets.PUBLISHER_APP_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PUBLISHER_APP_CLIENT_ID:-}" ] || [ -z "${PUBLISHER_APP_PRIVATE_KEY:-}" ]; then
+            echo "PUBLISHER_APP_CLIENT_ID or PUBLISHER_APP_PRIVATE_KEY is empty; skipping the book bump"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Create App token
+        id: app-token
+        if: steps.credentials.outputs.enabled == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.PUBLISHER_APP_CLIENT_ID }}
+          private-key: ${{ secrets.PUBLISHER_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.credentials.outputs.enabled == 'true'
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: steps.credentials.outputs.enabled == 'true'
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Download and pin release
+        id: pin
+        if: steps.credentials.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --pattern SHA256SUMS --dir "$RUNNER_TEMP/release"
+          result=$(go run ./scripts/bookpin set book/kits/kapellmeister/kapellmeister.yaml "$TAG" "$RUNNER_TEMP/release/SHA256SUMS")
+          echo "$result"
+          case "${result%% *}" in
+            unchanged|older:) echo "changed=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "changed=true" >> "$GITHUB_OUTPUT" ;;
+          esac
+      - name: Open book bump pull request
+        if: steps.credentials.outputs.enabled == 'true' && steps.pin.outputs.changed == 'true'
+        env:
+          TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          TAG: ${{ github.ref_name }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          branch="bump/book-km-$TAG"
+          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')
+          echo "::add-mask::$auth"
+          header="http.https://github.com/.extraheader=AUTHORIZATION: basic $auth"
+          existing=$(git -c "$header" ls-remote --heads origin "refs/heads/$branch")
+          if [ -n "$existing" ]; then
+            echo "Branch $branch already exists; skipping"
+            exit 0
+          fi
+          bot="${APP_SLUG}[bot]"
+          id=$(gh api "/users/${bot}" --jq .id)
+          git switch -c "$branch"
+          git add book/kits/kapellmeister/kapellmeister.yaml
+          git -c user.name="$bot" -c user.email="${id}+${bot}@users.noreply.github.com" commit --quiet -m "Install km $TAG in the kapellmeister book"
+          git -c "$header" push --quiet origin "HEAD:refs/heads/$branch"
+          body="The checksums come from the release's SHA256SUMS for $TAG. Merging this pull request makes book-tag.yml push the next book/v* tag."
+          gh pr create --base main --head "$branch" --title "Install km $TAG in the kapellmeister book" --body "$body"
