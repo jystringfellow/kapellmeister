@@ -11,21 +11,25 @@ import (
 )
 
 var tagPattern = regexp.MustCompile(`^v([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9A-Za-z.-]+))?$`)
+
 var bookPattern = regexp.MustCompile(`^book/(v[0-9]+\.[0-9]+\.[0-9]+)$`)
+
 var defaultPattern = regexp.MustCompile(`^    default: "([^"]*)"[ \t]*\r?\n?$`)
+
 var hashPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
 var digitsPattern = regexp.MustCompile(`^[0-9]+$`)
 
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 
 func defaults(data string, names []string) (map[string]int, error) {
-	lines := strings.SplitAfter(data, "\n")
+	kitLines := strings.SplitAfter(data, "\n")
 	result := map[string]int{}
 	counts := map[string]int{}
 	active := ""
 	section := false
 	sections := 0
-	for i, line := range lines {
+	for i, line := range kitLines {
 		bare := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
 		if bare == "args:" {
 			section = true
@@ -46,10 +50,10 @@ func defaults(data string, names []string) (map[string]int, error) {
 		}
 		if !strings.HasPrefix(bare, "   ") {
 			active = ""
-			for _, n := range names {
-				if bare == "  "+n+":" {
-					active = n
-					counts[n]++
+			for _, name := range names {
+				if bare == "  "+name+":" {
+					active = name
+					counts[name]++
 				}
 			}
 			continue
@@ -62,204 +66,223 @@ func defaults(data string, names []string) (map[string]int, error) {
 	if sections != 1 {
 		return nil, fmt.Errorf("expected one args section")
 	}
-	for _, n := range names {
-		if counts[n] != 1 || counts[n+" default"] != 1 {
-			return nil, fmt.Errorf("expected one %s argument and default", n)
+	for _, name := range names {
+		if counts[name] != 1 || counts[name+" default"] != 1 {
+			return nil, fmt.Errorf("expected one %s argument and default", name)
 		}
 	}
 	return result, nil
 }
+
 func readKit(path string, names []string) (string, map[string]int, error) {
-	b, e := os.ReadFile(path)
-	if e != nil {
-		return "", nil, e
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", nil, err
 	}
-	idx, e := defaults(string(b), names)
-	return string(b), idx, e
+	indexes, err := defaults(string(content), names)
+	return string(content), indexes, err
 }
+
 func value(line string) string { return defaultPattern.FindStringSubmatch(line)[1] }
+
 func pin(path string) (string, error) {
-	s, idx, e := readKit(path, []string{"km"})
-	if e != nil {
-		return "", e
+	data, indexes, err := readKit(path, []string{"km"})
+	if err != nil {
+		return "", err
 	}
-	v := value(strings.SplitAfter(s, "\n")[idx["km"]])
-	if !tagPattern.MatchString(v) {
-		return "", fmt.Errorf("invalid pinned tag %q", v)
+	tag := value(strings.SplitAfter(data, "\n")[indexes["km"]])
+	if !tagPattern.MatchString(tag) {
+		return "", fmt.Errorf("invalid pinned tag %q", tag)
 	}
-	return v, nil
+	return tag, nil
 }
-func numberCmp(a, b string) int {
-	a = strings.TrimLeft(a, "0")
-	b = strings.TrimLeft(b, "0")
-	if len(a) < len(b) {
+
+func numberCmp(left, right string) int {
+	left = strings.TrimLeft(left, "0")
+	right = strings.TrimLeft(right, "0")
+	if len(left) < len(right) {
 		return -1
 	}
-	if len(a) > len(b) {
+	if len(left) > len(right) {
 		return 1
 	}
-	return strings.Compare(a, b)
+	return strings.Compare(left, right)
 }
-func compare(a, b string) int {
-	x, y := tagPattern.FindStringSubmatch(a), tagPattern.FindStringSubmatch(b)
+
+func compare(left, right string) int {
+	leftParts, rightParts := tagPattern.FindStringSubmatch(left), tagPattern.FindStringSubmatch(right)
 	for i := 1; i <= 3; i++ {
-		if c := numberCmp(x[i], y[i]); c != 0 {
-			return c
+		if order := numberCmp(leftParts[i], rightParts[i]); order != 0 {
+			return order
 		}
 	}
-	if x[4] == "" && y[4] != "" {
+	if leftParts[4] == "" && rightParts[4] != "" {
 		return 1
 	}
-	if x[4] != "" && y[4] == "" {
+	if leftParts[4] != "" && rightParts[4] == "" {
 		return -1
 	}
-	if x[4] == y[4] {
+	if leftParts[4] == rightParts[4] {
 		return 0
 	}
-	p, q := strings.Split(x[4], "."), strings.Split(y[4], ".")
-	for i := 0; i < len(p) && i < len(q); i++ {
-		pn, qn := digitsPattern.MatchString(p[i]), digitsPattern.MatchString(q[i])
-		if pn && !qn {
+	leftIdentifiers, rightIdentifiers := strings.Split(leftParts[4], "."), strings.Split(rightParts[4], ".")
+	for i := 0; i < len(leftIdentifiers) && i < len(rightIdentifiers); i++ {
+		leftNumeric, rightNumeric := digitsPattern.MatchString(leftIdentifiers[i]), digitsPattern.MatchString(rightIdentifiers[i])
+		if leftNumeric && !rightNumeric {
 			return -1
 		}
-		if !pn && qn {
+		if !leftNumeric && rightNumeric {
 			return 1
 		}
-		c := strings.Compare(p[i], q[i])
-		if pn && qn {
-			c = numberCmp(p[i], q[i])
+		order := strings.Compare(leftIdentifiers[i], rightIdentifiers[i])
+		if leftNumeric && rightNumeric {
+			order = numberCmp(leftIdentifiers[i], rightIdentifiers[i])
 		}
-		if c != 0 {
-			return c
+		if order != 0 {
+			return order
 		}
 	}
-	if len(p) < len(q) {
+	if len(leftIdentifiers) < len(rightIdentifiers) {
 		return -1
 	}
-	if len(p) > len(q) {
+	if len(leftIdentifiers) > len(rightIdentifiers) {
 		return 1
 	}
 	return 0
 }
-func lines(in io.Reader, fn func(string)) error {
-	s := bufio.NewScanner(in)
-	for s.Scan() {
-		fn(strings.TrimSpace(s.Text()))
+
+func lines(input io.Reader, visit func(string)) error {
+	scanner := bufio.NewScanner(input)
+	for scanner.Scan() {
+		visit(strings.TrimSpace(scanner.Text()))
 	}
-	return s.Err()
+	return scanner.Err()
 }
+
 func set(path, tag, sumsPath string) (string, error) {
 	if !tagPattern.MatchString(tag) {
 		return "", fmt.Errorf("invalid tag %q", tag)
 	}
-	b, e := os.ReadFile(sumsPath)
-	if e != nil {
-		return "", e
+	sums, err := os.ReadFile(sumsPath)
+	if err != nil {
+		return "", err
 	}
 	names := []string{"km", "kmSha256Arm64", "kmSha256Amd64"}
 	hashes := map[string]string{}
 	targets := map[string]string{"km_" + tag + "_linux_arm64.tar.gz": names[1], "km_" + tag + "_linux_amd64.tar.gz": names[2]}
-	for _, line := range strings.Split(string(b), "\n") {
-		f := strings.Fields(line)
-		if len(f) != 2 {
+	for _, line := range strings.Split(string(sums), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
 			continue
 		}
-		name := strings.TrimPrefix(f[1], "*")
+		name := strings.TrimPrefix(fields[1], "*")
 		key, ok := targets[name]
 		if !ok {
 			continue
 		}
-		if !hashPattern.MatchString(f[0]) {
+		if !hashPattern.MatchString(fields[0]) {
 			return "", fmt.Errorf("invalid checksum for %s", name)
 		}
-		if old, ok := hashes[key]; ok && old != f[0] {
+		if old, ok := hashes[key]; ok && old != fields[0] {
 			return "", fmt.Errorf("conflicting checksums for %s", name)
 		}
-		hashes[key] = f[0]
+		hashes[key] = fields[0]
 	}
-	for _, n := range names[1:] {
-		if hashes[n] == "" {
-			return "", fmt.Errorf("missing checksum for %s", n)
+	for _, name := range names[1:] {
+		if hashes[name] == "" {
+			return "", fmt.Errorf("missing checksum for %s", name)
 		}
 	}
 	hashes["km"] = tag
-	data, idx, e := readKit(path, names)
-	if e != nil {
-		return "", e
+	data, indexes, err := readKit(path, names)
+	if err != nil {
+		return "", err
 	}
-	parts := strings.SplitAfter(data, "\n")
-	for _, n := range names {
-		i := idx[n]
-		loc := defaultPattern.FindStringSubmatchIndex(parts[i])
-		parts[i] = parts[i][:loc[2]] + hashes[n] + parts[i][loc[3]:]
+	kitLines := strings.SplitAfter(data, "\n")
+	current := value(kitLines[indexes["km"]])
+	if !tagPattern.MatchString(current) {
+		return "", fmt.Errorf("invalid pinned tag %q", current)
 	}
-	updated := strings.Join(parts, "")
+	order := compare(tag, current)
+	if order < 0 {
+		return fmt.Sprintf("older: %s is below the pinned %s", tag, current), nil
+	}
+	for _, name := range names {
+		lineIndex := indexes[name]
+		valueSpan := defaultPattern.FindStringSubmatchIndex(kitLines[lineIndex])
+		kitLines[lineIndex] = kitLines[lineIndex][:valueSpan[2]] + hashes[name] + kitLines[lineIndex][valueSpan[3]:]
+	}
+	updated := strings.Join(kitLines, "")
 	if updated == data {
 		return "unchanged", nil
 	}
-	info, e := os.Stat(path)
-	if e != nil {
-		return "", e
+	if order == 0 {
+		return "", fmt.Errorf("release assets for %s differ from the pinned checksums", tag)
 	}
-	if e = os.WriteFile(path, []byte(updated), info.Mode().Perm()); e != nil {
-		return "", e
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if err = os.WriteFile(path, []byte(updated), info.Mode().Perm()); err != nil {
+		return "", err
 	}
 	return "set " + tag, nil
 }
+
 func run(args []string, in io.Reader, out, errout io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(errout, "bookpin: missing command")
 		return 2
 	}
 	want := map[string]int{"set": 4, "pinned": 2, "check": 2, "next-book-tag": 1}
-	n, ok := want[args[0]]
-	if !ok || len(args) != n {
+	wantArgs, ok := want[args[0]]
+	if !ok || len(args) != wantArgs {
 		fmt.Fprintln(errout, "bookpin: invalid usage")
 		return 2
 	}
 	var result string
-	var e error
+	var err error
 	switch args[0] {
 	case "set":
-		result, e = set(args[1], args[2], args[3])
+		result, err = set(args[1], args[2], args[3])
 	case "pinned":
-		result, e = pin(args[1])
+		result, err = pin(args[1])
 	case "check":
-		var v string
-		v, e = pin(args[1])
-		if e == nil {
+		var pinned string
+		pinned, err = pin(args[1])
+		if err == nil {
 			latest := ""
-			e = lines(in, func(s string) {
-				if tagPattern.MatchString(s) && (latest == "" || compare(s, latest) > 0) {
-					latest = s
+			err = lines(in, func(line string) {
+				if tagPattern.MatchString(line) && (latest == "" || compare(line, latest) > 0) {
+					latest = line
 				}
 			})
-			if e == nil && latest != "" && compare(v, latest) < 0 {
-				e = fmt.Errorf("km pin %s is behind the latest release %s", v, latest)
+			if err == nil && latest != "" && compare(pinned, latest) < 0 {
+				err = fmt.Errorf("km pin %s is behind the latest release %s", pinned, latest)
 			}
 			result = "ok"
 		}
 	case "next-book-tag":
 		latest := ""
-		e = lines(in, func(s string) {
-			m := bookPattern.FindStringSubmatch(s)
-			if m != nil && (latest == "" || compare(m[1], latest) > 0) {
-				latest = m[1]
+		err = lines(in, func(line string) {
+			match := bookPattern.FindStringSubmatch(line)
+			if match != nil && (latest == "" || compare(match[1], latest) > 0) {
+				latest = match[1]
 			}
 		})
-		if e == nil {
+		if err == nil {
 			if latest == "" {
-				e = fmt.Errorf("no book tags found")
+				err = fmt.Errorf("no book tags found")
 			} else {
-				m := tagPattern.FindStringSubmatch(latest)
-				patch, _ := new(big.Int).SetString(m[3], 10)
+				match := tagPattern.FindStringSubmatch(latest)
+				patch, _ := new(big.Int).SetString(match[3], 10)
 				patch.Add(patch, big.NewInt(1))
-				result = "book/v" + m[1] + "." + m[2] + "." + patch.String()
+				result = "book/v" + match[1] + "." + match[2] + "." + patch.String()
 			}
 		}
 	}
-	if e != nil {
-		fmt.Fprintln(errout, "bookpin:", e)
+	if err != nil {
+		fmt.Fprintln(errout, "bookpin:", err)
 		return 1
 	}
 	fmt.Fprintln(out, result)

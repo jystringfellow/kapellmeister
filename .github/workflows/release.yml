@@ -134,6 +134,7 @@ jobs:
   book:
     needs: release
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions: {}
     steps:
       - name: Check credentials
@@ -182,11 +183,10 @@ jobs:
           gh release download "$TAG" --pattern SHA256SUMS --dir "$RUNNER_TEMP/release"
           result=$(go run ./scripts/bookpin set book/kits/kapellmeister/kapellmeister.yaml "$TAG" "$RUNNER_TEMP/release/SHA256SUMS")
           echo "$result"
-          if [ "$result" = unchanged ]; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          fi
+          case "${result%% *}" in
+            unchanged|older:) echo "changed=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "changed=true" >> "$GITHUB_OUTPUT" ;;
+          esac
       - name: Open book bump pull request
         if: steps.credentials.outputs.enabled == 'true' && steps.pin.outputs.changed == 'true'
         env:

@@ -181,3 +181,72 @@ func TestAnArgumentDefaultOutsideItsBlockIsRejected(t *testing.T) {
 		t.Fatal("accepted default outside km block")
 	}
 }
+
+func TestSetWithAReleaseBelowThePinPrintsOlderAndLeavesTheFileByteIdentical(t *testing.T) {
+	for _, test := range []struct{ tag, pinned string }{{"v0.0.1-rc.5", "v0.0.1-rc.6"}, {"v0.0.1", "v0.1.0"}} {
+		t.Run(test.tag, func(t *testing.T) {
+			kitPath := copyKit(t)
+			content, err := os.ReadFile(kitPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := []byte(strings.Replace(string(content), "v0.0.1-rc.6", test.pinned, 1))
+			if err := os.WriteFile(kitPath, before, 0600); err != nil {
+				t.Fatal(err)
+			}
+			sumsPath := writeSums(t, sums(test.tag, strings.Repeat("a", 64), strings.Repeat("b", 64)))
+			code, output, stderr := invoke("", "set", kitPath, test.tag, sumsPath)
+			after, err := os.ReadFile(kitPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "older: " + test.tag + " is below the pinned " + test.pinned + "\n"
+			if code != 0 || output != want || !bytes.Equal(before, after) {
+				t.Errorf("code %d, output %q, stderr %q, file unchanged %t", code, output, stderr, bytes.Equal(before, after))
+			}
+		})
+	}
+}
+
+func TestSetWithThePinnedTagAndTheSameChecksumsPrintsUnchanged(t *testing.T) {
+	kitPath := copyKit(t)
+	tag := "v1.2.3"
+	sumsPath := writeSums(t, sums(tag, strings.Repeat("a", 64), strings.Repeat("b", 64)))
+	if code, output, stderr := invoke("", "set", kitPath, tag, sumsPath); code != 0 {
+		t.Fatalf("%d %q %q", code, output, stderr)
+	}
+	before, err := os.ReadFile(kitPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, output, stderr := invoke("", "set", kitPath, tag, sumsPath)
+	after, err := os.ReadFile(kitPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code != 0 || output != "unchanged\n" || !bytes.Equal(before, after) {
+		t.Fatalf("%d %q %q, file unchanged %t", code, output, stderr, bytes.Equal(before, after))
+	}
+}
+
+func TestSetWithThePinnedTagAndDifferentChecksumsIsRefusedNamingTheTag(t *testing.T) {
+	kitPath := copyKit(t)
+	tag := "v1.2.3"
+	sumsPath := writeSums(t, sums(tag, strings.Repeat("a", 64), strings.Repeat("b", 64)))
+	if code, output, stderr := invoke("", "set", kitPath, tag, sumsPath); code != 0 {
+		t.Fatalf("%d %q %q", code, output, stderr)
+	}
+	before, err := os.ReadFile(kitPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedSumsPath := writeSums(t, sums(tag, strings.Repeat("c", 64), strings.Repeat("d", 64)))
+	code, output, stderr := invoke("", "set", kitPath, tag, changedSumsPath)
+	after, err := os.ReadFile(kitPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code == 0 || output != "" || !strings.Contains(stderr, tag) || !bytes.Equal(before, after) {
+		t.Fatalf("%d %q %q, file unchanged %t", code, output, stderr, bytes.Equal(before, after))
+	}
+}
