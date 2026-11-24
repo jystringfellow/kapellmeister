@@ -172,7 +172,7 @@ func commonFlags(fs *flag.FlagSet) common {
 		taskFile:   fs.String("task-file", "", "file holding the task text"),
 		verify:     fs.String("verify", "", "command kapellmeister runs in the worktree before planning and after each implementation round; defaults to [test] verify in .kapellmeister/config.toml, then an executable .kapellmeister/verify"),
 		rounds:     fs.Int("rounds", 0, "maximum implement/review/gate rounds (default [run] rounds, else 3)"),
-		retries:    fs.Int("verify-retries", 0, "times to rerun a failing verify before counting it as failed (default [run] verify_retries, else 1)"),
+		retries:    fs.Int("verify-retries", 0, "times to rerun a failing verify to rule out a flaky test before counting it as failed (default [run] verify_retries, else 1)"),
 		preflight:  fs.Duration("preflight-timeout", 0, "how long each chair gets to answer the readiness check; 0 skips it (default [run] preflight_timeout, else 4m)"),
 		timeout:    fs.Duration("timeout", 0, "timeout for each agent step (default [run] timeout, else 60m)"),
 		replyNudge: fs.Duration("reply-nudge", 0, "how long after a chair ends its turn without its reply file before nudging it (default [run] reply_nudge, else 30s)"),

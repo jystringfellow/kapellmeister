@@ -83,7 +83,11 @@ func rehearseCommand(args []string) error {
 			if len(lines) > 20 {
 				lines = lines[len(lines)-20:]
 			}
-			return fmt.Errorf("baseline verify failed with exit code %d (after %d attempt(s)): %s", result.ExitCode, result.Attempts, strings.Join(lines, "\n"))
+			output := strings.Join(lines, "\n")
+			if reason := result.RetryReason(); reason != "" {
+				output = reason + "\n" + output
+			}
+			return fmt.Errorf("baseline verify failed with exit code %d (after %d attempt(s)): %s", result.ExitCode, result.Attempts, output)
 		}
 		fmt.Printf("baseline verify passed: %s\n", verifyCmd)
 	}
