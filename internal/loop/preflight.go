@@ -43,11 +43,15 @@ type PreflightResult struct {
 
 var blockerRE = regexp.MustCompile(`(?i)requires confirmation|do you want to proceed|needs review|do you trust|trust (this|all|the)|sign in|log ?in|authenticat|approve|allow .* to`)
 
+func ChairConfigKey(c Chair) [4]string {
+	return [4]string{c.Provider, c.Profile, c.Model, c.Tier}
+}
+
 func UniqueChairs(chairs ...Chair) []Chair {
-	seen := map[struct{ provider, profile, model, tier string }]bool{}
+	seen := map[[4]string]bool{}
 	var out []Chair
 	for _, s := range chairs {
-		key := struct{ provider, profile, model, tier string }{s.Provider, s.Profile, s.Model, s.Tier}
+		key := ChairConfigKey(s)
 		if !seen[key] {
 			seen[key] = true
 			out = append(out, s)
@@ -419,4 +423,25 @@ func transientSeatFailure(err error, name string) bool {
 
 func seatTimeout(preflight time.Duration) time.Duration {
 	return max(preflight*3/8, 10*time.Second)
+}
+
+func (r PreflightResult) Reason() string {
+	text := cleanText(r.Blocker)
+	if text == "" {
+		var lines []string
+		for _, line := range strings.Split(r.Screen, "\n") {
+			if line = cleanText(line); line != "" {
+				lines = append(lines, line)
+			}
+		}
+		text = strings.Join(lines, " | ")
+	}
+	if text == "" {
+		text = cleanText(r.Error)
+	}
+	runes := []rune(text)
+	if len(runes) > 300 {
+		runes = runes[:300]
+	}
+	return string(runes)
 }

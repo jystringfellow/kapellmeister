@@ -7,27 +7,30 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/jystringfellow/kapellmeister/internal/ensemble"
 	"github.com/jystringfellow/kapellmeister/internal/loop"
 )
 
 type runState struct {
-	EnsembleSource string             `json:"ensemble_source,omitempty"`
-	Why            string             `json:"why,omitempty"`
-	CAO            string             `json:"cao,omitempty"`
-	Seating        *statusSeating     `json:"seating,omitempty"`
-	Score          *loop.ScoreOutline `json:"score,omitempty"`
-	RunID          string             `json:"run_id"`
-	Command        string             `json:"command"`
-	Repository     string             `json:"repository"`
-	Ensemble       string             `json:"ensemble"`
-	Started        time.Time          `json:"started"`
-	Updated        time.Time          `json:"updated"`
-	Round          int                `json:"round"`
-	MaxRounds      int                `json:"max_rounds"`
-	Playing        []loop.ActiveStep  `json:"playing"`
-	PID            int                `json:"pid"`
-	Host           string             `json:"host"`
-	ProcessStart   string             `json:"process_start"`
+	SeatsChanged   []ensemble.SeatChange    `json:"seats_changed,omitempty"`
+	ProvidersLost  []ensemble.ProvidersLost `json:"providers_lost,omitempty"`
+	EnsembleSource string                   `json:"ensemble_source,omitempty"`
+	Why            string                   `json:"why,omitempty"`
+	CAO            string                   `json:"cao,omitempty"`
+	Seating        *statusSeating           `json:"seating,omitempty"`
+	Score          *loop.ScoreOutline       `json:"score,omitempty"`
+	RunID          string                   `json:"run_id"`
+	Command        string                   `json:"command"`
+	Repository     string                   `json:"repository"`
+	Ensemble       string                   `json:"ensemble"`
+	Started        time.Time                `json:"started"`
+	Updated        time.Time                `json:"updated"`
+	Round          int                      `json:"round"`
+	MaxRounds      int                      `json:"max_rounds"`
+	Playing        []loop.ActiveStep        `json:"playing"`
+	PID            int                      `json:"pid"`
+	Host           string                   `json:"host"`
+	ProcessStart   string                   `json:"process_start"`
 }
 
 func statusServerAddress(address string) string {

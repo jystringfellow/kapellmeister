@@ -367,6 +367,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	c := commonFlags(fs)
+	seatFallback := fs.Bool("seat-fallback", true, "try later listed ensemble agents when preflight is BLOCKED (default [run] seat_fallback, else true)")
 	detach := fs.Bool("detach", false, "return a run id and PID while the run continues, with output in its record")
 	detachedLaunch := fs.String("detached-launch", "", "internal detached run hand-off")
 	worktree := fs.String("worktree", "", "use this existing worktree instead of creating one")
@@ -569,6 +570,23 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 	if err != nil {
 		return err
 	}
+	if set["seat-fallback"] {
+		s.SeatFallback = *seatFallback
+	}
+	var fallbackSpec ensemble.Spec
+	if source == "text" {
+		fallbackSpec = textSpec
+	} else if *ensembleName != "" {
+		var found bool
+		fallbackSpec, found, err = ensemble.Find(*ensembleName, loop.Home(), wt, s.Defined)
+		if err != nil {
+			return err
+		}
+		if !found {
+			fallbackSpec = ensemble.Spec{}
+		}
+	}
+
 	if s.Score.Score.Source == "built-in" && !s.Score.Score.EditsWorktree() {
 		status, err := gitOutput(wt, "status", "--porcelain=v1", "--untracked-files=all")
 		if err != nil {
@@ -629,9 +647,9 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		defer stop()
 	}
 	client := newClient(s.CAOURL, s, output)
+	state := initialRunState(runID, "run", wt, *ensembleName, s.Rounds, time.Now(), s.Score.Score)
+	state.EnsembleSource, state.Why = source, *why
 	if *detachedLaunch != "" {
-		state := initialRunState(runID, "run", wt, *ensembleName, s.Rounds, time.Now(), s.Score.Score)
-		state.EnsembleSource, state.Why = source, *why
 		if err := os.MkdirAll(runDir, 0755); err != nil {
 			return err
 		}
@@ -652,7 +670,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		printSources(output, s)
 		printScoreFiles(output, s.Score.Files)
 		if *ensembleName != "" {
-			fmt.Fprintf(output, "ensemble %s\n", *ensembleName)
+			fmt.Fprintf(output, "ensemble %s\nseat fallback %s\n", *ensembleName, map[bool]string{true: "on", false: "off"}[s.SeatFallback])
 		}
 		printPolicy(output, &policy, s.Score.Score, len(stepChairs(chairs, s.Score.Score)["classify"]) > 0)
 		if s.Score.Score.Source == "" {
@@ -710,7 +728,14 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 			fmt.Fprintln(stderr, "km: writing run state:", err)
 		}
 	}
-	if err := preflight(ctx, client, wt, s.PreflightTimeout, s.PreflightRetryWait, defaultChairs(&policy, chairs, s.Score.Score)...); err != nil {
+	var changes []ensemble.SeatChange
+	var lost []ensemble.ProvidersLost
+	if fallbackSpec.Name != "" {
+		members, changes, lost, err = preflightSeats(ctx, client, wt, s, fallbackSpec, members, chairs, &policy, output)
+	} else {
+		err = preflight(ctx, client, wt, s.PreflightTimeout, s.PreflightRetryWait, defaultChairs(&policy, chairs, s.Score.Score)...)
+	}
+	if err != nil {
 		if *detachedLaunch == "" {
 			_ = os.Remove(filepath.Join(runDir, "current.json"))
 			_ = os.Remove(filepath.Join(runDir, "ensemble.toml"))
@@ -718,6 +743,34 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		}
 		return err
 	}
+	if len(changes) > 0 {
+		for _, line := range ensemble.SeatLines(changes, lost) {
+			fmt.Fprintf(output, "  seat    %s\n", plain(line))
+		}
+		originalImplementer := chairs.Implementer
+		chairs, err = ensemble.ChairsFor(s.Score.Score, members)
+		if err != nil {
+			return err
+		}
+		addressed := slices.Clone(members)
+		for i, m := range addressed {
+			addressed[i].Chair.Address = m.Address(*ensembleName)
+		}
+		seated, err = ensemble.ChairsFor(s.Score.Score, addressed)
+		if err != nil {
+			return err
+		}
+		policy = s.Policy
+		if s.Score.Score.Source == "" && chairs.Implementer != originalImplementer {
+			printPinnedEscalation(output, &policy, chairs.Implementer)
+		}
+		describeRun(&preflighting, ensembleRun{SeatsChanged: changes, ProvidersLost: lost, Score: s.Score.Score, Members: members, Agents: s.Defined, CAOURL: client.BaseURL, Ensemble: *ensembleName, EnsembleSource: source, Why: *why, Config: loop.Config{Worktree: wt, Chairs: seated, CAOURL: s.CAOURL, VerifyCommand: verifyCmd, StrictCommand: tested.Strict}})
+		state = preflighting
+		if err := writeRunState(runDir, preflighting); err != nil {
+			return err
+		}
+	}
+
 	podiumChair, _ := policy.Chair("classify", chairs.Classifier, "", 0)
 	if podiumChair.Provider == "" && len(members) > 0 {
 		podiumChair = members[0].Chair
@@ -734,6 +787,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		}
 	}()
 	sum, err := runEnsemble(ctx, ensembleRun{
+		SeatsChanged: changes, ProvidersLost: lost,
 		Score: s.Score.Score, ScoreFiles: s.Score.Files, Members: members, Agents: s.Defined, CAOURL: client.BaseURL,
 		RunID: runID, StateDir: runDir, Ensemble: *ensembleName, EnsembleSource: source, Why: *why, BaseBranch: baseBranch, Meter: loop.NewLogMeter(),
 		Config: loop.Config{
@@ -828,8 +882,8 @@ func configCommand(args []string) error {
 		return err
 	}
 	printSources(os.Stdout, s)
-	fmt.Printf("cao    %s\nstate  %s\nrun    rounds %d, verify retries %d, step timeout %s, reply grace %s, reply nudge %s, preflight %s, preflight retry wait %s, blocker poll %s, lessons %s, learned budget %d bytes, trust folder %s\n",
-		s.CAOURL, loop.StateDir(), s.Rounds, s.VerifyRetries, s.Timeout, s.ReplyGrace, s.ReplyNudge, s.PreflightTimeout, s.PreflightRetryWait, s.BlockerPoll, lessonsSetting(s), s.LearnedBudget, map[bool]string{true: "on", false: "off"}[s.TrustFolder])
+	fmt.Printf("cao    %s\nstate  %s\nrun    rounds %d, verify retries %d, step timeout %s, reply grace %s, reply nudge %s, preflight %s, preflight retry wait %s, blocker poll %s, lessons %s, learned budget %d bytes, trust folder %s, seat fallback %s\n",
+		s.CAOURL, loop.StateDir(), s.Rounds, s.VerifyRetries, s.Timeout, s.ReplyGrace, s.ReplyNudge, s.PreflightTimeout, s.PreflightRetryWait, s.BlockerPoll, lessonsSetting(s), s.LearnedBudget, map[bool]string{true: "on", false: "off"}[s.TrustFolder], map[bool]string{true: "on", false: "off"}[s.SeatFallback])
 	fmt.Printf("repository scores %s\n", map[bool]string{true: "on", false: "off"}[s.RepositoryScores])
 	if len(s.ReportDirs) > 0 {
 		fmt.Printf("report dirs %s (in addition to %s)\n", plain(strings.Join(s.ReportDirs, ", ")), plain(defaultRunsDir()))
@@ -1152,9 +1206,9 @@ func sortedKeys[V any](m map[string]V) []string {
 	return keys
 }
 
-func preflight(ctx context.Context, client *cao.Client, worktree string, timeout, retryWait time.Duration, chairs ...loop.Chair) error {
+func checkPreflight(ctx context.Context, client *cao.Client, worktree string, timeout, retryWait time.Duration, chairs ...loop.Chair) ([]loop.PreflightResult, error) {
 	if timeout == 0 {
-		return nil
+		return nil, nil
 	}
 	unique := loop.UniqueChairs(chairs...)
 	fmt.Printf("→ preflight %d chair(s)\n", len(unique))
@@ -1169,14 +1223,13 @@ func preflight(ctx context.Context, client *cao.Client, worktree string, timeout
 	if ctx.Err() != nil {
 		fmt.Printf("preflight interrupted; took down %d session(s)\n", unseated)
 		if cause := loop.SignalOf(ctx); cause != nil {
-			return cause
+			return results, cause
 		}
-		return ctx.Err()
+		return results, ctx.Err()
 	}
 	if err != nil {
-		return err
+		return results, err
 	}
-	var blocked []string
 	for _, r := range results {
 		d := (time.Duration(r.DurationMS) * time.Millisecond).Round(time.Second)
 		if r.OK {
@@ -1185,10 +1238,23 @@ func preflight(ctx context.Context, client *cao.Client, worktree string, timeout
 		}
 		if r.TimedOut {
 			fmt.Printf("  BLOCKED %s (%s): did not answer within %s%s\n", r.Chair, d, timeout, seatRetryNote(r)+timeoutRetryNote(r, timeout, client.BeforeLaunch != nil)+screenBlock(r.Screen))
-			blocked = append(blocked, strings.ReplaceAll(preflightTimeoutMessage(r, timeout), "\n", "\n  "))
 			continue
 		}
 		fmt.Printf("  BLOCKED %s (%s): %s\n", r.Chair, d, firstNonEmpty(r.Blocker, r.Error)+seatRetryNote(r)+timeoutRetryNote(r, timeout, client.BeforeLaunch != nil)+screenBlock(r.Screen))
+	}
+	return results, nil
+}
+
+func preflightFailure(results []loop.PreflightResult, timeout time.Duration) error {
+	var blocked []string
+	for _, r := range results {
+		if r.OK {
+			continue
+		}
+		if r.TimedOut {
+			blocked = append(blocked, strings.ReplaceAll(preflightTimeoutMessage(r, timeout), "\n", "\n  "))
+			continue
+		}
 		hint := r.Chair.String()
 		if r.Session != "" {
 			hint += fmt.Sprintf(": resolve it with `tmux attach -t %s`, then detach with Ctrl-b d", r.Session)
@@ -1199,6 +1265,14 @@ func preflight(ctx context.Context, client *cao.Client, worktree string, timeout
 		return fmt.Errorf("preflight failed for %d chair(s):\n  %s", len(blocked), strings.Join(blocked, "\n  "))
 	}
 	return nil
+}
+
+func preflight(ctx context.Context, client *cao.Client, worktree string, timeout, retryWait time.Duration, chairs ...loop.Chair) error {
+	results, err := checkPreflight(ctx, client, worktree, timeout, retryWait, chairs...)
+	if err != nil {
+		return err
+	}
+	return preflightFailure(results, timeout)
 }
 
 func screenBlock(screen string) string {
@@ -1255,6 +1329,8 @@ func firstNonEmpty(values ...string) string {
 }
 
 type ensembleRun struct {
+	SeatsChanged   []ensemble.SeatChange
+	ProvidersLost  []ensemble.ProvidersLost
 	EnsembleSource string
 	Why            string
 	Reseater       loop.Reseater
@@ -1281,14 +1357,16 @@ type ensembleRun struct {
 }
 
 type ensembleSummary struct {
-	EnsembleSource    string           `json:"ensemble_source,omitempty"`
-	Why               string           `json:"why,omitempty"`
-	Score             string           `json:"score,omitempty"`
-	ScoreSource       string           `json:"score_source,omitempty"`
-	ScoreFiles        []loop.ScoreFile `json:"score_files,omitempty"`
-	ScoreFilesChanged []string         `json:"score_files_changed,omitempty"`
-	Command           string           `json:"command,omitempty"`
-	Tune              *tuneSummary     `json:"tune,omitempty"`
+	SeatsChanged      []ensemble.SeatChange    `json:"seats_changed,omitempty"`
+	ProvidersLost     []ensemble.ProvidersLost `json:"providers_lost,omitempty"`
+	EnsembleSource    string                   `json:"ensemble_source,omitempty"`
+	Why               string                   `json:"why,omitempty"`
+	Score             string                   `json:"score,omitempty"`
+	ScoreSource       string                   `json:"score_source,omitempty"`
+	ScoreFiles        []loop.ScoreFile         `json:"score_files,omitempty"`
+	ScoreFilesChanged []string                 `json:"score_files_changed,omitempty"`
+	Command           string                   `json:"command,omitempty"`
+	Tune              *tuneSummary             `json:"tune,omitempty"`
 	loop.Result
 	DurationMS int64  `json:"duration_ms"`
 	DiffStat   string `json:"diff_stat"`
@@ -1308,6 +1386,7 @@ type recordedLesson struct {
 }
 
 func describeRun(state *runState, p ensembleRun) {
+	state.SeatsChanged, state.ProvidersLost = p.SeatsChanged, p.ProvidersLost
 	score := p.Score
 	if len(score.Steps) == 0 {
 		score = loop.DefaultScore()
@@ -1375,7 +1454,7 @@ func runEnsemble(ctx context.Context, p ensembleRun) (sum ensembleSummary, runEr
 				res.RunDir = filepath.Join(p.Config.Worktree, loop.RunDirRel(p.RunID))
 			}
 			res.Outcome, res.Reason = loop.Failed, reason
-			sum = ensembleSummary{Result: res, DurationMS: time.Since(start).Milliseconds(), Ensemble: p.Ensemble, EnsembleSource: p.EnsembleSource, Why: p.Why, Repository: repository, Base: base, BaseBranch: p.BaseBranch}
+			sum = ensembleSummary{SeatsChanged: p.SeatsChanged, ProvidersLost: p.ProvidersLost, Result: res, DurationMS: time.Since(start).Milliseconds(), Ensemble: p.Ensemble, EnsembleSource: p.EnsembleSource, Why: p.Why, Repository: repository, Base: base, BaseBranch: p.BaseBranch}
 			recordScore(&sum)
 			if p.Tune != nil {
 				sum.Command, sum.Tune = p.Command, p.TuneSummary
@@ -1447,7 +1526,7 @@ func runEnsemble(ctx context.Context, p ensembleRun) (sum ensembleSummary, runEr
 			res.Lessons = &loop.LessonsReport{Reason: "writing lessons.json: " + err.Error()}
 		}
 	}
-	sum = ensembleSummary{Result: res, DurationMS: time.Since(start).Milliseconds(), DiffStat: stat, Ensemble: p.Ensemble, EnsembleSource: p.EnsembleSource, Why: p.Why, Repository: repository, Base: base, BaseBranch: p.BaseBranch}
+	sum = ensembleSummary{SeatsChanged: p.SeatsChanged, ProvidersLost: p.ProvidersLost, Result: res, DurationMS: time.Since(start).Milliseconds(), DiffStat: stat, Ensemble: p.Ensemble, EnsembleSource: p.EnsembleSource, Why: p.Why, Repository: repository, Base: base, BaseBranch: p.BaseBranch}
 	recordScore(&sum)
 	if head != base {
 		sum.Head, sum.HeadMoved = head, true
@@ -1525,6 +1604,12 @@ func finishRun(w io.Writer, sum ensembleSummary) error {
 
 func finishRunDetail(w io.Writer, sum ensembleSummary, detail bool) error {
 	printOutcome(w, sum)
+	if len(sum.SeatsChanged) > 0 {
+		fmt.Fprintln(w, "seats changed")
+		for _, line := range ensemble.SeatLines(sum.SeatsChanged, sum.ProvidersLost) {
+			fmt.Fprintf(w, "  %s\n", plain(line))
+		}
+	}
 	printRestores(w, sum.Restores)
 	printStrict(w, sum.Strict)
 	for _, path := range sum.ScoreFilesChanged {
