@@ -1184,21 +1184,29 @@ func preflight(ctx context.Context, client *cao.Client, worktree string, timeout
 			continue
 		}
 		if r.TimedOut {
-			fmt.Printf("  BLOCKED %s (%s): did not answer within %s%s\n", r.Chair, d, timeout, seatRetryNote(r)+timeoutRetryNote(r, timeout, client.BeforeLaunch != nil))
+			fmt.Printf("  BLOCKED %s (%s): did not answer within %s%s\n", r.Chair, d, timeout, seatRetryNote(r)+timeoutRetryNote(r, timeout, client.BeforeLaunch != nil)+screenBlock(r.Screen))
 			blocked = append(blocked, strings.ReplaceAll(preflightTimeoutMessage(r, timeout), "\n", "\n  "))
 			continue
 		}
-		fmt.Printf("  BLOCKED %s (%s): %s\n", r.Chair, d, firstNonEmpty(r.Blocker, r.Error)+seatRetryNote(r)+timeoutRetryNote(r, timeout, client.BeforeLaunch != nil))
+		fmt.Printf("  BLOCKED %s (%s): %s\n", r.Chair, d, firstNonEmpty(r.Blocker, r.Error)+seatRetryNote(r)+timeoutRetryNote(r, timeout, client.BeforeLaunch != nil)+screenBlock(r.Screen))
 		hint := r.Chair.String()
 		if r.Session != "" {
 			hint += fmt.Sprintf(": resolve it with `tmux attach -t %s`, then detach with Ctrl-b d", r.Session)
 		}
-		blocked = append(blocked, hint)
+		blocked = append(blocked, hint+screenBlock(r.Screen))
 	}
 	if len(blocked) > 0 {
 		return fmt.Errorf("preflight failed for %d chair(s):\n  %s", len(blocked), strings.Join(blocked, "\n  "))
 	}
 	return nil
+}
+
+func screenBlock(screen string) string {
+	if screen == "" {
+		return ""
+	}
+	const indent = "\n          "
+	return indent + "the agent's screen ends with (untrusted text from the agent's pane):" + indent + "| " + strings.ReplaceAll(screen, "\n", indent+"| ")
 }
 
 func preflightTimeoutMessage(r loop.PreflightResult, timeout time.Duration) string {
@@ -1212,6 +1220,7 @@ func preflightTimeoutMessage(r loop.PreflightResult, timeout time.Duration) stri
 	if r.Blocker != "" {
 		fmt.Fprintf(&out, "\nthe agent's screen shows: %s", r.Blocker)
 	}
+	fmt.Fprint(&out, screenBlock(r.Screen))
 	fmt.Fprintf(&out, "\nserver detail: %s", r.Error)
 	return out.String()
 }

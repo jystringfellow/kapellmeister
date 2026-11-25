@@ -524,6 +524,8 @@ the agent may be waiting at a trust or approval prompt, or a prompt may have bee
 
 The agent's screen and raw server detail follow on separate lines when available.
 
+When a blocked chair's screen shows no known prompt, km quotes the last lines of its pane, cleaned and bounded, as untrusted text, so an error such as an exhausted budget, bad credentials or a rate limit is visible.
+
 km cleans up failed launches by their exact chosen session names, deletes passing chairs' sessions,
 and keeps blocked chairs' attach targets. SIGINT, SIGTERM or SIGHUP waits for any bounded launch already
 in progress, then tears down this preflight's sessions. Cancellation also stops queued seats and

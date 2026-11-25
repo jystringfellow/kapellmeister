@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/jystringfellow/kapellmeister/internal/cao"
 )
@@ -29,6 +30,7 @@ type PreflightResult struct {
 	TerminalID     string   `json:"terminal_id,omitempty"`
 	Session        string   `json:"session,omitempty"`
 	Blocker        string   `json:"blocker,omitempty"`
+	Screen         string   `json:"screen,omitempty"`
 	Error          string   `json:"error,omitempty"`
 	TimeoutRetried bool     `json:"timeout_retried,omitempty"`
 	RetryWaitMS    int64    `json:"retry_wait_ms,omitempty"`
@@ -304,13 +306,39 @@ func preflightChair(ctx context.Context, stepper interface {
 			defer cancel()
 			if _, screen, serr := sc.Screen(screenCtx, res.TerminalID); serr == nil {
 				res.Blocker = FindBlocker(screen)
+				if res.Blocker == "" {
+					res.Screen = screenTail(screen)
+				}
 			}
 		}
 	}
 	return res, err
 }
 
-const blockerLines = 12
+func screenTail(screen string) string {
+	var lines []string
+	for _, line := range strings.Split(screen, "\n") {
+		if strings.TrimSpace(line) != "" {
+			lines = append(lines, line)
+		}
+	}
+	lines = lines[max(0, len(lines)-blockerLines):]
+	var tail []string
+	for _, line := range lines {
+		if strings.IndexFunc(line, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) < 0 {
+			continue
+		}
+		runes := []rune(cleanText(line))
+		tail = append(tail, string(runes[:min(len(runes), screenLineRunes)]))
+	}
+	return strings.Join(tail[max(0, len(tail)-screenLines):], "\n")
+}
+
+const (
+	blockerLines    = 12
+	screenLines     = 6
+	screenLineRunes = 160
+)
 
 var preflightReplyGrace = 30 * time.Second
 
