@@ -20,13 +20,16 @@ import (
 	"unicode"
 	"unicode/utf16"
 
+	"github.com/jystringfellow/kapellmeister/internal/ensemble"
 	"github.com/jystringfellow/kapellmeister/internal/loop"
 	"golang.org/x/sys/unix"
 )
 
 type reportRun struct {
-	EnsembleSource string `json:"ensemble_source,omitempty"`
-	Why            string `json:"why,omitempty"`
+	SeatsChanged   []ensemble.SeatChange    `json:"seats_changed,omitempty"`
+	ProvidersLost  []ensemble.ProvidersLost `json:"providers_lost,omitempty"`
+	EnsembleSource string                   `json:"ensemble_source,omitempty"`
+	Why            string                   `json:"why,omitempty"`
 	*ReportCost
 	Retries       int                `json:"retries,omitempty"`
 	Restores      int                `json:"restores,omitempty"`
@@ -53,6 +56,7 @@ type reportRun struct {
 }
 
 type reportTotals struct {
+	SeatsChangedRuns    int                         `json:"seats_changed_runs,omitempty"`
 	UnpricedCacheModels map[string][]string         `json:"unpriced_cache_models,omitempty"`
 	UnpricedModels      []string                    `json:"unpriced_models,omitempty"`
 	Retries             int                         `json:"retries,omitempty"`
@@ -139,6 +143,9 @@ func reportCommand(args []string, stdout, stderr io.Writer) error {
 		}
 		report.Runs = append(report.Runs, run)
 		report.Totals.Runs++
+		if len(run.SeatsChanged) > 0 {
+			report.Totals.SeatsChangedRuns++
+		}
 		if run.Restores > 0 {
 			report.Totals.Restores++
 		}
@@ -229,19 +236,21 @@ func readReportRun(dir *os.File, hasResult, hasTelemetry, hasCurrent, hasConfig 
 		path := filepath.Join(dir.Name(), "result.json")
 		data, err := readReportFile(dir, "result.json", false)
 		var recorded *struct {
-			EnsembleSource string             `json:"ensemble_source"`
-			Why            string             `json:"why"`
-			Restores       []loop.Restore     `json:"restores"`
-			VerifyRetried  []loop.VerifyRetry `json:"verify_retried"`
-			Command        string             `json:"command"`
-			RunID          string             `json:"run_id"`
-			Repository     string             `json:"repository"`
-			Ensemble       string             `json:"ensemble"`
-			Outcome        string             `json:"outcome"`
-			Reason         string             `json:"reason"`
-			Usage          json.RawMessage    `json:"usage"`
-			Rounds         *int               `json:"rounds"`
-			DurationMS     *int64             `json:"duration_ms"`
+			SeatsChanged   []ensemble.SeatChange    `json:"seats_changed"`
+			ProvidersLost  []ensemble.ProvidersLost `json:"providers_lost"`
+			EnsembleSource string                   `json:"ensemble_source"`
+			Why            string                   `json:"why"`
+			Restores       []loop.Restore           `json:"restores"`
+			VerifyRetried  []loop.VerifyRetry       `json:"verify_retried"`
+			Command        string                   `json:"command"`
+			RunID          string                   `json:"run_id"`
+			Repository     string                   `json:"repository"`
+			Ensemble       string                   `json:"ensemble"`
+			Outcome        string                   `json:"outcome"`
+			Reason         string                   `json:"reason"`
+			Usage          json.RawMessage          `json:"usage"`
+			Rounds         *int                     `json:"rounds"`
+			DurationMS     *int64                   `json:"duration_ms"`
 		}
 		if err == nil {
 			err = json.Unmarshal(data, &recorded)
@@ -259,6 +268,7 @@ func readReportRun(dir *os.File, hasResult, hasTelemetry, hasCurrent, hasConfig 
 		}
 		run.Repository, run.Ensemble = recorded.Repository, recorded.Ensemble
 		run.EnsembleSource, run.Why = recorded.EnsembleSource, recorded.Why
+		run.SeatsChanged, run.ProvidersLost = recorded.SeatsChanged, recorded.ProvidersLost
 		run.Command = recorded.Command
 		run.Restores = len(recorded.Restores)
 		run.VerifyRetried = recorded.VerifyRetried
@@ -284,6 +294,7 @@ func readReportRun(dir *os.File, hasResult, hasTelemetry, hasCurrent, hasConfig 
 		if err != nil {
 			diagnose(filepath.Join(dir.Name(), "current.json"), err)
 		} else {
+			run.SeatsChanged, run.ProvidersLost = state.SeatsChanged, state.ProvidersLost
 			run.state = state
 			if strings.HasPrefix(state.Command, "tune ") {
 				run.Command = state.Command
@@ -504,6 +515,19 @@ func printReport(stdout io.Writer, report runReport) error {
 	if report.Totals.VerifyRetriedRuns > 0 {
 		fmt.Fprintf(w, "verify retried: %d\n", report.Totals.VerifyRetriedRuns)
 	}
+	if report.Totals.SeatsChangedRuns > 0 {
+		fmt.Fprintf(w, "seats changed: %d\n", report.Totals.SeatsChangedRuns)
+		for _, run := range report.Runs {
+			if len(run.SeatsChanged) == 0 {
+				continue
+			}
+			fmt.Fprintf(w, "  %s\n", plain(run.RunID))
+			for _, line := range ensemble.SeatLines(run.SeatsChanged, run.ProvidersLost) {
+				fmt.Fprintf(w, "    %s\n", plain(line))
+			}
+		}
+	}
+
 	conflicts := 0
 	for _, run := range report.Runs {
 		if run.Conflict {

@@ -71,6 +71,7 @@ func ValidSuites(names []string) error {
 }
 
 type RunConfig struct {
+	SeatFallback       *bool  `toml:"seat_fallback"`
 	RepositoryScores   *bool  `toml:"repository_scores"`
 	BaseBranch         string `toml:"base"`
 	WorktreeDir        string `toml:"worktree_dir"`
@@ -177,6 +178,7 @@ type ReportPrice struct {
 }
 
 type Settings struct {
+	SeatFallback       bool                   `json:"seat_fallback"`
 	ScoreName          string                 `json:"-"`
 	Score              LoadedScore            `json:"-"`
 	RoundsConfigured   bool                   `json:"-"`
@@ -255,6 +257,7 @@ func UserConfigPath(home string) string {
 
 func DefaultSettings() Settings {
 	return Settings{
+		SeatFallback:       true,
 		RepositoryScores:   true,
 		LearnedBudget:      defaultLearnedBudget,
 		Lessons:            false,
@@ -538,6 +541,9 @@ func refuseSections(cfg loadedConfig, name string, sections []string, home strin
 
 func (s *Settings) applyRun(layer loadedConfig) error {
 	r := layer.Run
+	if r.SeatFallback != nil {
+		s.SeatFallback = *r.SeatFallback
+	}
 	if r.TrustFolder != nil {
 		s.TrustFolder = *r.TrustFolder
 	}

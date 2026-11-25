@@ -304,24 +304,15 @@ func (s Spec) Bind(agents loop.Agents, available []string) ([]Member, error) {
 	var members []Member
 	for _, section := range s.Sections {
 		for _, c := range section.Chairs {
-			m := Member{Section: section.Name, Part: c.Part, Name: c.Name}
 			agent, ok := FirstAvailable(c.Agents, available)
 			if !ok {
+				m := Member{Section: section.Name, Name: c.Name}
 				return nil, &UnavailableError{Path: s.Path, Address: m.Address(s.Name), Section: section.Name, Chair: c.Name, Agents: c.Agents, Available: available}
 			}
-			if c.Tier != "" {
-				_, pin, _ := loop.SplitTier(agent)
-				if pin == "" {
-					agent += "@" + c.Tier
-				}
-			}
-			chair, err := agents.ResolveChair(agent)
+			m, err := s.Seat(agents, section.Name, c.Name, agent)
 			if err != nil {
-				return nil, fmt.Errorf("%s: %s: %w", s.Path, m.Address(s.Name), err)
+				return nil, err
 			}
-			chair.Focus = c.Focus
-			chair.Timeout = firstDuration(c.Timeout, section.Timeout, s.Timeout)
-			m.Chair = chair
 			members = append(members, m)
 		}
 	}
@@ -330,8 +321,7 @@ func (s Spec) Bind(agents loop.Agents, available []string) ([]Member, error) {
 
 func FirstAvailable(agents, available []string) (string, bool) {
 	for _, agent := range agents {
-		base, _, _ := loop.SplitTier(agent)
-		if strings.Contains(base, ":") || slices.Contains(available, base) {
+		if Eligible(agent, available) {
 			return agent, true
 		}
 	}
@@ -492,4 +482,53 @@ func checkName(name, path string) error {
 		return fmt.Errorf("%s: ensemble %q: want a lowercase name of letters, digits and dashes", path, name)
 	}
 	return nil
+}
+
+func Eligible(entry string, available []string) bool {
+	base, _, _ := loop.SplitTier(entry)
+	return strings.Contains(base, ":") || slices.Contains(available, base)
+}
+
+func (s Spec) Listed(section, chair string, available []string) (string, []string) {
+	for _, sec := range s.Sections {
+		if sec.Name == section {
+			for _, c := range sec.Chairs {
+				if c.Name == chair {
+					for i, entry := range c.Agents {
+						if Eligible(entry, available) {
+							return entry, c.Agents[i+1:]
+						}
+					}
+				}
+			}
+		}
+	}
+	return "", nil
+}
+
+func (s Spec) Seat(agents loop.Agents, section, chair, entry string) (Member, error) {
+	for _, sec := range s.Sections {
+		if sec.Name == section {
+			for _, c := range sec.Chairs {
+				if c.Name == chair {
+					m := Member{Section: section, Name: chair, Part: c.Part}
+					if c.Tier != "" {
+						_, pin, _ := loop.SplitTier(entry)
+						if pin == "" {
+							entry += "@" + c.Tier
+						}
+					}
+					resolved, err := agents.ResolveChair(entry)
+					if err != nil {
+						return Member{}, fmt.Errorf("%s: %s: %w", s.Path, m.Address(s.Name), err)
+					}
+					resolved.Focus = c.Focus
+					resolved.Timeout = firstDuration(c.Timeout, sec.Timeout, s.Timeout)
+					m.Chair = resolved
+					return m, nil
+				}
+			}
+		}
+	}
+	return Member{}, fmt.Errorf("%s: unknown chair %s.%s", s.Path, section, chair)
 }

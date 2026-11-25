@@ -11,6 +11,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/jystringfellow/kapellmeister/internal/ensemble"
 	"github.com/jystringfellow/kapellmeister/internal/loop"
 )
 
@@ -22,25 +23,27 @@ type statusStep struct {
 }
 
 type statusRun struct {
-	EnsembleSource string             `json:"ensemble_source,omitempty"`
-	Why            string             `json:"why,omitempty"`
-	Schema         int                `json:"schema"`
-	CAO            string             `json:"cao,omitempty"`
-	Score          *loop.ScoreOutline `json:"score,omitempty"`
-	Current        []statusCurrent    `json:"current"`
-	Trail          []statusTrail      `json:"trail"`
-	Usage          *statusUsage       `json:"usage,omitempty"`
-	RunID          string             `json:"run_id"`
-	Path           string             `json:"path"`
-	Started        *time.Time         `json:"started"`
-	Repository     string             `json:"repository"`
-	Ensemble       statusSeating      `json:"ensemble"`
-	Command        string             `json:"command"`
-	Round          int                `json:"round"`
-	MaxRounds      int                `json:"max_rounds"`
-	Playing        []statusStep       `json:"playing"`
-	Updated        *time.Time         `json:"updated"`
-	Liveness       string             `json:"liveness"`
+	SeatsChanged   []ensemble.SeatChange    `json:"seats_changed,omitempty"`
+	ProvidersLost  []ensemble.ProvidersLost `json:"providers_lost,omitempty"`
+	EnsembleSource string                   `json:"ensemble_source,omitempty"`
+	Why            string                   `json:"why,omitempty"`
+	Schema         int                      `json:"schema"`
+	CAO            string                   `json:"cao,omitempty"`
+	Score          *loop.ScoreOutline       `json:"score,omitempty"`
+	Current        []statusCurrent          `json:"current"`
+	Trail          []statusTrail            `json:"trail"`
+	Usage          *statusUsage             `json:"usage,omitempty"`
+	RunID          string                   `json:"run_id"`
+	Path           string                   `json:"path"`
+	Started        *time.Time               `json:"started"`
+	Repository     string                   `json:"repository"`
+	Ensemble       statusSeating            `json:"ensemble"`
+	Command        string                   `json:"command"`
+	Round          int                      `json:"round"`
+	MaxRounds      int                      `json:"max_rounds"`
+	Playing        []statusStep             `json:"playing"`
+	Updated        *time.Time               `json:"updated"`
+	Liveness       string                   `json:"liveness"`
 }
 
 func statusCommand(args []string, stdout, stderr io.Writer) error {
@@ -75,6 +78,7 @@ func statusAt(args []string, stdout, stderr io.Writer, now time.Time) error {
 	for _, recorded := range unfinishedRuns(found) {
 		run := statusRun{RunID: recorded.RunID, Path: recorded.Path, Started: recorded.Started, Repository: recorded.Repository, Ensemble: statusSeating{Name: recorded.Ensemble, Sections: []statusSection{}}, Playing: []statusStep{}, Liveness: "unknown"}
 		if state := recorded.state; state != nil {
+			run.SeatsChanged, run.ProvidersLost = state.SeatsChanged, state.ProvidersLost
 			run.Command, run.Round, run.MaxRounds = state.Command, state.Round, state.MaxRounds
 			run.EnsembleSource, run.Why = state.EnsembleSource, state.Why
 			if !state.Updated.IsZero() {
