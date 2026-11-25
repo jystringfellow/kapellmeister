@@ -2745,15 +2745,17 @@ can leave the session running.
 ## Releasing
 
 Pushing a `vX.Y.Z` tag on main builds and publishes the release, then pushes the formula to the tap.
-Set `HOMEBREW_TAP_TOKEN` to a token that can write contents on `jystringfellow/homebrew-tap` only, with no other access.
-Without the secret, the tap step is skipped and the release still succeeds.
+The tap step uses the same publisher App credentials as the `book` job below. Its App token is
+scoped to `jystringfellow/homebrew-tap` with Contents write only. The App must be installed on the
+tap. It must also be a bypass actor on the tap's default-branch ruleset, because the job pushes
+straight to `main`. Without either credential, the tap step is skipped and the release still succeeds.
 
 The release workflow's `book` job takes checksums from the release's `SHA256SUMS` and opens a
 pull request to bump the book kit's km pin. Merging the pull request causes `book-tag.yml` to
 push the next `book/vX.Y.Z` tag. Set the repository variable `PUBLISHER_APP_CLIENT_ID` and secret
 `PUBLISHER_APP_PRIVATE_KEY` for a GitHub App with Contents read and write and Pull requests read
-and write permissions. Each job scopes its App token to this repository and to only the
-permissions that job needs. The App must be a bypass actor on the tag ruleset for `book/v*`.
+and write permissions. The `book` and tag jobs each scope their App token to this repository and
+to only the permissions that job needs. The App must be a bypass actor on the tag ruleset for `book/v*`.
 Without either credential, both the bump and tag steps are skipped. The App token allows CI to run
 on the pull request; branches and pull requests made with `GITHUB_TOKEN` start no workflows. The
 `book-pin` check turns red when the pin is behind the latest release; it is required only if
