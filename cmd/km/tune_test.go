@@ -68,6 +68,7 @@ func tuneFixture(t *testing.T) string {
 type tuneCAO struct {
 	mu          sync.Mutex
 	mode        string
+	output      string
 	steps       []string
 	writes      []string
 	profiles    []cao.Profile
@@ -108,7 +109,11 @@ func (f *tuneCAO) serve(t *testing.T) *httptest.Server {
 				json.NewEncoder(w).Encode(map[string]string{"name": name})
 			}
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/output"):
-			json.NewEncoder(w).Encode(map[string]string{"output": "Permission rule requires confirmation. Do you want to proceed?"})
+			output := f.output
+			if output == "" {
+				output = "Permission rule requires confirmation. Do you want to proceed?"
+			}
+			json.NewEncoder(w).Encode(map[string]string{"output": output})
 		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/terminals/"):
 			json.NewEncoder(w).Encode(cao.Terminal{ID: "writer"})
 		case r.Method == "POST" && r.URL.Path == "/sessions":

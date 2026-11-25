@@ -835,7 +835,7 @@ func tuneSeat(ctx context.Context, client *cao.Client, root string, timeout, ret
 			if r.Session != "" {
 				fix = "resolve it with `tmux attach -t " + r.Session + "`, then detach with Ctrl-b d"
 			}
-			return fmt.Errorf("chair %s cannot answer preflight: %s; %s", chair, firstNonEmpty(r.Blocker, r.Error), fix)
+			return fmt.Errorf("chair %s cannot answer preflight: %s; %s%s", chair, firstNonEmpty(r.Blocker, r.Error), fix, screenBlock(r.Screen))
 		}
 	}
 	return nil
