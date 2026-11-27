@@ -1,0 +1,6 @@
+km-begin bcddf5ba7a01dfa9
+
+[{"lesson": "When a chair replies by message, check the whole reply arrives before trusting it. When a chair replies by message, check the whole reply arrives before trusting it. When a chair replies by message, check
+the whole reply arrives before trusting it. When a chair replies by message, check the whole reply arrives before trusting it. ", "evidence": "run record"}]
+
+km-end bcddf5ba7a01dfa9

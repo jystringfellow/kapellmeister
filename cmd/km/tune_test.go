@@ -66,19 +66,20 @@ func tuneFixture(t *testing.T) string {
 }
 
 type tuneCAO struct {
-	mu          sync.Mutex
-	mode        string
-	output      string
-	steps       []string
-	writes      []string
-	profiles    []cao.Profile
-	permissions map[string]cao.ProfilePermissions
-	seated      []string
-	hold        <-chan struct{}
-	afterStep   func(string)
-	afterSeat   func()
-	writer      func(t *testing.T, req cao.StepRequest, patchDir string) string
-	prompts     []string
+	listInstalled bool
+	mu            sync.Mutex
+	mode          string
+	output        string
+	steps         []string
+	writes        []string
+	profiles      []cao.Profile
+	permissions   map[string]cao.ProfilePermissions
+	seated        []string
+	hold          <-chan struct{}
+	afterStep     func(string)
+	afterSeat     func()
+	writer        func(t *testing.T, req cao.StepRequest, patchDir string) string
+	prompts       []string
 }
 
 func (f *tuneCAO) serve(t *testing.T) *httptest.Server {
@@ -94,6 +95,24 @@ func (f *tuneCAO) serve(t *testing.T) *httptest.Server {
 			profiles := f.profiles
 			if profiles == nil {
 				profiles = []cao.Profile{{Name: "mock", Loadable: true}}
+			}
+			profiles = append([]cao.Profile(nil), profiles...)
+			var installed []string
+			if f.listInstalled {
+				installed, _ = filepath.Glob(filepath.Join(os.Getenv("CAO_HOME_DIR"), "agent-store", "*.md"))
+			}
+			for _, path := range installed {
+				name := strings.TrimSuffix(filepath.Base(path), ".md")
+				found := false
+				for _, p := range profiles {
+					if p.Name == name {
+						found = true
+						break
+					}
+				}
+				if !found {
+					profiles = append(profiles, cao.Profile{Name: name, Loadable: true})
+				}
 			}
 			json.NewEncoder(w).Encode(profiles)
 		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/agents/profiles/"):

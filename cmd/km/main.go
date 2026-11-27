@@ -1160,12 +1160,7 @@ func ensureProfilesTo(ctx context.Context, client *cao.Client, p *loop.Policy, s
 			if err != nil {
 				var httpErr *cao.HTTPError
 				if errors.As(err, &httpErr) && httpErr.Status == http.StatusNotFound {
-					install := "cao install"
-					for _, agent := range loop.BuiltInAgents() {
-						if agent.Chair.Profile == v.Base && agent.Chair.Provider == v.Provider {
-							install = "km profiles install " + agent.Name
-						}
-					}
+					install := profileInstallHint(v.Base, v.Provider)
 					return fmt.Errorf("profile %s is not installed in CAO; it is the base of effort profile %s; install it with %s, or add this to .kapellmeister/config.toml (or the user config):\n%s", v.Base, v.Name(), install, advice)
 				}
 				return fmt.Errorf("reading CAO profile %s: %w", v.Base, err)
@@ -1196,12 +1191,7 @@ func ensureProfilesTo(ctx context.Context, client *cao.Client, p *loop.Policy, s
 		if err != nil {
 			var httpErr *cao.HTTPError
 			if errors.As(err, &httpErr) && httpErr.Status == http.StatusNotFound {
-				install := "cao install"
-				for _, agent := range loop.BuiltInAgents() {
-					if agent.Chair.Profile == chair.NativeBase && agent.Chair.Provider == chair.Provider {
-						install = "km profiles install " + agent.Name
-					}
-				}
+				install := profileInstallHint(chair.NativeBase, chair.Provider)
 				return fmt.Errorf("profile %s is not installed in CAO; it is the base of native profile %s; install it with %s", chair.NativeBase, name, install)
 			}
 			return fmt.Errorf("reading base CAO profile %s for native profile %s: %w", chair.NativeBase, name, err)
@@ -1275,13 +1265,41 @@ func sortedKeys[V any](m map[string]V) []string {
 	return keys
 }
 
+func profileInstallHint(profile, provider string) string {
+	for _, agent := range loop.BuiltInAgents() {
+		if agent.Chair.Profile == profile && agent.Chair.Provider == provider {
+			return "km profiles install " + agent.Name
+		}
+	}
+	return "cao install"
+}
+
 func checkPreflight(ctx context.Context, client *cao.Client, worktree string, timeout, retryWait time.Duration, chairs ...loop.Chair) ([]loop.PreflightResult, error) {
 	if timeout == 0 {
 		return nil, nil
 	}
 	unique := loop.UniqueChairs(chairs...)
 	fmt.Printf("→ preflight %d chair(s)\n", len(unique))
-	results, err := loop.PreflightRetryingAfter(ctx, loop.CAOStepper{Client: client}, worktree, unique, timeout, retryWait)
+	results := make([]loop.PreflightResult, len(unique))
+	var checks []loop.Chair
+	var indexes []int
+	profiles, listErr := client.Profiles(ctx)
+	have := map[string]bool{}
+	for _, p := range profiles {
+		have[p.Name] = true
+	}
+	for i, chair := range unique {
+		if listErr == nil && chair.Profile != "" && !have[chair.Profile] {
+			results[i] = loop.PreflightResult{Chair: chair, ProfileMissing: true, Error: fmt.Sprintf("profile %s is not installed in CAO; install it with %s", chair.Profile, profileInstallHint(chair.Profile, chair.Provider))}
+		} else {
+			checks = append(checks, chair)
+			indexes = append(indexes, i)
+		}
+	}
+	checked, err := loop.PreflightRetryingAfter(ctx, loop.CAOStepper{Client: client}, worktree, checks, timeout, retryWait)
+	for i, r := range checked {
+		results[indexes[i]] = r
+	}
 	unseated := 0
 	for _, r := range results {
 		unseated += r.Unseated
@@ -1307,6 +1325,9 @@ func checkPreflight(ctx context.Context, client *cao.Client, worktree string, ti
 		}
 		if r.Chair.NativeAgent != "" {
 			label += " (native agent " + r.Chair.NativeAgent + ")"
+		}
+		if r.ReplySource != "" {
+			label += "; reply " + r.ReplySource
 		}
 		if r.OK {
 			fmt.Printf("  ok      %s (%s)%s\n", label, d, modelNote(r)+seatRetryNote(r)+timeoutRetryNote(r, timeout, client.BeforeLaunch != nil))
@@ -1342,8 +1363,13 @@ func preflightFailure(results []loop.PreflightResult, timeout time.Duration) err
 			continue
 		}
 		hint := r.Chair.String()
-		if r.CaptureFailed {
+		if r.ProfileMissing {
+			hint += ": " + r.Error
+		} else if r.CaptureFailed {
 			hint += ": final-message reply not captured"
+			if r.CaptureCause != "" {
+				hint += ": " + r.CaptureCause
+			}
 		} else if definitionError {
 			copy := r
 			copy.Screen = ""

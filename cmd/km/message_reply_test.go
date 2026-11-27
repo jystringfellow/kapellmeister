@@ -187,7 +187,7 @@ func TestMessagePreflightLinesShowTheReplyModeForPassedAndBlockedChairs(t *testi
 			if ready {
 				label = "ok"
 			}
-			if err != nil || len(results) != 1 || results[0].OK != ready || !strings.Contains(out, label) || !strings.Contains(out, "claude_code:km-claude reply message") {
+			if err != nil || len(results) != 1 || results[0].OK != ready || !strings.Contains(out, label) || !strings.Contains(out, "claude_code:km-claude reply message") || !strings.Contains(out, "reply screen") {
 				t.Fatalf("output %s results %+v error %v", out, results, err)
 			}
 		})
@@ -316,5 +316,212 @@ func TestPlayOnlyPrefixesErrorsFromTheEnsembleFile(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestPreflightRefusesMissingProfilesBeforeSeating(t *testing.T) {
+	var seats int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/agents/profiles" {
+			fmt.Fprint(w, `[]`)
+			return
+		}
+		if r.URL.Path == "/sessions" {
+			seats++
+		}
+		fmt.Fprint(w, `{}`)
+	}))
+	defer srv.Close()
+	var results []loop.PreflightResult
+	out, err := captureStdout(t, func() error {
+		var e error
+		results, e = checkPreflight(context.Background(), cao.NewClient(srv.URL), t.TempDir(), time.Second, 0, loop.Chair{Provider: "claude_code", Profile: "km-claude"})
+		return e
+	})
+	want := "profile km-claude is not installed in CAO; install it with km profiles install claude"
+	if err != nil || seats != 0 || len(results) != 1 || !strings.Contains(out, want) || !strings.Contains(preflightFailure(results, time.Second).Error(), want) {
+		t.Fatalf("seats %d output %s results %+v err %v", seats, out, results, err)
+	}
+}
+
+func TestPreflightSeatsOtherChairsAndFallsBackWhenProfileListingFails(t *testing.T) {
+	for _, failList := range []bool{false, true} {
+		t.Run(fmt.Sprint(failList), func(t *testing.T) {
+			var seated []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/agents/profiles":
+					if failList {
+						http.Error(w, "unavailable", 500)
+					} else {
+						fmt.Fprint(w, `[{"name":"installed"}]`)
+					}
+				case "/sessions":
+					seated = append(seated, r.URL.Query().Get("agent_profile"))
+					fmt.Fprint(w, `{"id":"t","session_name":"preflight"}`)
+				case "/terminals/run-step":
+					var req cao.StepRequest
+					_ = json.NewDecoder(r.Body).Decode(&req)
+					m := regexp.MustCompile(`km-begin ([0-9a-f]+)`).FindStringSubmatch(req.Prompt)
+					json.NewEncoder(w).Encode(cao.StepResponse{TerminalID: "t", Status: "completed", LastMessage: "km-begin " + m[1] + "\nready\nkm-end " + m[1]})
+				default:
+					fmt.Fprint(w, `{}`)
+				}
+			}))
+			defer srv.Close()
+			chairs := []loop.Chair{{Provider: "p", Profile: "missing", Reply: loop.ReplyMessage}, {Provider: "p", Profile: "installed", Reply: loop.ReplyMessage}}
+			rs, err := checkPreflight(context.Background(), cao.NewClient(srv.URL), t.TempDir(), time.Second, 0, chairs...)
+			if err != nil || len(rs) != 2 || !rs[1].OK {
+				t.Fatalf("results %+v %v", rs, err)
+			}
+			if failList {
+				if len(seated) != 2 || !rs[0].OK {
+					t.Fatalf("seated %v results %+v", seated, rs)
+				}
+			} else if len(seated) != 1 || seated[0] != "installed" || !rs[0].ProfileMissing {
+				t.Fatalf("seated %v results %+v", seated, rs)
+			}
+		})
+	}
+}
+
+func TestATranscriptReplyOmitsTheScreenFormattingNotice(t *testing.T) {
+	var out bytes.Buffer
+	_ = finishRunDetail(&out, ensembleSummary{Result: loop.Result{ReplySource: loop.ReplyTranscript}}, false)
+	if strings.Contains(out.String(), "taken from the agent's screen") || strings.Contains(out.String(), "re-wraps") {
+		t.Fatalf("summary %q", out.String())
+	}
+}
+
+func TestPreflightFailureIncludesTheTranscriptCaptureCause(t *testing.T) {
+	const cause = "marker not on a line of its own"
+	err := preflightFailure([]loop.PreflightResult{{Chair: loop.Chair{Provider: "claude_code", Reply: loop.ReplyMessage}, CaptureFailed: true, CaptureCause: cause, Error: "final-message reply not captured"}}, time.Second)
+	if err == nil || !strings.Contains(err.Error(), "final-message reply not captured: "+cause) {
+		t.Fatalf("error %v", err)
+	}
+}
+
+func TestMessagePreflightPrintsTheTranscriptSource(t *testing.T) {
+	home, dir := t.TempDir(), t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", home)
+	dest := filepath.Join(home, "projects", strings.ReplaceAll(dir, string(filepath.Separator), "-"))
+	var seats int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/agents/profiles":
+			fmt.Fprint(w, `[{"name":"km-claude"}]`)
+		case "/sessions":
+			if r.Method == http.MethodPost {
+				seats++
+			}
+			fmt.Fprint(w, `{"id":"t","session_name":"preflight"}`)
+		case "/terminals/run-step":
+			var req cao.StepRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Error(err)
+				return
+			}
+			match := regexp.MustCompile(`km-begin ([0-9a-f]+)`).FindStringSubmatch(req.Prompt)
+			if len(match) != 2 {
+				t.Error("missing nonce")
+				return
+			}
+			data, err := json.Marshal(map[string]any{"type": "assistant", "message": map[string]any{"id": "final", "content": []map[string]string{{"type": "text", "text": "km-begin " + match[1] + "\nready\nkm-end " + match[1]}}}})
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			if err := os.MkdirAll(dest, 0700); err != nil {
+				t.Error(err)
+				return
+			}
+			if err := os.WriteFile(filepath.Join(dest, "session.jsonl"), append(data, '\n'), 0600); err != nil {
+				t.Error(err)
+				return
+			}
+			json.NewEncoder(w).Encode(cao.StepResponse{TerminalID: "t", Status: "completed", LastMessage: "screen capture lost"})
+		default:
+			fmt.Fprint(w, `{}`)
+		}
+	}))
+	defer srv.Close()
+	var results []loop.PreflightResult
+	out, err := captureStdout(t, func() error {
+		var err error
+		results, err = checkPreflight(context.Background(), cao.NewClient(srv.URL), dir, time.Second, 0, loop.Chair{Provider: "claude_code", Profile: "km-claude", Reply: loop.ReplyMessage})
+		return err
+	})
+	if err != nil || seats != 1 || len(results) != 1 || !results[0].OK || results[0].ReplySource != loop.ReplyTranscript || !strings.Contains(out, "ok      claude_code:km-claude reply message; reply transcript") || strings.Contains(out, "reply screen") {
+		t.Fatalf("output %s results %+v seats %d error %v", out, results, seats, err)
+	}
+}
+
+func TestAMissingProfileAllowsOtherChairsAndFallbackOnTheSameProvider(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	var seated []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/agents/profiles":
+			fmt.Fprint(w, `[{"name":"installed"},{"name":"other"}]`)
+		case "/sessions":
+			if r.Method == http.MethodPost {
+				seated = append(seated, r.URL.Query().Get("agent_profile"))
+			}
+			fmt.Fprint(w, `{"id":"t","session_name":"preflight"}`)
+		case "/terminals/run-step":
+			var req cao.StepRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Error(err)
+				return
+			}
+			match := regexp.MustCompile(`km-begin ([0-9a-f]+)`).FindStringSubmatch(req.Prompt)
+			if len(match) != 2 {
+				t.Error("missing nonce")
+				return
+			}
+			json.NewEncoder(w).Encode(cao.StepResponse{TerminalID: "t", Status: "completed", LastMessage: "km-begin " + match[1] + "\nready\nkm-end " + match[1]})
+		default:
+			fmt.Fprint(w, `{}`)
+		}
+	}))
+	defer srv.Close()
+	defined := loop.Agents{
+		{Name: "first", Chair: loop.Chair{Provider: "claude_code", Profile: "missing"}},
+		{Name: "later", Chair: loop.Chair{Provider: "claude_code", Profile: "installed"}},
+		{Name: "other", Chair: loop.Chair{Provider: "claude_code", Profile: "other"}},
+	}
+	spec, err := ensemble.Check("band", "band.toml", `[sections.review.chairs.one]
+part="reviewer"
+agents=["first", "later"]
+reply="message"
+[sections.review.chairs.two]
+part="reviewer"
+agents=["other"]
+reply="message"`, defined)
+	if err != nil {
+		t.Fatal(err)
+	}
+	members, err := spec.Bind(defined, defined.Names())
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := loop.Policy{}
+	settings := loop.Settings{Defined: defined, Agents: defined.Names(), SeatFallback: true, PreflightTimeout: time.Second}
+	var after []ensemble.Member
+	var changes []ensemble.SeatChange
+	var lost []ensemble.ProvidersLost
+	out, err := captureStdout(t, func() error {
+		var err error
+		after, changes, lost, err = preflightSeats(context.Background(), cao.NewClient(srv.URL), t.TempDir(), settings, spec, members, loop.Chairs{Reviewers: []loop.Chair{members[0].Chair, members[1].Chair}}, &policy, io.Discard)
+		return err
+	})
+	if err != nil || len(after) != 2 || after[0].Chair.Profile != "installed" || after[1].Chair.Profile != "other" || after[0].Chair.Reply != loop.ReplyMessage {
+		t.Fatalf("members %+v error %v output %s", after, err, out)
+	}
+	if len(seated) != 2 || seated[0] != "other" || seated[1] != "installed" {
+		t.Fatalf("seated %v", seated)
+	}
+	if len(changes) != 1 || changes[0].BlockedAgent != "first" || changes[0].SeatedAgent != "later" || changes[0].BlockedProvider != "claude_code" || changes[0].SeatedProvider != "claude_code" || !strings.Contains(changes[0].Reason, "profile missing is not installed") || len(lost) != 0 {
+		t.Fatalf("changes %+v lost %+v", changes, lost)
 	}
 }

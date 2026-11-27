@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -440,5 +441,91 @@ func TestTheLessonsStepAsksForAFreshTerminal(t *testing.T) {
 		if step.FreshTerminal != (step.Name == "lessons") {
 			t.Errorf("%s: fresh terminal = %v", step.Name, step.FreshTerminal)
 		}
+	}
+}
+
+type lessonsMessageStepper struct {
+	*fakeStepper
+	answer string
+	home   string
+}
+
+func (f lessonsMessageStepper) Run(ctx context.Context, s Step) (StepResult, error) {
+	out, err := f.fakeStepper.Run(ctx, s)
+	if err != nil || s.Chair.Reply != ReplyMessage {
+		return out, err
+	}
+	body, err := os.ReadFile(filepath.Join(f.dir, s.ReplyPath))
+	if err != nil {
+		return out, err
+	}
+	_ = os.Remove(filepath.Join(f.dir, s.ReplyPath))
+	if s.Name == "lessons" {
+		body = []byte(f.answer)
+	}
+	nonce := regexp.MustCompile(`km-begin ([0-9a-f]+)`).FindStringSubmatch(s.Prompt)[1]
+	text := "km-begin " + nonce + "\n" + string(body) + "\nkm-end " + nonce
+	if f.home != "" && s.Name == "lessons" {
+		dir := filepath.Join(f.home, "projects", claudeProjectName.ReplaceAllString(s.Dir, "-"))
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return out, err
+		}
+		entry, _ := json.Marshal(map[string]any{"type": "assistant", "message": map[string]any{"id": "final", "content": []any{map[string]any{"type": "text", "text": text}}}})
+		if err := os.WriteFile(filepath.Join(dir, "s.jsonl"), append(entry, '\n'), 0600); err != nil {
+			return out, err
+		}
+	}
+	out.LastMessage = text
+	return out, nil
+}
+func TestLessonsFromTheScreenAreNotParsed(t *testing.T) {
+	for _, answer := range []string{lessonAnswer, "[wrapped\njson]"} {
+		t.Run(answer, func(t *testing.T) {
+			e, f, records := lessonsEngine(t, answer)
+			e.Config.Chairs.Gate.Reply = ReplyMessage
+			e.Stepper = lessonsMessageStepper{fakeStepper: f, answer: answer}
+			res := run(t, e)
+			want := "lessons not parsed: the answer came from the agent's screen, which re-wraps lines"
+			if res.Lessons == nil || res.Lessons.Reason != want || !strings.Contains(records.String(), want) {
+				t.Fatalf("report %+v records %s", res.Lessons, records.String())
+			}
+		})
+	}
+}
+
+func TestTranscriptLessonsFixtureIsParsedAndReported(t *testing.T) {
+	data, err := os.ReadFile("testdata/message-capture/lessons-json.transcript.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce, err := os.ReadFile("testdata/message-capture/lessons-json.nonce")
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, dir := t.TempDir(), t.TempDir()
+	c := openReply(home, Step{Dir: dir, Chair: Chair{Provider: "claude_code"}})
+	dest := filepath.Join(home, "projects", claudeProjectName.ReplaceAllString(dir, "-"))
+	if err := os.MkdirAll(dest, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dest, "s.jsonl"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	text, ok, _, cause := c.read(context.Background(), strings.TrimSpace(string(nonce)), "")
+	if !ok {
+		t.Fatal(cause)
+	}
+	lessons, dropped, err := parseLessons(text)
+	if err != nil || len(lessons) != 0 || !reflect.DeepEqual(dropped, []string{"unknown part"}) {
+		t.Fatalf("%v %v %v", lessons, dropped, err)
+	}
+	e, f, _ := lessonsEngine(t, text)
+	e.Config.Chairs.Gate.Reply = ReplyMessage
+	e.Config.Chairs.Gate.Provider = "claude_code"
+	e.ClaudeHome = t.TempDir()
+	e.Stepper = lessonsMessageStepper{fakeStepper: f, answer: text, home: e.ClaudeHome}
+	res := run(t, e)
+	if res.Lessons == nil || res.Lessons.Reason != "0 proposed, 1 dropped (1 unknown part)" {
+		t.Fatalf("report %+v", res.Lessons)
 	}
 }

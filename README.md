@@ -482,6 +482,9 @@ workspace.
 
 ## Preflight
 
+Preflight refuses a chair whose profile is not installed in CAO and prints the
+installation command; it does not install profiles.
+
 `km preflight -worktree DIR [-agents claude,codex]` seats each chair in its own temporary CAO
 session, one at a time. It defaults to your `[agents] available`; `-agents` selects any defined
 names, including user-defined ones. With neither available agents nor `-agents`, it asks you to
@@ -921,11 +924,30 @@ arrive: a missing or mismatched marker makes the whole reply fail as no reply,
 and a nudge asks for the complete bracketed message again. A file chair never
 falls back to its final message when its reply file is missing.
 
-The reply comes from the agent's screen: Markdown is rendered, lines may be
-re-wrapped, and leading indentation is dropped. A full-width rule of 20 or more
-`─` characters cuts off the closing marker and causes no reply. Brackets prove both
-ends arrived, not that the screen preserved everything between them. Records mark such a
-reply with `reply_source: "screen"`; the run summary also discloses it.
+km reads the chair's Claude Code transcript using the same location as the usage
+meter. Both markers must occur in the final assistant message; multiple matching
+parent transcripts, malformed captures, or a range over 8 MiB fail closed. km
+waits briefly for the final entry. If no parent transcript grew, km falls back to
+the screen. Records identify the source as `reply_source: "transcript"` or
+`"screen"`; the run source is `screen` if any reply used it.
+
+The screen holds only 50 visible rows and can render, rewrite, wrap, or truncate
+text. For screen replies stay within about 35 lines including wrapped lines,
+keep lines under 200 characters, start no line with `>`, `❯`, `●` or `⏺`
+(including in code blocks), and avoid diffs and tables. Rules, quotes, headings,
+tables and fences can be changed and long lines can be wrapped inside JSON. A
+line of 20 or more `─` characters, or CAO's completion line, ends the screen
+capture, so a closing marker after it is lost and the reply fails.
+Control and format characters are replaced by spaces. Lessons are not parsed
+from screen replies.
+
+CAO unsets `CLAUDE_*` variables except provider switches before starting Claude,
+so the chair writes under the CAO server user's `~/.claude`. If km uses a
+different `CLAUDE_CONFIG_DIR`, it finds no transcript and uses the screen.
+Preflight displays `reply transcript` or `reply screen` for each message chair.
+A chair running as the same user can read another chair's transcript and nonce
+and append to it, just as it can send keys to another pane. A forged second
+matching transcript fails closed, but in-place tampering is not prevented.
 
 Preflight asks the chair for a bracketed `ready` and blocks it unless that exact
 word is captured. With `preflight_timeout = "0s"`, or when using `play` or
@@ -1207,6 +1229,10 @@ steps the part plays, cannot repeat, and must leave nonempty instructions for ea
 | `{verification}` | The short verify result, or a line saying no verify command is configured |
 | `{check}` | The configured check command |
 | `{scratch}` | The generated scratch directory |
+
+For a message chair `{reply}` becomes "your final message (not a file)". To
+support either kind of chair, write e.g. "Put your review in {reply}." rather
+than referring to a file. km adds the destination and verdict instructions.
 
 Only braces matching `\{[a-z][a-z0-9_]*\}` are placeholders; JSON braces and `${HOME}` stay
 literal. `{plan}` and `{inputs}` are refused for each step that reads nothing, including

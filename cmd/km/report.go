@@ -26,6 +26,7 @@ import (
 )
 
 type reportRun struct {
+	ReplySource    string                   `json:"reply_source,omitempty"`
 	SeatsChanged   []ensemble.SeatChange    `json:"seats_changed,omitempty"`
 	ProvidersLost  []ensemble.ProvidersLost `json:"providers_lost,omitempty"`
 	EnsembleSource string                   `json:"ensemble_source,omitempty"`
@@ -236,6 +237,7 @@ func readReportRun(dir *os.File, hasResult, hasTelemetry, hasCurrent, hasConfig 
 		path := filepath.Join(dir.Name(), "result.json")
 		data, err := readReportFile(dir, "result.json", false)
 		var recorded *struct {
+			ReplySource    string                   `json:"reply_source"`
 			SeatsChanged   []ensemble.SeatChange    `json:"seats_changed"`
 			ProvidersLost  []ensemble.ProvidersLost `json:"providers_lost"`
 			EnsembleSource string                   `json:"ensemble_source"`
@@ -266,6 +268,7 @@ func readReportRun(dir *os.File, hasResult, hasTelemetry, hasCurrent, hasConfig 
 			run.RunID = recorded.RunID
 			hasRecordedID = true
 		}
+		run.ReplySource = recorded.ReplySource
 		run.Repository, run.Ensemble = recorded.Repository, recorded.Ensemble
 		run.EnsembleSource, run.Why = recorded.EnsembleSource, recorded.Why
 		run.SeatsChanged, run.ProvidersLost = recorded.SeatsChanged, recorded.ProvidersLost
@@ -296,6 +299,7 @@ func readReportRun(dir *os.File, hasResult, hasTelemetry, hasCurrent, hasConfig 
 		} else {
 			run.SeatsChanged, run.ProvidersLost = state.SeatsChanged, state.ProvidersLost
 			run.state = state
+			run.ReplySource = state.ReplySource
 			if strings.HasPrefix(state.Command, "tune ") {
 				run.Command = state.Command
 			}

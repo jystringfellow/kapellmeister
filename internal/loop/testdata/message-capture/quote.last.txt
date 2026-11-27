@@ -1,0 +1,11 @@
+km-begin 1fcb2145a28111dd
+
+The task says:
+
+▎ Keep the change small.
+
+The change is small.
+
+APPROVE
+
+km-end 1fcb2145a28111dd

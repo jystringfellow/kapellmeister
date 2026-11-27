@@ -398,7 +398,7 @@ func TestAnEmptyBracketedStepReplyIsNudgedOnceWithAFreshNonceAndNoSource(t *test
 	})
 	_, err := e.step(context.Background(), Step{Name: "review", Chair: Chair{Reply: ReplyMessage}, ReplyPath: "reply"})
 	var empty emptyReplyError
-	if !errors.As(err, &empty) || !errors.Is(err, errNoReply) {
+	if !errors.As(err, &empty) || !errors.Is(err, errNoReply) || !strings.Contains(err.Error(), "final-message reply not captured: screen: empty") || !strings.Contains(records.String(), "final-message reply not captured: screen: empty") {
 		t.Fatalf("error %v", err)
 	}
 	if len(nonces) != 2 || nonces[0] == nonces[1] {
@@ -535,4 +535,42 @@ func TestConcurrentMessageReviewersEachMatchOnlyTheirOwnTranscript(t *testing.T)
 	<-written
 	close(finish)
 	wg.Wait()
+}
+
+func TestAScreenReplyNudgeNamesTheMeasuredLimits(t *testing.T) {
+	f := &messageStepper{truncated: true}
+	e := Engine{Config: Config{Worktree: t.TempDir()}, Stepper: f}
+	_, _ = e.step(context.Background(), Step{Name: "review", Chair: Chair{Reply: ReplyMessage}, ReplyPath: "reply"})
+	if len(f.prompts) != 2 {
+		t.Fatalf("prompts %d", len(f.prompts))
+	}
+	for _, want := range []string{"35 lines", "200 characters", "avoid diffs and tables", "❯"} {
+		if !strings.Contains(f.prompts[1], want) {
+			t.Errorf("missing %q in %s", want, f.prompts[1])
+		}
+	}
+}
+
+func TestAMissingMessageReplyNamesTheCaptureFailure(t *testing.T) {
+	f := &messageStepper{truncated: true}
+	e := Engine{Config: Config{Worktree: t.TempDir()}, Stepper: f}
+	_, err := e.step(context.Background(), Step{Name: "review", Chair: Chair{Reply: ReplyMessage}, ReplyPath: "reply"})
+	if err == nil || !strings.Contains(err.Error(), "final-message reply not captured") || strings.Contains(err.Error(), "no reply file") {
+		t.Fatalf("error %v", err)
+	}
+}
+
+func TestPreflightCaptureFailureIncludesItsCause(t *testing.T) {
+	r := PreflightResult{CaptureFailed: true, Error: "final-message reply not captured", CaptureCause: "missing end marker"}
+	if !strings.Contains(r.Reason(), "missing end marker") {
+		t.Fatal(r.Reason())
+	}
+}
+
+func TestPreflightCaptureCauseAndScreenAreBoundedByRunes(t *testing.T) {
+	r := PreflightResult{CaptureFailed: true, CaptureCause: strings.Repeat("é", 160), Screen: "pane text"}
+	got := r.Reason()
+	if len([]rune(got)) > 300 || !strings.Contains(got, "pane") {
+		t.Fatalf("reason %q", got)
+	}
 }
