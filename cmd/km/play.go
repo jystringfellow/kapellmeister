@@ -79,6 +79,9 @@ func playCommand(args []string) error {
 		}
 		return err
 	}
+	if err := standing.CheckReseated(s.Score.Score); err != nil {
+		return err
+	}
 	if s.Score.Score.Source != "" {
 		s.GateWhen = ""
 	}

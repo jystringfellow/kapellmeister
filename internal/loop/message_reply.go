@@ -23,10 +23,23 @@ func messagePrompt(nonce string) string {
 }
 
 func bracketedReply(capture, nonce string) (string, bool) {
+	return extractReply(strings.ReplaceAll(capture, "\r\n", "\n"), nonce, cleanReplyRune, strings.TrimSpace)
+}
+
+func transcriptReply(capture, nonce string) (string, bool) {
+	return extractReply(capture, nonce, func(r rune) rune {
+		if r < 32 && r != '\t' && r != '\n' || r >= 127 && r <= 159 {
+			return -1
+		}
+		return r
+	}, func(s string) string { return strings.Trim(s, " \t") })
+}
+
+func extractReply(capture, nonce string, clean func(rune) rune, trim func(string) string) (string, bool) {
 	if nonce == "" {
 		return "", false
 	}
-	lines := strings.Split(strings.ReplaceAll(capture, "\r\n", "\n"), "\n")
+	lines := strings.Split(capture, "\n")
 	begin, end := -1, -1
 	for i, line := range lines {
 		switch strings.TrimSpace(line) {
@@ -47,12 +60,12 @@ func bracketedReply(capture, nonce string) (string, bool) {
 	}
 	body := lines[begin+1 : end]
 	for i, line := range body {
-		body[i] = strings.Map(cleanReplyRune, line)
+		body[i] = strings.Map(clean, line)
 	}
-	for len(body) > 0 && strings.TrimSpace(body[0]) == "" {
+	for len(body) > 0 && trim(body[0]) == "" {
 		body = body[1:]
 	}
-	for len(body) > 0 && strings.TrimSpace(body[len(body)-1]) == "" {
+	for len(body) > 0 && trim(body[len(body)-1]) == "" {
 		body = body[:len(body)-1]
 	}
 	return strings.Join(body, "\n"), true

@@ -41,7 +41,74 @@ type chairLessons struct {
 	totalBytes, totalLines, keptLines int
 }
 
-type lessonBlob struct{ text, reason string }
+type textFault int
+
+const (
+	faultNone textFault = iota
+	faultEncoding
+	faultInvisible
+	faultControl
+)
+
+func (f textFault) String() string {
+	switch f {
+	case faultEncoding:
+		return "invalid UTF-8"
+	case faultInvisible:
+		return "invisible or direction-changing characters"
+	case faultControl:
+		return "control characters"
+	}
+	return ""
+}
+
+type lessonBlob struct {
+	text, reason, raw string
+	fault             textFault
+}
+
+func diagnoseText(raw string) string {
+	if strings.HasPrefix(raw, "\x00\x00\xfe\xff") || strings.HasPrefix(raw, "\xff\xfe\x00\x00") {
+		return "is UTF-32 encoded; convert the file to UTF-8"
+	}
+	if strings.HasPrefix(raw, "\xfe\xff") || strings.HasPrefix(raw, "\xff\xfe") {
+		return "is UTF-16 encoded; convert the file to UTF-8"
+	}
+	line := 1
+	var other, crlf string
+	for i := 0; i < len(raw); {
+		r, size := utf8.DecodeRuneInString(raw[i:])
+		problem := ""
+		switch {
+		case r == utf8.RuneError && size == 1:
+			problem = "has invalid UTF-8; convert the file to UTF-8"
+		case r == '\ufeff' && i == 0:
+			problem = "has a byte order mark; remove the BOM"
+		case unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r):
+			problem = "has invisible or direction-changing characters; remove them"
+		case r == '\r' && i+1 < len(raw) && raw[i+1] == '\n':
+			if crlf == "" {
+				crlf = fmt.Sprintf("line %d: has CRLF line endings; convert the file to LF", line)
+			}
+		case unicode.IsControl(r) && r != '\n' && r != '\t':
+			problem = "has control characters; remove them"
+		}
+		if problem != "" && other == "" {
+			other = fmt.Sprintf("line %d: %s", line, problem)
+		}
+		if r == '\n' {
+			line++
+		}
+		i += size
+	}
+	if other != "" && crlf != "" {
+		return other + " (also " + crlf + ")"
+	}
+	if other != "" {
+		return other
+	}
+	return crlf
+}
 
 var lessonChairName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9-]*$`)
 
@@ -188,15 +255,15 @@ func (e *Engine) readTextBlobWithGitOptions(mode, oid string, options []string) 
 			return lessonBlob{reason: "cannot read committed file: " + err.Error()}
 		}
 		if !utf8.ValidString(text) {
-			return lessonBlob{reason: "invalid UTF-8"}
+			return lessonBlob{reason: faultEncoding.String(), fault: faultEncoding, raw: text}
 		}
 		if strings.ContainsFunc(text, func(r rune) bool {
 			return unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r)
 		}) {
-			return lessonBlob{reason: "invisible or direction-changing characters"}
+			return lessonBlob{reason: faultInvisible.String(), fault: faultInvisible, raw: text}
 		}
 		if strings.ContainsFunc(text, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\t' }) {
-			return lessonBlob{reason: "control characters"}
+			return lessonBlob{reason: faultControl.String(), fault: faultControl, raw: text}
 		}
 		return lessonBlob{text: text}
 	default:

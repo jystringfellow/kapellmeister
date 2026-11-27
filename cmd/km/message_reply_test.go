@@ -525,3 +525,19 @@ reply="message"`, defined)
 		t.Fatalf("changes %+v lost %+v", changes, lost)
 	}
 }
+
+func TestPreflightReturnsNilResultsWhenPreparationFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `[{"name":"km-claude"}]`)
+	}))
+	defer server.Close()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".kapellmeister"), []byte("file"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	results, err := checkPreflight(context.Background(), cao.NewClient(server.URL), dir, time.Second, 0, loop.Chair{Provider: "claude_code", Profile: "km-claude"})
+	if err == nil || results != nil {
+		t.Fatalf("results %+v error %v", results, err)
+	}
+}

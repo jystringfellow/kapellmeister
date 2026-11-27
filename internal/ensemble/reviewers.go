@@ -43,3 +43,25 @@ func (r *ReviewReseater) Reseat(ctx context.Context, chair loop.Chair) (loop.Res
 	}
 	return loop.Reseated{Old: result.Old, New: result.New}, err
 }
+
+func (s Standing) CheckReseated(score loop.Score) error {
+	for _, chair := range s.Chairs {
+		if chair.Binding.NativeAgent == "" {
+			continue
+		}
+		reseated := false
+		for _, step := range score.StepsOf(chair.Part) {
+			if step.Kind == loop.KindReview || step.Chairs == loop.ChairsAll {
+				reseated = true
+				break
+			}
+		}
+		if !reseated {
+			continue
+		}
+		if err := chair.Binding.CheckDefinition(s.Worktree); err != nil {
+			return fmt.Errorf("chair %s in session %s cannot be reseated with the definition pinned at rehearse (commit %s): %w; take it down with km ensemble down %s and km rehearse again", chair.Address, s.Session, chair.Binding.DefinitionBase, err, s.Session)
+		}
+	}
+	return nil
+}

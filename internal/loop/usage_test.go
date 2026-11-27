@@ -484,7 +484,7 @@ func TestAFailedRunsResultIncludesTheUsageIncurredBeforeFailure(t *testing.T) {
 	m, s, p := usageLog(t, "claude_code")
 	e.Meter = m
 	e.Config.Chairs.Planner = s.Chair
-	project := claudeProjectName.ReplaceAllString(e.Config.Worktree, "-")
+	project := claudeProjectName(e.Config.Worktree)
 	p = filepath.Join(m.ClaudeHome, "projects", project, "session.jsonl")
 	f.actions["plan"] = func(s Step) { appendUsage(t, p, usageFixtureForStep(t, "claude", s)) }
 	f.errFor = func(Step) error { return errors.New("step failed") }
@@ -837,5 +837,22 @@ func TestMissingTruncatedOrUnreadableClaudeSubagentLogsMakeUsageUnknown(t *testi
 			}
 			requireUnknown(t, close(), "unreadable-log")
 		})
+	}
+}
+
+func TestClaudeProjectNamesFollowClaudeCodeForLongAndUnicodePaths(t *testing.T) {
+	prefix := "/tmp/claude-1000/-tmp-wt-km-821558429/30b00b08-c470-4f4b-9c44-6fffdab81d19/scratchpad/lp/"
+	path := prefix + strings.Repeat("a", 90) + "/" + strings.Repeat("b", 90) + "_é_😀.x"
+	want := "-tmp-claude-1000--tmp-wt-km-821558429-30b00b08-c470-4f4b-9c44-6fffdab81d19-scratchpad-lp-" + strings.Repeat("a", 90) + "-" + strings.Repeat("b", 20) + "-ree2yr"
+	if got := claudeProjectName(path); got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+	short := prefix + "s_😀_é_e\u0301"
+	expected := "-tmp-claude-1000--tmp-wt-km-821558429-30b00b08-c470-4f4b-9c44-6fffdab81d19-scratchpad-lp-s------e-"
+	if got := claudeProjectName(short); got != expected {
+		t.Fatalf("got %q want %q", got, expected)
+	}
+	if got := claudeProjectName(strings.Repeat("a", 200)); got != strings.Repeat("a", 200) {
+		t.Fatalf("200-character name: %q", got)
 	}
 }

@@ -1315,7 +1315,7 @@ func checkPreflight(ctx context.Context, client *cao.Client, worktree string, ti
 		return results, ctx.Err()
 	}
 	if err != nil {
-		return results, err
+		return nil, err
 	}
 	for _, r := range results {
 		d := (time.Duration(r.DurationMS) * time.Millisecond).Round(time.Second)

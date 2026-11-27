@@ -125,3 +125,15 @@ func TestAnInterruptedReviewReseatNamesItsSignalAndPreservesCleanupDiagnostics(t
 		})
 	}
 }
+
+func TestOnlyProducePartsPlayedByAllChairsCheckTheirNativeDefinitions(t *testing.T) {
+	s := Standing{Session: "session", Worktree: t.TempDir(), Chairs: []StandingChair{{Address: "section.chair@ensemble", Part: "writer", Binding: loop.Chair{NativeAgent: "writer"}}}}
+	score := loop.Score{Steps: []loop.ScoreStep{{Part: "writer", Kind: loop.KindProduce}}}
+	if err := s.CheckReseated(score); err != nil {
+		t.Fatal(err)
+	}
+	score.Steps[0].Chairs = loop.ChairsAll
+	if err := s.CheckReseated(score); err == nil || !strings.Contains(err.Error(), "section.chair@ensemble") {
+		t.Fatal(err)
+	}
+}

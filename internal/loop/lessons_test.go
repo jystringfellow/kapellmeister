@@ -466,7 +466,7 @@ func (f lessonsMessageStepper) Run(ctx context.Context, s Step) (StepResult, err
 	nonce := regexp.MustCompile(`km-begin ([0-9a-f]+)`).FindStringSubmatch(s.Prompt)[1]
 	text := "km-begin " + nonce + "\n" + string(body) + "\nkm-end " + nonce
 	if f.home != "" && s.Name == "lessons" {
-		dir := filepath.Join(f.home, "projects", claudeProjectName.ReplaceAllString(s.Dir, "-"))
+		dir := filepath.Join(f.home, "projects", claudeProjectName(s.Dir))
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			return out, err
 		}
@@ -504,7 +504,7 @@ func TestTranscriptLessonsFixtureIsParsedAndReported(t *testing.T) {
 	}
 	home, dir := t.TempDir(), t.TempDir()
 	c := openReply(home, Step{Dir: dir, Chair: Chair{Provider: "claude_code"}})
-	dest := filepath.Join(home, "projects", claudeProjectName.ReplaceAllString(dir, "-"))
+	dest := filepath.Join(home, "projects", claudeProjectName(dir))
 	if err := os.MkdirAll(dest, 0700); err != nil {
 		t.Fatal(err)
 	}

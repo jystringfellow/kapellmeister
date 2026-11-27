@@ -498,7 +498,7 @@ func TestNativeDefinitionReportsCRLineEndings(t *testing.T) {
 	gitTestNative(t, dir, "add", ".")
 	gitTestNative(t, dir, "commit", "-qm", "base")
 	_, err := ResolveNativeDefinition(dir, Chair{NativeAgent: "demo"}, true)
-	if err == nil || !strings.Contains(err.Error(), "line endings") {
+	if err == nil || !strings.Contains(err.Error(), ".claude/agents/demo.md") || !strings.Contains(err.Error(), "line 1: has CRLF line endings; convert the file to LF") {
 		t.Fatal(err)
 	}
 	os.WriteFile(path, []byte("---\nname: demo\n---\n"), 0644)
@@ -1659,4 +1659,19 @@ func TestTheSizeCapIsAppliedBeforeAFileIsRead(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+}
+
+func TestNativeDefinitionReportsCRLFAndAnotherControlCharacter(t *testing.T) {
+	dir := t.TempDir()
+	gitTestNative(t, dir, "init", "-q")
+	gitTestNative(t, dir, "config", "core.autocrlf", "false")
+	path := filepath.Join(dir, ".claude/agents/demo.md")
+	os.MkdirAll(filepath.Dir(path), 0755)
+	os.WriteFile(path, []byte("---\r\nname: demo\nbody\x01\n---\n"), 0644)
+	gitTestNative(t, dir, "add", ".")
+	gitTestNative(t, dir, "commit", "-qm", "base")
+	_, err := ResolveNativeDefinition(dir, Chair{NativeAgent: "demo"}, true)
+	if err == nil || !strings.Contains(err.Error(), "line 3: has control characters") || !strings.Contains(err.Error(), "line 1: has CRLF line endings; convert the file to LF") {
+		t.Fatal(err)
+	}
 }

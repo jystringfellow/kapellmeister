@@ -1,7 +1,6 @@
 package loop
 
 import (
-	"bytes"
 	"crypto/sha1"
 	"crypto/sha256"
 	"errors"
@@ -329,11 +328,8 @@ func ResolveNativeDefinitionAt(worktree, base string, chair Chair, portable bool
 		blob := e.readTextBlobWithGitOptions(entry.mode, entry.oid, []string{"--no-replace-objects"})
 		if blob.reason != "" {
 			reason := blob.reason
-			if reason == "control characters" {
-				data, _ := nativeBlob(&e, entry.oid)
-				if bytes.Contains(data, []byte("\r")) && !strings.ContainsFunc(string(data), func(r rune) bool { return unicode.IsControl(r) && r != '\r' && r != '\n' && r != '\t' }) {
-					reason = "has CR line endings (CRLF); commit it with LF line endings"
-				}
+			if blob.fault != faultNone {
+				reason = diagnoseText(blob.raw)
 			}
 			return chair, fmt.Errorf("%s at %s: %s", path, base, reason)
 		}
