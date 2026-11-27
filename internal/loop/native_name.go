@@ -135,7 +135,6 @@ func nativeName(path string, data []byte) (string, error) {
 					return fail(i+1, "invalid sequence value")
 				}
 				if kind == "block" {
-					blockLine = i + 1
 					block = &nativeBlock{column: indent}
 				}
 				continue
@@ -174,13 +173,15 @@ func nativeName(path string, data []byte) (string, error) {
 			name = value
 		}
 		if kind == "empty" {
-			if comment {
+			if comment && column == 0 {
 				commentedLine = i + 1
 			}
 			pending = column
 		}
 		if kind == "block" {
-			blockLine = i + 1
+			if column == 0 {
+				blockLine = i + 1
+			}
 			block = &nativeBlock{column: column}
 		}
 	}
