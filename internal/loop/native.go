@@ -96,7 +96,7 @@ func nativeBlobMatches(data []byte, oid string) bool {
 	return fmt.Sprintf("%x", h.Sum(nil)) == oid
 }
 func uncommittedNote(worktree, path string) string {
-	if _, err := os.Lstat(filepath.Join(worktree, path)); err != nil {
+	if info, err := os.Lstat(filepath.Join(worktree, path)); err != nil || !info.Mode().IsRegular() {
 		return ""
 	}
 	return "; " + path + " exists in the worktree but is not committed"

@@ -713,8 +713,10 @@ standard error while built-in and user scores remain listed.
 `km ensemble check [-worktree DIR] [-name NAME] [-json] FILE` checks an ensemble's
 syntax, score fit, and agent readiness. It also resolves each `native_agent` definition at
 the worktree's HEAD as a launch would, treating a file in the repository's ensemble directory
-as a repository ensemble. Outside a git repository, or in one with no commits, it prints a note
-that the definitions were not checked. `km ensemble save` and the run's own check leave
+as a repository ensemble; standard input, the MCP `check` tool and a `-name` that does not match
+the repository's file of that name are resolved as a user ensemble. Outside a git repository, in
+one with no commits, or for a `-worktree` that does not exist, it prints a note that the
+definitions were not checked. `km ensemble save` and the run's own check leave
 definitions to the launch, which resolves them at the run's base commit. `km score check` accepts the same flags and
 checks a score and its parts. With `-text`, ensemble entries must name agents from
 `[agents] available`, optionally with a tier (`claude@large`).
