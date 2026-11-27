@@ -268,7 +268,7 @@ func ResolveNativeDefinitionAt(worktree, base string, chair Chair, portable bool
 		}
 		meta, p, _ := strings.Cut(row, "\t")
 		f := strings.Fields(meta)
-		if len(f) >= 2 && f[1] != "tree" {
+		if (p == ".claude" || p == ".claude/agents") && len(f) >= 2 && f[1] != "tree" {
 			return chair, fmt.Errorf("%s: not a regular directory", p)
 		}
 	}

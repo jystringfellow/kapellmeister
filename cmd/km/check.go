@@ -168,7 +168,35 @@ func checkEnsemble(name, label, content, worktree string, stderr io.Writer, held
 	if err := spec.Fits(score); err != nil {
 		return spec, "", err
 	}
+	if err := checkNativeDefinitions(worktree, spec); err != nil {
+		return spec, "", fmt.Errorf("%s: %w", label, err)
+	}
 	return spec, repertoireReadiness(spec, score, settings), nil
+}
+
+func checkNativeDefinitions(worktree string, spec ensemble.Spec) error {
+	if worktree == "" {
+		return nil
+	}
+	base := ""
+	for _, section := range spec.Sections {
+		for _, c := range section.Chairs {
+			if c.NativeAgent == "" {
+				continue
+			}
+			if base == "" {
+				out, err := gitOutput(worktree, "rev-parse", "HEAD")
+				if err != nil {
+					return err
+				}
+				base = strings.TrimSpace(out)
+			}
+			if _, err := loop.ResolveNativeDefinitionAt(worktree, base, loop.Chair{NativeAgent: c.NativeAgent}, spec.Portable()); err != nil {
+				return fmt.Errorf("%s.%s: native agent %s: %w", section.Name, c.Name, c.NativeAgent, err)
+			}
+		}
+	}
+	return nil
 }
 
 func readTextFile(kind, label, path string, in io.Reader) ([]byte, error) {
