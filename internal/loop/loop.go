@@ -19,13 +19,19 @@ import (
 )
 
 type Chair struct {
-	Focus    string        `json:"focus,omitempty"`
-	Address  string        `json:"address,omitempty"`
-	Provider string        `json:"provider"`
-	Profile  string        `json:"profile"`
-	Model    string        `json:"model,omitempty"`
-	Tier     string        `json:"tier,omitempty"`
-	Timeout  time.Duration `json:"timeout,omitempty"`
+	Manifest       *NativeManifest `json:"-"`
+	NativeAgent    string          `json:"native_agent,omitempty"`
+	Agent          string          `json:"agent,omitempty"`
+	NativeBase     string          `json:"native_base,omitempty"`
+	Definition     string          `json:"definition,omitempty"`
+	DefinitionBase string          `json:"definition_base,omitempty"`
+	Focus          string          `json:"focus,omitempty"`
+	Address        string          `json:"address,omitempty"`
+	Provider       string          `json:"provider"`
+	Profile        string          `json:"profile"`
+	Model          string          `json:"model,omitempty"`
+	Tier           string          `json:"tier,omitempty"`
+	Timeout        time.Duration   `json:"timeout,omitempty"`
 }
 
 func SplitTier(spec string) (string, string, error) {
@@ -173,6 +179,7 @@ type Config struct {
 }
 
 type Record struct {
+	ModelSource   string         `json:"model_source,omitempty"`
 	NudgedAfterMS *int64         `json:"nudged_after_ms,omitempty"`
 	Memory        string         `json:"memory,omitempty"`
 	MemoryReason  string         `json:"memory_reason,omitempty"`
@@ -607,6 +614,15 @@ func (e *Engine) escalate(round, misses int) {
 }
 
 func (e *Engine) step(ctx context.Context, s Step) (StepResult, error) {
+	if s.Chair.NativeAgent != "" {
+		const end = "Never commit, push, stash, create branches, or switch branches.\n"
+		if i := strings.Index(s.Prompt, end); i >= 0 && strings.HasPrefix(s.Prompt, "You are the ") {
+			i += len(end)
+			s.Prompt = s.Prompt[:i] + chairInstructions + s.Prompt[i:]
+		} else {
+			s.Prompt = chairInstructions + s.Prompt
+		}
+	}
 	if s.Assignment == (Assignment{}) {
 		s.Chair, s.Assignment = e.resolve(s.Name, s.Chair)
 	}
@@ -729,7 +745,11 @@ func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 			nudgeNote = fmt.Sprintf(", nudged after %s", secs(waited))
 		}
 	}
-	e.progress("→ %s %s%s%s%s", strings.TrimSpace(label(s.Name, s.Round)+" "+s.ChairName), chair, tierNote(s.Assignment), retryNote, nudgeNote)
+	nativeNote := ""
+	if chair.NativeAgent != "" {
+		nativeNote = " (native agent " + chair.NativeAgent + ")"
+	}
+	e.progress("→ %s %s%s%s%s%s", strings.TrimSpace(label(s.Name, s.Round)+" "+s.ChairName), chair, nativeNote, tierNote(s.Assignment), retryNote, nudgeNote)
 	var closeUsage func() Usage
 	if e.Meter != nil {
 		queued := time.Now()
@@ -1247,6 +1267,9 @@ func (e *Engine) notifyPlaying(round int) {
 }
 
 func (e *Engine) record(rec Record) {
+	if rec.Chair != nil && rec.Chair.NativeAgent != "" {
+		rec.ModelSource, rec.Model, rec.ModelHonored = "agent", "", nil
+	}
 	if rec.Part == "" && rec.BlockedStep != "" {
 		rec.Part = e.playingScore().StepPart(rec.BlockedStep)
 	}

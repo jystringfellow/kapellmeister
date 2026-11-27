@@ -23,7 +23,7 @@ const reportTelemetryLimit = 64 << 20
 
 var reportPartOrder = []string{"planner", "implementer", "reviewer", "gate", "tester", "classifier"}
 
-type reportPartKey struct{ part, provider, model string }
+type reportPartKey struct{ part, provider, model, agent, native string }
 type reportVerdictKey struct {
 	subject string
 	round   int
@@ -49,7 +49,10 @@ type reportPartUsagePerStep struct {
 	OutputTokens float64 `json:"output_tokens"`
 }
 type reportPartRow struct {
-	workPart string
+	Agent       string `json:"agent,omitempty"`
+	NativeAgent string `json:"native_agent,omitempty"`
+	ModelSource string `json:"model_source,omitempty"`
+	workPart    string
 	*ReportCost
 	UnpricedModels          []string                `json:"unpriced_models,omitempty"`
 	Part                    string                  `json:"part"`
@@ -74,10 +77,12 @@ type reportPartRecord struct {
 	Round       int    `json:"round"`
 	ChairName   string `json:"chair_name"`
 	Chair       *struct {
-		Address  string `json:"address"`
-		Provider string `json:"provider"`
-		Profile  string `json:"profile"`
-		Model    string `json:"model"`
+		Agent       string `json:"agent"`
+		NativeAgent string `json:"native_agent"`
+		Address     string `json:"address"`
+		Provider    string `json:"provider"`
+		Profile     string `json:"profile"`
+		Model       string `json:"model"`
 	} `json:"chair"`
 	Model        string          `json:"model"`
 	ModelHonored *bool           `json:"model_honored"`
@@ -271,7 +276,11 @@ func (run *reportPartRun) workPart(part string) string {
 }
 
 func newReportPartRow(key reportPartKey) *reportPartRow {
-	return &reportPartRow{Part: key.part, Provider: key.provider, Model: key.model, Efforts: map[string]int{}, Tiers: map[string]int{}}
+	row := &reportPartRow{Part: key.part, Provider: key.provider, Model: key.model, Agent: key.agent, NativeAgent: key.native, Efforts: map[string]int{}, Tiers: map[string]int{}}
+	if key.native != "" {
+		row.ModelSource = "agent"
+	}
+	return row
 }
 func (row *reportPartRow) setWorkPart(part string) {
 	row.workPart, row.Work = "", nil
@@ -329,7 +338,10 @@ func (run *reportPartRun) addRecord(record reportPartRecord) {
 	if model == "" {
 		model = record.Model
 	}
-	key := reportPartKey{part, reportKnown(record.Chair.Provider), reportKnown(model)}
+	key := reportPartKey{part: part, provider: reportKnown(record.Chair.Provider), model: reportKnown(model)}
+	if record.Chair.NativeAgent != "" {
+		key.model, key.agent, key.native = "", record.Chair.Agent, record.Chair.NativeAgent
+	}
 	row := run.rows[key]
 	if row == nil {
 		row = newReportPartRow(key)
@@ -356,8 +368,10 @@ func (run *reportPartRun) addRecord(record reportPartRecord) {
 	if tier == "" {
 		tier = "unset"
 	}
-	row.Efforts[effort]++
-	row.Tiers[tier]++
+	if row.NativeAgent == "" {
+		row.Efforts[effort]++
+		row.Tiers[tier]++
+	}
 	if verdictStep {
 		run.steps[reportVerdictKey{record.Step, record.Round, record.ChairName}] = &key
 	}
@@ -565,7 +579,13 @@ func mergeReportParts(runs []reportRun) *reportParts {
 		if a.Provider != b.Provider {
 			return a.Provider < b.Provider
 		}
-		return a.Model < b.Model
+		if a.Model != b.Model {
+			return a.Model < b.Model
+		}
+		if a.Agent != b.Agent {
+			return a.Agent < b.Agent
+		}
+		return a.NativeAgent < b.NativeAgent
 	})
 	return parts
 }
@@ -664,7 +684,7 @@ func printReportParts(stdout io.Writer, parts *reportParts) error {
 				costText = "\tcost unknown"
 			}
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\t%s%s\n", plain(row.Part), reportCell(row.Provider, 20), reportCell(row.Model, 32), row.Runs, row.Steps, row.StepErrors, total, average, tokens, tokensAverage, costText)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\t%s%s\n", plain(row.Part), reportCell(row.Provider, 20), row.modelCell(), row.Runs, row.Steps, row.StepErrors, total, average, tokens, tokensAverage, costText)
 	}
 	if err := w.Flush(); err != nil {
 		return err
@@ -694,7 +714,7 @@ func printReportParts(stdout io.Writer, parts *reportParts) error {
 				fmt.Fprintln(w)
 				found = true
 			}
-			fmt.Fprintf(w, "%s\t%s", reportCell(row.Provider, 20), reportCell(row.Model, 32))
+			fmt.Fprintf(w, "%s\t%s", reportCell(row.Provider, 20), row.modelCell())
 			for _, column := range columns {
 				text := fmt.Sprintf("%.0f", row.Work[column.keys[0]])
 				if len(column.keys) == 2 {
@@ -728,11 +748,18 @@ func printReportParts(stdout io.Writer, parts *reportParts) error {
 			for _, name := range names {
 				values = append(values, fmt.Sprintf("%s %d", plain(name), variation.counts[name]))
 			}
-			fmt.Fprintf(w, "%s varies: %s %s %s: %s\n", variation.name, plain(row.Part), plain(row.Provider), plain(row.Model), strings.Join(values, ", "))
+			fmt.Fprintf(w, "%s varies: %s %s %s: %s\n", variation.name, plain(row.Part), plain(row.Provider), row.modelCell(), strings.Join(values, ", "))
 		}
 	}
 	if parts.UnattributedSteps+parts.UnattributedVerdicts+parts.RunsWithoutSteps > 0 {
 		fmt.Fprintf(w, "unattributed steps: %d; unattributed verdicts: %d; runs without steps: %d\n", parts.UnattributedSteps, parts.UnattributedVerdicts, parts.RunsWithoutSteps)
 	}
 	return w.Flush()
+}
+
+func (row *reportPartRow) modelCell() string {
+	if row.NativeAgent != "" {
+		return plain(row.Agent + " native " + row.NativeAgent)
+	}
+	return reportCell(row.Model, 32)
 }

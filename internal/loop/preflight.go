@@ -20,25 +20,26 @@ import (
 )
 
 type PreflightResult struct {
-	SeatRetries    int      `json:"seat_retries,omitempty"`
-	SeatRetryError string   `json:"seat_retry_error,omitempty"`
-	Unseated       int      `json:"unseated,omitempty"`
-	TeardownErrors []string `json:"teardown_errors,omitempty"`
-	Chair          Chair    `json:"chair"`
-	OK             bool     `json:"ok"`
-	DurationMS     int64    `json:"duration_ms"`
-	TerminalID     string   `json:"terminal_id,omitempty"`
-	Session        string   `json:"session,omitempty"`
-	Blocker        string   `json:"blocker,omitempty"`
-	Screen         string   `json:"screen,omitempty"`
-	Error          string   `json:"error,omitempty"`
-	TimeoutRetried bool     `json:"timeout_retried,omitempty"`
-	RetryWaitMS    int64    `json:"retry_wait_ms,omitempty"`
-	RetryWaitError string   `json:"retry_wait_error,omitempty"`
-	Retried        bool     `json:"retried,omitempty"`
-	TimedOut       bool     `json:"timed_out,omitempty"`
-	Model          string   `json:"model,omitempty"`
-	Honored        *bool    `json:"model_honored,omitempty"`
+	DefinitionError string   `json:"definition_error,omitempty"`
+	SeatRetries     int      `json:"seat_retries,omitempty"`
+	SeatRetryError  string   `json:"seat_retry_error,omitempty"`
+	Unseated        int      `json:"unseated,omitempty"`
+	TeardownErrors  []string `json:"teardown_errors,omitempty"`
+	Chair           Chair    `json:"chair"`
+	OK              bool     `json:"ok"`
+	DurationMS      int64    `json:"duration_ms"`
+	TerminalID      string   `json:"terminal_id,omitempty"`
+	Session         string   `json:"session,omitempty"`
+	Blocker         string   `json:"blocker,omitempty"`
+	Screen          string   `json:"screen,omitempty"`
+	Error           string   `json:"error,omitempty"`
+	TimeoutRetried  bool     `json:"timeout_retried,omitempty"`
+	RetryWaitMS     int64    `json:"retry_wait_ms,omitempty"`
+	RetryWaitError  string   `json:"retry_wait_error,omitempty"`
+	Retried         bool     `json:"retried,omitempty"`
+	TimedOut        bool     `json:"timed_out,omitempty"`
+	Model           string   `json:"model,omitempty"`
+	Honored         *bool    `json:"model_honored,omitempty"`
 }
 
 var blockerRE = regexp.MustCompile(`(?i)requires confirmation|do you want to proceed|needs review|do you trust|trust (this|all|the)|sign in|log ?in|authenticat|approve|allow .* to`)
@@ -147,6 +148,10 @@ func preflightChairAttempts(ctx context.Context, stepper interface {
 		unseated += res.Unseated
 		teardownErrors = append(teardownErrors, res.TeardownErrors...)
 		res.Retried = attempt > 0
+		if errors.Is(err, ErrNativeDefinition) {
+			res.DefinitionError = err.Error()
+			break
+		}
 		if !res.OK && res.TimedOut && res.Blocker == "" && ctx.Err() == nil && !timeoutRetried {
 			if res.Session != "" {
 				unseat(res.Session)
@@ -263,14 +268,16 @@ func preflightChair(ctx context.Context, stepper interface {
 	cancel()
 	booting.Add(-1)
 	res.TerminalID, res.Session = seat.TerminalID, seat.Session
-	res.Model, res.Honored = seat.Model, seat.Honored
+	if chair.NativeAgent == "" {
+		res.Model, res.Honored = seat.Model, seat.Honored
+	}
 	if err == nil && (seat.TerminalID == "" || seat.Session == "") {
 		err = errors.New("preflight seat returned no terminal or session")
 	}
 	if err != nil {
 		err = &seatFailure{err}
 	}
-	if err != nil && seat.Session == "" {
+	if err != nil && seat.Session == "" && !errors.Is(err, ErrNativeDefinition) {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		if cleanupErr := stepper.Unseat(cleanupCtx, name); cleanupErr != nil {
 			res.TeardownErrors = append(res.TeardownErrors, fmt.Sprintf("%s: %v", name, cleanupErr))
@@ -287,10 +294,10 @@ func preflightChair(ctx context.Context, stepper interface {
 		var out StepResult
 		out, err = stepper.Run(ctx, Step{Name: "preflight", Label: TerminalLabel("preflight", chair.Provider), Chair: chair, Prompt: preflightPrompt(rel), Dir: worktree, ReplyPath: rel, Timeout: timeout, ReuseTerminal: seat.TerminalID})
 		res.TimedOut = errors.Is(err, context.DeadlineExceeded)
-		if out.ReportedModel != "" {
+		if chair.NativeAgent == "" && out.ReportedModel != "" {
 			res.Model = out.ReportedModel
 		}
-		if out.ModelHonored != nil {
+		if chair.NativeAgent == "" && out.ModelHonored != nil {
 			res.Honored = out.ModelHonored
 		}
 		if err == nil {

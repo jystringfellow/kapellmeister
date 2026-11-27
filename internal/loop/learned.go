@@ -175,11 +175,15 @@ func (e *Engine) readLessonBlob(mode, oid string) lessonBlob {
 }
 
 func (e *Engine) readTextBlob(mode, oid string) lessonBlob {
+	return e.readTextBlobWithGitOptions(mode, oid, nil)
+}
+
+func (e *Engine) readTextBlobWithGitOptions(mode, oid string, options []string) lessonBlob {
 	switch mode {
 	case "120000":
 		return lessonBlob{reason: "symbolic link"}
 	case "100644", "100755":
-		text, err := e.gitOutput("cat-file", "blob", oid)
+		text, err := e.gitOutput(append(options, "cat-file", "blob", oid)...)
 		if err != nil {
 			return lessonBlob{reason: "cannot read committed file: " + err.Error()}
 		}

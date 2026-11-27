@@ -17,14 +17,15 @@ import (
 )
 
 type StandingChair struct {
-	Name       string     `json:"name"`
-	Binding    loop.Chair `json:"binding"`
-	Address    string     `json:"address"`
-	Section    string     `json:"section"`
-	Part       string     `json:"part"`
-	Chair      string     `json:"chair"`
-	TerminalID string     `json:"terminal_id"`
-	Briefed    bool       `json:"briefed"`
+	Manifest   *loop.NativeManifest `json:"native_manifest,omitempty"`
+	Name       string               `json:"name"`
+	Binding    loop.Chair           `json:"binding"`
+	Address    string               `json:"address"`
+	Section    string               `json:"section"`
+	Part       string               `json:"part"`
+	Chair      string               `json:"chair"`
+	TerminalID string               `json:"terminal_id"`
+	Briefed    bool                 `json:"briefed"`
 }
 
 type Standing struct {
@@ -41,6 +42,10 @@ type Standing struct {
 func (s Standing) Save(dir string) error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
+	}
+	s.Chairs = slices.Clone(s.Chairs)
+	for i := range s.Chairs {
+		s.Chairs[i].Manifest = s.Chairs[i].Binding.Manifest
 	}
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
@@ -70,6 +75,9 @@ func ListStanding(dir string) ([]Standing, error) {
 		var s Standing
 		if err := json.Unmarshal(data, &s); err != nil {
 			return nil, fmt.Errorf("reading %s: %w", path, err)
+		}
+		for i := range s.Chairs {
+			s.Chairs[i].Binding.Manifest = s.Chairs[i].Manifest
 		}
 		records = append(records, s)
 	}
@@ -134,4 +142,14 @@ func (s Standing) Unbriefed() []string {
 		}
 	}
 	return addresses
+}
+
+func (s Standing) Unpinned() []string {
+	var out []string
+	for _, c := range s.Chairs {
+		if c.Binding.NativeAgent != "" && c.Binding.Manifest == nil {
+			out = append(out, c.Address)
+		}
+	}
+	return out
 }

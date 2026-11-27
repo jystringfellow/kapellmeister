@@ -46,6 +46,7 @@ type Audition struct {
 }
 
 type ChairReport struct {
+	NativeAgent string `json:"native_agent,omitempty"`
 	Permissions string `json:"permissions,omitempty"`
 	Unguarded   bool   `json:"unguarded,omitempty"`
 	Address     string `json:"address"`

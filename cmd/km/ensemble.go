@@ -141,9 +141,28 @@ func sizeMember(policy loop.Policy, m ensemble.Member) ensemble.Member {
 }
 
 func prepareMember(ctx context.Context, client *cao.Client, policy loop.Policy, agents loop.Agents, spec string, m ensemble.Member) (ensemble.Member, error) {
+	if m.Chair.NativeAgent != "" {
+		parts := strings.SplitN(spec, ":", 3)
+		if strings.Contains(spec, "@") || len(parts) == 3 && parts[2] != "" {
+			return m, fmt.Errorf("the agent definition sets the model; native chairs cannot use tiers or explicit models")
+		}
+	}
 	chair, err := agents.ResolveChair(spec)
 	if err != nil {
 		return m, err
+	}
+	if m.Chair.NativeAgent != "" {
+		if chair.Provider != "claude_code" {
+			return m, fmt.Errorf("%s cannot play native agent %s (only claude_code can)", spec, m.Chair.NativeAgent)
+		}
+		chair.Agent = agents.NameOf(chair)
+		chair.NativeBase = chair.Profile
+		chair.NativeAgent = m.Chair.NativeAgent
+		chair = chair.WithDefinitionOf(m.Chair)
+		chair.Profile, err = loop.NativeProfileName(chair.Agent, chair.NativeAgent)
+		if err != nil {
+			return m, err
+		}
 	}
 	if err := checkPin(policy, m.Part, m.Chair.Address, spec, chair); err != nil {
 		return m, err
@@ -230,4 +249,35 @@ func ensembleSourceOf(s loop.Settings, worktree, name string) string {
 		return "config"
 	}
 	return ""
+}
+
+func resolveNativeMembers(worktree string, portable bool, members []ensemble.Member) error {
+	base := ""
+	for _, member := range members {
+		if member.Chair.NativeAgent != "" {
+			var err error
+			base, err = gitOutput(worktree, "rev-parse", "HEAD")
+			if err != nil {
+				return err
+			}
+			base = strings.TrimSpace(base)
+			break
+		}
+	}
+	for i := range members {
+		chair, err := loop.ResolveNativeDefinitionAt(worktree, base, members[i].Chair, portable)
+		if err != nil {
+			return err
+		}
+		members[i].Chair = chair
+	}
+	return nil
+}
+
+func resolveEnsembleMembers(worktree, name string, agents loop.Agents, members []ensemble.Member) error {
+	spec, found, err := ensemble.Find(name, loop.Home(), worktree, agents)
+	if err != nil {
+		return err
+	}
+	return resolveNativeMembers(worktree, found && spec.Portable(), members)
 }

@@ -12,6 +12,7 @@ type TriedAgent struct {
 	Reason string `json:"reason"`
 }
 type SeatChange struct {
+	NativeAgent     string       `json:"native_agent,omitempty"`
 	Address         string       `json:"address"`
 	BlockedAgent    string       `json:"blocked_agent"`
 	BlockedProvider string       `json:"blocked_provider"`
@@ -102,7 +103,11 @@ func LostProviders(before, after []Member) []ProvidersLost {
 func SeatLines(changes []SeatChange, lost []ProvidersLost) []string {
 	var lines []string
 	for _, c := range changes {
-		lines = append(lines, fmt.Sprintf("%s: %s was BLOCKED (untrusted text from the agent's pane: %s); %s takes the seat", c.Address, c.BlockedAgent, c.Reason, c.SeatedAgent))
+		line := fmt.Sprintf("%s: %s was BLOCKED (untrusted text from the agent's pane: %s); %s takes the seat", c.Address, c.BlockedAgent, c.Reason, c.SeatedAgent)
+		if c.NativeAgent != "" {
+			line += " (native agent " + c.NativeAgent + ")"
+		}
+		lines = append(lines, line)
 		lines = append(lines, c.Overlaps...)
 	}
 	for _, l := range lost {

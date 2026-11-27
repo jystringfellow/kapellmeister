@@ -118,6 +118,9 @@ func DefaultChairs(available []string) map[string]string {
 }
 
 func (defined Agents) NameOf(chair Chair) string {
+	if chair.NativeAgent != "" {
+		return chair.Agent
+	}
 	for _, agent := range defined {
 		if agent.Chair.Provider == chair.Provider && agent.Chair.Profile == chair.Profile {
 			return agent.Name

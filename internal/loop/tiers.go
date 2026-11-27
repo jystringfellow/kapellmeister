@@ -246,7 +246,7 @@ func (p Policy) EscalateAfter() int {
 }
 
 func (p *Policy) Chair(stepKey string, chair Chair, want string, bump int) (Chair, Assignment) {
-	if p == nil {
+	if p == nil || chair.NativeAgent != "" {
 		return chair, Assignment{}
 	}
 	if chair.Model != "" {
@@ -278,6 +278,9 @@ func (p *Policy) Chair(stepKey string, chair Chair, want string, bump int) (Chai
 }
 
 func (p *Policy) At(chair Chair, tier string) (Chair, string) {
+	if chair.NativeAgent != "" {
+		return chair, ""
+	}
 	spec, ok := p.Tiers[chair.Provider][tier]
 	if !ok {
 		return chair, ""

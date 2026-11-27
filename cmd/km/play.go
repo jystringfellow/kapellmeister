@@ -37,6 +37,9 @@ func playCommand(args []string) error {
 	if err != nil {
 		return err
 	}
+	if unpinned := standing.Unpinned(); len(unpinned) > 0 {
+		return unpinnedError(standing.Session, unpinned)
+	}
 	defer func() {
 		fmt.Printf("ensemble %s still standing; take it down with km ensemble down %s\n", standing.Session, standing.Session)
 	}()
@@ -153,4 +156,8 @@ func reseatHints(session string, addresses []string) string {
 		commands = append(commands, "`km reseat "+session+" "+address+"`")
 	}
 	return "or replace the occupant with " + strings.Join(commands, ", ")
+}
+
+func unpinnedError(session string, chairs []string) error {
+	return fmt.Errorf("chair(s) %s in session %s have no pinned agent definitions; take it down with km ensemble down %s and km rehearse again", strings.Join(chairs, ", "), session, session)
 }

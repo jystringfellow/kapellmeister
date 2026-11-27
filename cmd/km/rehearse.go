@@ -46,6 +46,15 @@ func rehearseCommand(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := resolveEnsembleMembers(wt, *name, s.Defined, members); err != nil {
+		return err
+	}
+	if len(members) > 0 {
+		chairs, err = ensemble.ChairsFor(s.Score.Score, members)
+		if err != nil {
+			return err
+		}
+	}
 	if *timeout == 0 {
 		*timeout = s.PreflightTimeout
 	}

@@ -35,13 +35,16 @@ type Section struct {
 	Chairs  []ChairSpec
 }
 
+func (s Spec) Portable() bool { return s.portable }
+
 type ChairSpec struct {
-	Focus   string
-	Tier    string
-	Name    string
-	Part    string
-	Agents  []string
-	Timeout time.Duration
+	NativeAgent string
+	Focus       string
+	Tier        string
+	Name        string
+	Part        string
+	Agents      []string
+	Timeout     time.Duration
 }
 
 type file struct {
@@ -52,14 +55,17 @@ type file struct {
 	Sections    map[string]struct {
 		Timeout string `toml:"timeout"`
 		Chairs  map[string]struct {
-			Focus   string   `toml:"focus"`
-			Part    string   `toml:"part"`
-			Tier    string   `toml:"tier"`
-			Agents  []string `toml:"agents"`
-			Timeout string   `toml:"timeout"`
+			NativeAgent string   `toml:"native_agent"`
+			Focus       string   `toml:"focus"`
+			Part        string   `toml:"part"`
+			Tier        string   `toml:"tier"`
+			Agents      []string `toml:"agents"`
+			Timeout     string   `toml:"timeout"`
 		} `toml:"chairs"`
 	} `toml:"sections"`
 }
+
+var validNativeAgent = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 
 var validName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
@@ -207,7 +213,21 @@ func parse(name, path, text string, portable bool, agents loop.Agents, available
 				return fail(fmt.Sprintf("chair %q", chairName), "%s", message)
 			}
 			c := raw.Chairs[chairName]
-			chair := ChairSpec{Name: chairName, Part: c.Part, Agents: c.Agents, Tier: c.Tier, Focus: c.Focus}
+			chair := ChairSpec{Name: chairName, Part: c.Part, Agents: c.Agents, Tier: c.Tier, Focus: c.Focus, NativeAgent: c.NativeAgent}
+			if md.IsDefined("sections", sectionName, "chairs", chairName, "native_agent") {
+				address := (Member{Section: sectionName, Name: chairName}).Address(name)
+				if !validNativeAgent.MatchString(c.NativeAgent) {
+					return Spec{}, fmt.Errorf("%s: %s: invalid native_agent %q", path, address, c.NativeAgent)
+				}
+				conflict := md.IsDefined("sections", sectionName, "chairs", chairName, "tier")
+				for _, entry := range c.Agents {
+					parts := strings.SplitN(entry, ":", 3)
+					conflict = conflict || strings.Contains(entry, "@") || len(parts) == 3 && parts[2] != ""
+				}
+				if conflict {
+					return Spec{}, fmt.Errorf("%s: %s: native_agent cannot use a tier or explicit model; the agent definition sets the model", path, address)
+				}
+			}
 			if md.IsDefined("sections", sectionName, "chairs", chairName, "focus") && strings.TrimSpace(c.Focus) == "" {
 				return fail(key+".focus", "want text, not an empty or whitespace-only focus")
 			}
@@ -304,10 +324,21 @@ func (s Spec) Bind(agents loop.Agents, available []string) ([]Member, error) {
 	var members []Member
 	for _, section := range s.Sections {
 		for _, c := range section.Chairs {
-			agent, ok := FirstAvailable(c.Agents, available)
+			agent, ok := "", false
+			for _, entry := range c.Agents {
+				if !Eligible(entry, available) {
+					continue
+				}
+				resolved, err := agents.ResolveChair(entry)
+				if c.NativeAgent != "" && (err != nil || resolved.Provider != "claude_code") {
+					continue
+				}
+				agent, ok = entry, true
+				break
+			}
 			if !ok {
 				m := Member{Section: section.Name, Name: c.Name}
-				return nil, &UnavailableError{Path: s.Path, Address: m.Address(s.Name), Section: section.Name, Chair: c.Name, Agents: c.Agents, Available: available}
+				return nil, &UnavailableError{Path: s.Path, Address: m.Address(s.Name), Section: section.Name, Chair: c.Name, Agents: c.Agents, Available: available, NativeAgent: c.NativeAgent}
 			}
 			m, err := s.Seat(agents, section.Name, c.Name, agent)
 			if err != nil {
@@ -445,10 +476,14 @@ func ScoreName(name, home, worktree string) (string, error) {
 
 type UnavailableError struct {
 	Path, Address, Section, Chair string
+	NativeAgent                   string
 	Agents, Available             []string
 }
 
 func (e *UnavailableError) Error() string {
+	if e.NativeAgent != "" {
+		return fmt.Sprintf("%s: %s: no listed agent is an available claude_code agent; only claude_code can play native agent %s", e.Path, e.Address, e.NativeAgent)
+	}
 	return fmt.Sprintf("%s: %s: none of %s is in [agents] available (%s)", e.Path, e.Address, strings.Join(e.Agents, ", "), strings.Join(e.Available, ", "))
 }
 func (s Spec) Ready(score loop.Score, agents loop.Agents, available []string) error {
@@ -489,13 +524,17 @@ func Eligible(entry string, available []string) bool {
 	return strings.Contains(base, ":") || slices.Contains(available, base)
 }
 
-func (s Spec) Listed(section, chair string, available []string) (string, []string) {
+func (s Spec) Listed(section, chair string, available []string, agents loop.Agents) (string, []string) {
 	for _, sec := range s.Sections {
 		if sec.Name == section {
 			for _, c := range sec.Chairs {
 				if c.Name == chair {
 					for i, entry := range c.Agents {
 						if Eligible(entry, available) {
+							resolved, err := agents.ResolveChair(entry)
+							if c.NativeAgent != "" && (err != nil || resolved.Provider != "claude_code") {
+								continue
+							}
 							return entry, c.Agents[i+1:]
 						}
 					}
@@ -521,6 +560,18 @@ func (s Spec) Seat(agents loop.Agents, section, chair, entry string) (Member, er
 					resolved, err := agents.ResolveChair(entry)
 					if err != nil {
 						return Member{}, fmt.Errorf("%s: %s: %w", s.Path, m.Address(s.Name), err)
+					}
+					if c.NativeAgent != "" {
+						if resolved.Provider != "claude_code" {
+							return Member{}, fmt.Errorf("%s cannot play native agent %s (only claude_code can)", entry, c.NativeAgent)
+						}
+						resolved.Agent = agents.NameOf(resolved)
+						resolved.NativeAgent = c.NativeAgent
+						resolved.NativeBase = resolved.Profile
+						resolved.Profile, err = loop.NativeProfileName(resolved.Agent, c.NativeAgent)
+						if err != nil {
+							return Member{}, err
+						}
 					}
 					resolved.Focus = c.Focus
 					resolved.Timeout = firstDuration(c.Timeout, sec.Timeout, s.Timeout)

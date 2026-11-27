@@ -81,6 +81,7 @@ func fakeProfileInstall(t *testing.T) (string, string) {
 	t.Setenv("KM_TEST_INSTALLED", installed)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$KM_TEST_INSTALL_ARGS\"\ncat \"$2\" >> \"$KM_TEST_INSTALLED\"\n"
+	script += "mkdir -p \"$CAO_HOME_DIR/agent-store\"\ncp \"$2\" \"$CAO_HOME_DIR/agent-store/$(basename \"$2\")\"\n"
 	if err := os.WriteFile(filepath.Join(dir, "cao"), []byte(script), 0755); err != nil {
 		t.Fatal(err)
 	}

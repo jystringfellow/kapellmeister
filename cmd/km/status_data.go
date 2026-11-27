@@ -48,21 +48,24 @@ type statusSection struct {
 }
 
 type statusChair struct {
-	Focus      string           `json:"focus,omitempty"`
-	Address    string           `json:"address"`
-	Name       string           `json:"name"`
-	Part       string           `json:"part"`
-	Agent      string           `json:"agent"`
-	Provider   string           `json:"provider"`
-	Model      string           `json:"model"`
-	Tier       string           `json:"tier"`
-	State      string           `json:"state"`
-	Step       string           `json:"step"`
-	Since      time.Time        `json:"since"`
-	Memory     string           `json:"memory"`
-	Terminal   string           `json:"terminal"`
-	NeedsInput statusNeedsInput `json:"needs_input"`
-	Usage      statusUsage      `json:"usage"`
+	Definition  string           `json:"definition,omitempty"`
+	NativeAgent string           `json:"native_agent,omitempty"`
+	ModelSource string           `json:"model_source,omitempty"`
+	Focus       string           `json:"focus,omitempty"`
+	Address     string           `json:"address"`
+	Name        string           `json:"name"`
+	Part        string           `json:"part"`
+	Agent       string           `json:"agent"`
+	Provider    string           `json:"provider"`
+	Model       string           `json:"model"`
+	Tier        string           `json:"tier"`
+	State       string           `json:"state"`
+	Step        string           `json:"step"`
+	Since       time.Time        `json:"since"`
+	Memory      string           `json:"memory"`
+	Terminal    string           `json:"terminal"`
+	NeedsInput  statusNeedsInput `json:"needs_input"`
+	Usage       statusUsage      `json:"usage"`
 }
 
 type statusNeedsInput struct {
@@ -438,6 +441,10 @@ func statusVerdictKind(kind string) bool {
 }
 
 func updateStatusBinding(chair *statusChair, record statusRecord) {
+	if chair.NativeAgent != "" {
+		chair.Model, chair.Tier, chair.ModelSource = "", "", "agent"
+		return
+	}
 	if record.Chair == nil {
 		return
 	}
