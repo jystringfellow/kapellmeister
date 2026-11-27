@@ -20,6 +20,9 @@ import (
 )
 
 type PreflightResult struct {
+	ProfileMissing  bool     `json:"profile_missing,omitempty"`
+	ReplySource     string   `json:"reply_source,omitempty"`
+	CaptureCause    string   `json:"capture_cause,omitempty"`
 	CaptureFailed   bool     `json:"capture_failed,omitempty"`
 	DefinitionError string   `json:"definition_error,omitempty"`
 	SeatRetries     int      `json:"seat_retries,omitempty"`
@@ -302,7 +305,12 @@ func preflightChair(ctx context.Context, stepper interface {
 		if err != nil {
 			return res, err
 		}
-		out, err = stepper.Run(ctx, Step{Name: "preflight", Label: TerminalLabel("preflight", chair.Provider), Chair: chair, Prompt: prompt, Dir: worktree, ReplyPath: rel, Timeout: timeout, ReuseTerminal: seat.TerminalID})
+		step := Step{Name: "preflight", Label: TerminalLabel("preflight", chair.Provider), Chair: chair, Prompt: prompt, Dir: worktree, ReplyPath: rel, Timeout: timeout, ReuseTerminal: seat.TerminalID}
+		var capture replyCapture
+		if chair.Reply == ReplyMessage {
+			capture = openReply("", step)
+		}
+		out, err = stepper.Run(ctx, step)
 		res.TimedOut = errors.Is(err, context.DeadlineExceeded)
 		if chair.NativeAgent == "" && out.ReportedModel != "" {
 			res.Model = out.ReportedModel
@@ -312,7 +320,8 @@ func preflightChair(ctx context.Context, stepper interface {
 		}
 		if err == nil {
 			if chair.Reply == ReplyMessage {
-				text, ok := bracketedReply(out.LastMessage, nonce)
+				text, ok, source, cause := capture.read(ctx, nonce, out.LastMessage)
+				res.ReplySource, res.CaptureCause = source, cause
 				if ok && text == "ready" {
 					res.OK = true
 					res.DurationMS = time.Since(start).Milliseconds()
@@ -470,9 +479,19 @@ func (r PreflightResult) Reason() string {
 	text := cleanText(r.Blocker)
 	if r.CaptureFailed {
 		prefix := "final-message reply not captured"
+		if r.CaptureCause != "" {
+			prefix += ": " + cleanText(r.CaptureCause)
+		}
+		if runes := []rune(prefix); len(runes) > 300 {
+			return string(runes[:300])
+		}
 		tail := []rune(cleanText(r.Screen))
-		if len(tail) > 300-len(prefix)-2 {
-			tail = tail[len(tail)-(300-len(prefix)-2):]
+		available := 300 - len([]rune(prefix)) - 2
+		if available <= 0 {
+			return prefix
+		}
+		if len(tail) > available {
+			tail = tail[len(tail)-available:]
 		}
 		if len(tail) > 0 {
 			return prefix + ": " + string(tail)

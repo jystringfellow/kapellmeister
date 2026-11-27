@@ -1,0 +1,11 @@
+km-begin 39c84b15ca602550
+
+I read the file.
+
+---
+
+It holds one line.
+
+APPROVE
+
+km-end 39c84b15ca602550

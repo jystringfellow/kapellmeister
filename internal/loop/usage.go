@@ -92,12 +92,17 @@ type LogMeter struct {
 	counted         map[string]map[string]struct{}
 }
 
+func claudeHome() string {
+	if home := os.Getenv("CLAUDE_CONFIG_DIR"); home != "" {
+		return home
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".claude")
+}
+
 func NewLogMeter() *LogMeter {
 	home, _ := os.UserHomeDir()
-	claude := os.Getenv("CLAUDE_CONFIG_DIR")
-	if claude == "" {
-		claude = filepath.Join(home, ".claude")
-	}
+	claude := claudeHome()
 	codex := os.Getenv("CODEX_HOME")
 	if codex == "" {
 		codex = filepath.Join(home, ".codex")

@@ -125,6 +125,8 @@ type Step struct {
 
 type StepResult struct {
 	replyWait     time.Duration
+	replySource   string
+	replyCause    string
 	usage         *Usage
 	TerminalID    string
 	Status        string
@@ -315,7 +317,10 @@ type Reseater interface {
 }
 
 type Engine struct {
+	replySources    map[string]string
 	replyScreen     atomic.Bool
+	replyTranscript atomic.Bool
+	ClaudeHome      string
 	Reseater        Reseater
 	kept            map[string]*keptChair
 	keptOrder       []string
@@ -361,11 +366,15 @@ func (e *Engine) ReplySource() string {
 	if e.replyScreen.Load() {
 		return ReplyScreen
 	}
+	if e.replyTranscript.Load() {
+		return ReplyTranscript
+	}
 	return ""
 }
 
 func (e *Engine) Run(ctx context.Context) (res Result, err error) {
 	e.replyScreen.Store(false)
+	e.replyTranscript.Store(false)
 	defer func() { res.ReplySource = e.ReplySource() }()
 	e.score = e.Score
 	if len(e.score.Steps) == 0 {
@@ -705,6 +714,11 @@ func (e *Engine) step(ctx context.Context, s Step) (StepResult, error) {
 		nudge.Prompt = nudgePrompt(s.ReplyPath)
 		if s.Chair.Reply == ReplyMessage {
 			nudge.Prompt = "You ended your turn without a complete bracketed final message. Finish anything still owed, then give the whole reply again."
+			if out.replySource == ReplyScreen {
+				nudge.Prompt += " Stay within about 35 lines, counting wrapped lines; keep lines under 200 characters; start no line with >, ❯, ● or ⏺, including inside code blocks; avoid diffs and tables."
+			} else if out.replyCause != "" && (strings.Contains(out.replyCause, "marker") || strings.Contains(out.replyCause, "tool call")) {
+				nudge.Prompt += " The problem was: " + out.replyCause + "."
+			}
 		}
 		nudge.noNudge, nudge.NudgedAfter = true, out.replyWait
 		var nudged StepResult
@@ -763,7 +777,20 @@ func TerminalLabel(runID, stepName string) string {
 
 var errNoReply = errors.New("no reply file")
 
+type messageCaptureError struct{ source, cause string }
+
+func (e messageCaptureError) Error() string {
+	return "final-message reply not captured: " + e.source + ": " + e.cause
+}
+func (e messageCaptureError) Is(target error) bool { return target == errNoReply }
+
 func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
+	e.mu.Lock()
+	if e.replySources == nil {
+		e.replySources = make(map[string]string)
+	}
+	delete(e.replySources, s.ReplyPath)
+	e.mu.Unlock()
 	chair := s.Chair
 	nonce := ""
 	if chair.Reply == ReplyMessage {
@@ -817,6 +844,10 @@ func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 	}
 	finish := e.beginStep(s.Round, ActiveStep{Part: e.playingScore().StepPart(s.Name), Step: s.Name, ChairName: s.ChairName, Chair: s.Chair.Address, Terminal: s.ReuseTerminal, label: s.Label})
 	defer finish()
+	var capture replyCapture
+	if chair.Reply == ReplyMessage {
+		capture = openReply(e.ClaudeHome, s)
+	}
 	start := time.Now()
 	finishWatch := e.watchStep(s)
 	out, err := e.Stepper.Run(ctx, s)
@@ -833,9 +864,16 @@ func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 				err = removeErr
 			} else {
 				var ok bool
-				reply, ok = bracketedReply(out.LastMessage, nonce)
-				if !ok {
-					err = fmt.Errorf("%w at %s", errNoReply, s.ReplyPath)
+				var source, cause string
+				reply, ok, source, cause = capture.read(ctx, nonce, out.LastMessage)
+				out.replySource, out.replyCause = source, cause
+				e.mu.Lock()
+				e.replySources[s.ReplyPath] = source
+				e.mu.Unlock()
+				if !ok && ctx.Err() != nil {
+					err = fmt.Errorf("final-message reply not captured: %s: %s: %w", source, cause, ctx.Err())
+				} else if !ok {
+					err = messageCaptureError{source, cause}
 				} else {
 					var f *os.File
 					f, err = os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
@@ -848,13 +886,24 @@ func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 					}
 					if err == nil {
 						reply, err = e.readReply(s.ReplyPath)
+						var empty emptyReplyError
+						if errors.As(err, &empty) {
+							err = fmt.Errorf("final-message reply not captured: %s: empty reply: %w", source, err)
+							out.replyCause = "empty reply"
+						}
 						if err == nil && strings.TrimSpace(reply) == "" {
-							err = emptyReplyError{s.ReplyPath}
+							err = fmt.Errorf("final-message reply not captured: %s: empty reply: %w", source, emptyReplyError{s.ReplyPath})
+							out.replyCause = "empty reply"
 						}
 					}
 					if err == nil {
-						rec.ReplySource = ReplyScreen
-						e.replyScreen.Store(true)
+						rec.ReplySource = source
+						if source == ReplyScreen {
+							e.replyScreen.Store(true)
+							e.progress("  reply screen: no Claude Code transcript grew")
+						} else {
+							e.replyTranscript.Store(true)
+						}
 					}
 				}
 			}

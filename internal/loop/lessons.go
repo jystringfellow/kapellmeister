@@ -225,6 +225,13 @@ func (e *Engine) proposeLessons(ctx context.Context, res Result) (lessons []Less
 		}
 		return
 	}
+	e.mu.Lock()
+	source := e.replySources[path]
+	e.mu.Unlock()
+	if source == ReplyScreen {
+		report.Reason = "lessons not parsed: the answer came from the agent's screen, which re-wraps lines"
+		return
+	}
 	text, err := ReadLessonsReply(filepath.Join(e.Config.Worktree, path))
 	if err != nil {
 		report.Reason = err.Error()

@@ -870,3 +870,33 @@ func recordRoot(t *testing.T) string {
 	}
 	return root
 }
+
+func TestReportJSONCarriesReplySourcesFromFinishedAndUnfinishedRuns(t *testing.T) {
+	root := recordRoot(t)
+	for _, tc := range []struct{ id, file, source string }{{"finished-transcript", "result.json", "transcript"}, {"finished-screen", "result.json", "screen"}, {"unfinished-transcript", "current.json", "transcript"}, {"unfinished-screen", "current.json", "screen"}, {"file", "result.json", ""}} {
+		data, _ := json.Marshal(map[string]any{"run_id": tc.id, "started": "2026-11-01T00:00:00Z", "reply_source": tc.source})
+		writeFile(t, filepath.Join(root, tc.id, tc.file), string(data))
+	}
+	rows := reportRows(t, root)
+	if len(rows) != 5 {
+		t.Fatalf("rows %v", rows)
+	}
+	for _, row := range rows {
+		r := row.(map[string]any)
+		id := r["run_id"].(string)
+		source, present := r["reply_source"]
+		if id == "file" {
+			if present {
+				t.Fatalf("file: %v", r)
+			}
+			continue
+		}
+		want := "transcript"
+		if strings.Contains(id, "screen") {
+			want = "screen"
+		}
+		if source != want {
+			t.Errorf("%s: %v", id, r)
+		}
+	}
+}
