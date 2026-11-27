@@ -119,3 +119,48 @@ func TestAMissingDefinitionThatExistsUncommittedSaysSo(t *testing.T) {
 		t.Fatalf("code %d: %s", code, out)
 	}
 }
+
+func TestEnsembleCheckResolvesFromADirectoryReachedThroughASymlink(t *testing.T) {
+	path, wt, _ := nativeEnsembleFixture(t)
+	writeFile(t, filepath.Join(wt, ".claude", "agents", "demo.md"), "---\nname: demo\n---\n")
+	gitIn(t, wt, "add", "-f", ".claude")
+	gitIn(t, wt, "commit", "-qm", "native agent")
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(wt, link); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(link)
+	t.Setenv("PWD", link)
+	if code, out := runCheck(t, "ensemble", "check", path); code != 0 || strings.Contains(out, "note:") {
+		t.Fatalf("code %d: %s", code, out)
+	}
+}
+
+func TestEnsembleCheckSaysWhenTheWorktreeDoesNotExist(t *testing.T) {
+	path, _, _ := nativeEnsembleFixture(t)
+	missing := filepath.Join(t.TempDir(), "missing")
+	if code, out := runCheck(t, "ensemble", "check", "-worktree", missing, path); code != 0 || !strings.Contains(out, "note: native agent definitions not checked: "+missing+" does not exist") {
+		t.Fatalf("code %d: %s", code, out)
+	}
+}
+
+func TestTheUncommittedHintNamesOnlyARegularFile(t *testing.T) {
+	for name, make := range map[string]func(string) error{
+		"directory":        func(p string) error { return os.MkdirAll(p, 0755) },
+		"dangling symlink": func(p string) error { return os.Symlink("nowhere.md", p) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			path, wt, _ := nativeEnsembleFixture(t)
+			target := filepath.Join(wt, ".claude", "agents", "demo.md")
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := make(target); err != nil {
+				t.Fatal(err)
+			}
+			if code, out := runCheck(t, "ensemble", "check", "-worktree", wt, path); code != 1 || strings.Contains(out, "not committed") {
+				t.Fatalf("code %d: %s", code, out)
+			}
+		})
+	}
+}

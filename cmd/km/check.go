@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -188,17 +189,25 @@ func checkNativeDefinitions(worktree string, spec ensemble.Spec, portable bool, 
 	if len(chairs) == 0 || worktree == "" {
 		return nil
 	}
-	if _, err := gitOutput(worktree, "rev-parse", "--show-toplevel"); err != nil {
+	dir, err := worktreeDir(worktree)
+	if errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintf(stderr, "note: native agent definitions not checked: %s does not exist\n", worktree)
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := gitOutput(dir, "rev-parse", "--show-toplevel"); err != nil {
 		fmt.Fprintf(stderr, "note: native agent definitions not checked: %s is not a git repository\n", worktree)
 		return nil
 	}
-	base, err := gitOutput(worktree, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+	base, err := gitOutput(dir, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
 	if err != nil {
 		fmt.Fprintf(stderr, "note: native agent definitions not checked: %s has no commits\n", worktree)
 		return nil
 	}
 	for i, c := range chairs {
-		if _, err := loop.ResolveNativeDefinitionAt(worktree, base, loop.Chair{NativeAgent: c.NativeAgent}, portable); err != nil {
+		if _, err := loop.ResolveNativeDefinitionAt(dir, base, loop.Chair{NativeAgent: c.NativeAgent}, portable); err != nil {
 			return fmt.Errorf("%s: native agent %s: %w", addresses[i], c.NativeAgent, err)
 		}
 	}
