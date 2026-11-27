@@ -925,11 +925,22 @@ and a nudge asks for the complete bracketed message again. A file chair never
 falls back to its final message when its reply file is missing.
 
 km reads the chair's Claude Code transcript using the same location as the usage
-meter. Both markers must occur in the final assistant message; multiple matching
-parent transcripts, malformed captures, or a range over 8 MiB fail closed. km
-waits briefly for the final entry. If no parent transcript grew, km falls back to
-the screen. Records identify the source as `reply_source: "transcript"` or
-`"screen"`; the run source is `screen` if any reply used it.
+meter. The reply is the last assistant message of a transcript whose size remains
+unchanged across a brief re-read and which has no half-written trailing line. km
+scans backward only as far as needed, with an 8 MiB limit on the final message;
+an oversized line that could be part of it also fails. Only a transcript holding
+the nonce can fail on malformed or oversized content; malformed lines earlier than
+those read are not seen. Multiple transcripts whose final messages contain the
+nonce fail closed. A nudge names the cause. If no parent transcript grew, km falls
+back to the screen. Records identify the source as `reply_source: "transcript"`
+or `"screen"`; the run source is `screen` if any reply used it.
+
+Transcript text blocks are joined with newlines; leading and trailing blank lines
+(containing only spaces or tabs) are dropped, and one newline is appended to the
+reply file. C0 controls except tab and newline, DEL, and C1 controls are deleted;
+all other characters are retained. JSON decoding replaces invalid Unicode with
+U+FFFD. The shared project directory name follows Claude Code's encoding and
+shortening rule beyond 200 characters (verified with Claude Code 2.1.332).
 
 The screen holds only 50 visible rows and can render, rewrite, wrap, or truncate
 text. For screen replies stay within about 35 lines including wrapped lines,
@@ -938,8 +949,9 @@ keep lines under 200 characters, start no line with `>`, `❯`, `●` or `⏺`
 tables and fences can be changed and long lines can be wrapped inside JSON. A
 line of 20 or more `─` characters, or CAO's completion line, ends the screen
 capture, so a closing marker after it is lost and the reply fails.
-Control and format characters are replaced by spaces. Lessons are not parsed
-from screen replies.
+For screen replies, CRLF becomes LF, control and format characters and line and
+paragraph separators become spaces, leading and trailing blank lines are dropped,
+and one newline is appended to the reply file. Lessons are not parsed from screen replies.
 
 CAO unsets `CLAUDE_*` variables except provider switches before starting Claude,
 so the chair writes under the CAO server user's `~/.claude`. If km uses a

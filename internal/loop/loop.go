@@ -701,12 +701,7 @@ func (e *Engine) step(ctx context.Context, s Step) (StepResult, error) {
 		nudge.Name, nudge.ReuseTerminal = s.Name+"-nudge", out.TerminalID
 		nudge.Prompt = nudgePrompt(s.ReplyPath)
 		if s.Chair.Reply == ReplyMessage {
-			nudge.Prompt = "You ended your turn without a complete bracketed final message. Finish anything still owed, then give the whole reply again."
-			if out.replySource == ReplyScreen {
-				nudge.Prompt += " Stay within about 35 lines, counting wrapped lines; keep lines under 200 characters; start no line with >, ❯, ● or ⏺, including inside code blocks; avoid diffs and tables."
-			} else if out.replyCause != "" && (strings.Contains(out.replyCause, "marker") || strings.Contains(out.replyCause, "tool call")) {
-				nudge.Prompt += " The problem was: " + out.replyCause + "."
-			}
+			nudge.Prompt = nudgeFor(out.replySource, out.replyCause)
 		}
 		nudge.noNudge, nudge.NudgedAfter = true, out.replyWait
 		var nudged StepResult
@@ -1620,4 +1615,20 @@ func (c Chairs) Of(part string) []Chair {
 		return nil
 	}
 	return c.Parts[part]
+}
+
+func nudgeFor(source, cause string) string {
+	opening := "You ended your turn without a complete bracketed final message. Finish anything still owed, then give the whole reply again."
+	if source == ReplyScreen {
+		return opening + " Stay within about 35 lines, counting wrapped lines; keep lines under 200 characters; start no line with >, ❯, ● or ⏺, including inside code blocks; avoid diffs and tables."
+	}
+	switch cause {
+	case "marker not on a line of its own", "missing begin and end markers", "missing begin marker", "missing end marker", "repeated or out of order markers":
+	default:
+		opening = "km could not capture your final message. Finish anything still owed, then give the whole reply again."
+	}
+	if cause == replySizeCause {
+		opening += " Make the reply shorter."
+	}
+	return opening + " The problem was: " + cause + "."
 }

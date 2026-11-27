@@ -18,7 +18,7 @@ type transcriptStepper struct{ home string }
 
 func (f transcriptStepper) Run(_ context.Context, s Step) (StepResult, error) {
 	nonce := regexp.MustCompile(`km-begin ([0-9a-f]+)`).FindStringSubmatch(s.Prompt)[1]
-	dir := filepath.Join(f.home, "projects", claudeProjectName.ReplaceAllString(s.Dir, "-"))
+	dir := filepath.Join(f.home, "projects", claudeProjectName(s.Dir))
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return StepResult{}, err
 	}
@@ -55,7 +55,7 @@ func (f transcriptPreflightStepper) Seat(_ context.Context, name string, _ Chair
 func (f transcriptPreflightStepper) Unseat(context.Context, string) error { return nil }
 func (f transcriptPreflightStepper) Run(ctx context.Context, s Step) (StepResult, error) {
 	out, err := f.transcriptStepper.Run(ctx, s)
-	path := filepath.Join(f.home, "projects", claudeProjectName.ReplaceAllString(s.Dir, "-"), "session.jsonl")
+	path := filepath.Join(f.home, "projects", claudeProjectName(s.Dir), "session.jsonl")
 	b, readErr := os.ReadFile(path)
 	if readErr != nil {
 		return out, readErr
@@ -114,7 +114,7 @@ func TestProbeRepliesAreCapturedExactlyFromTheirTranscripts(t *testing.T) {
 			if strings.Contains(path, "long-line.") {
 				expected = strings.Replace(expected, " \n\nAPPROVE", "\n\nAPPROVE", 1)
 			}
-			dest := filepath.Join(home, "projects", claudeProjectName.ReplaceAllString(dir, "-"))
+			dest := filepath.Join(home, "projects", claudeProjectName(dir))
 			if err := os.MkdirAll(dest, 0700); err != nil {
 				t.Fatal(err)
 			}
@@ -135,7 +135,7 @@ func TestTranscriptWriteAtTheEndOfTheWaitIsCaptured(t *testing.T) {
 	defer func() { replyTranscriptWait = old }()
 	home, dir := t.TempDir(), t.TempDir()
 	c := openReply(home, Step{Dir: dir, Chair: Chair{Provider: "claude_code"}})
-	dest := filepath.Join(home, "projects", claudeProjectName.ReplaceAllString(dir, "-"))
+	dest := filepath.Join(home, "projects", claudeProjectName(dir))
 	if err := os.MkdirAll(dest, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestTranscriptCaptureFailsClosedAndNeverMixesTheScreen(t *testing.T) {
 		{"prompt only", map[string][]byte{"a.jsonl": []byte("{\"type\":\"user\",\"message\":{\"content\":\"n\"}}\n")}, "", ReplyTranscript, false},
 		{"two parents", map[string][]byte{"a.jsonl": valid, "b.jsonl": valid}, "", ReplyTranscript, false},
 		{"sidechain", map[string][]byte{"a.jsonl": textEntry("m", "km-begin n\nx\nkm-end n", true)}, "", ReplyTranscript, false},
-		{"oversize", map[string][]byte{"a.jsonl": bytes.Repeat([]byte("x"), maxReplyRange+1)}, "", ReplyTranscript, false},
+		{"large file without the nonce", map[string][]byte{"a.jsonl": bytes.Repeat([]byte("x"), maxReplyRange+1)}, "", ReplyTranscript, false},
 		{"quoted", map[string][]byte{"a.jsonl": textEntry("m", "quoted km-begin n and km-end n", false)}, "", ReplyTranscript, false},
 		{"later assistant", map[string][]byte{"a.jsonl": append(append([]byte{}, valid...), textEntry("later", "no markers", false)...)}, "", ReplyTranscript, false},
 		{"split", map[string][]byte{"a.jsonl": append(textEntry("same", "km-begin n", false), textEntry("same", "exact\nkm-end n", false)...)}, "exact", ReplyTranscript, true},
@@ -193,7 +193,7 @@ func TestTranscriptCaptureFailsClosedAndNeverMixesTheScreen(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			home, dir := t.TempDir(), t.TempDir()
 			c := openReply(home, Step{Dir: dir, Chair: Chair{Provider: "claude_code"}})
-			dest := filepath.Join(home, "projects", claudeProjectName.ReplaceAllString(dir, "-"))
+			dest := filepath.Join(home, "projects", claudeProjectName(dir))
 			if err := os.MkdirAll(dest, 0700); err != nil {
 				t.Fatal(err)
 			}
@@ -212,7 +212,7 @@ func TestTranscriptCaptureFailsClosedAndNeverMixesTheScreen(t *testing.T) {
 
 func TestTranscriptCaptureReadsOnlyNewParentEntriesAndIgnoresSubagents(t *testing.T) {
 	home, dir := t.TempDir(), t.TempDir()
-	dest := filepath.Join(home, "projects", claudeProjectName.ReplaceAllString(dir, "-"))
+	dest := filepath.Join(home, "projects", claudeProjectName(dir))
 	if err := os.MkdirAll(filepath.Join(dest, "s", "subagents"), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +242,7 @@ func TestTranscriptCaptureReadsOnlyNewParentEntriesAndIgnoresSubagents(t *testin
 func TestAFinalToolCallCannotBeCapturedAsAReply(t *testing.T) {
 	home, dir := t.TempDir(), t.TempDir()
 	c := openReply(home, Step{Dir: dir, Chair: Chair{Provider: "claude_code"}})
-	dest := filepath.Join(home, "projects", claudeProjectName.ReplaceAllString(dir, "-"))
+	dest := filepath.Join(home, "projects", claudeProjectName(dir))
 	if err := os.MkdirAll(dest, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -318,7 +318,7 @@ func TestTranscriptNudgesNameTheCauseAndFailedRepliesRecordIt(t *testing.T) {
 				if err != nil {
 					return StepResult{}, err
 				}
-				dest := filepath.Join(home, "projects", claudeProjectName.ReplaceAllString(dir, "-"))
+				dest := filepath.Join(home, "projects", claudeProjectName(dir))
 				if err := os.MkdirAll(dest, 0700); err != nil {
 					return StepResult{}, err
 				}
@@ -403,5 +403,394 @@ func TestACancelledRunIsNotNudgedForAMissingMessageReply(t *testing.T) {
 	}
 	if f.prompts != 1 {
 		t.Fatalf("prompts %d", f.prompts)
+	}
+}
+
+func TestTranscriptReplyRequiresASettledCompleteLine(t *testing.T) {
+	old := replyTranscriptWait
+	replyTranscriptWait = 30 * time.Millisecond
+	defer func() { replyTranscriptWait = old }()
+	for _, tail := range []string{`{"type":"assistant"`, `{"type":"assistant","message":{"id":"m","content":[{"type":"tool_use"}]}}`} {
+		t.Run(tail, func(t *testing.T) {
+			home, dir := t.TempDir(), t.TempDir()
+			c := openReply(home, Step{Dir: dir, Chair: Chair{Provider: "claude_code"}})
+			dest := filepath.Join(home, "projects", claudeProjectName(dir))
+			if err := os.MkdirAll(dest, 0700); err != nil {
+				t.Fatal(err)
+			}
+			valid := `{"type":"assistant","message":{"id":"m","content":[{"type":"text","text":"km-begin nonce\nready\nkm-end nonce"}]}}` + "\n"
+			if err := os.WriteFile(filepath.Join(dest, "s.jsonl"), []byte(valid+tail), 0600); err != nil {
+				t.Fatal(err)
+			}
+			_, ok, _, cause := c.read(context.Background(), "nonce", "")
+			if ok || cause != "the transcript ended in a half-written line" {
+				t.Fatalf("ok %v cause %s", ok, cause)
+			}
+		})
+	}
+}
+
+func TestTranscriptReplyPreservesJoiners(t *testing.T) {
+	home, dir := t.TempDir(), t.TempDir()
+	c := openReply(home, Step{Dir: dir, Chair: Chair{Provider: "claude_code"}})
+	dest := filepath.Join(home, "projects", claudeProjectName(dir))
+	if err := os.MkdirAll(dest, 0700); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(map[string]any{"type": "assistant", "message": map[string]any{"id": "m", "content": "km-begin nonce\n👩‍👩‍👧 a‍b\nkm-end nonce"}})
+	if err := os.WriteFile(filepath.Join(dest, "s.jsonl"), append(data, '\n'), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, _, cause := c.read(context.Background(), "nonce", "")
+	if !ok || got != "👩‍👩‍👧 a‍b" {
+		t.Fatalf("%q %v %s", got, ok, cause)
+	}
+}
+
+func TestTranscriptReplyReadsPastLargeToolOutput(t *testing.T) {
+	home, dir := t.TempDir(), t.TempDir()
+	c := openReply(home, Step{Dir: dir, Chair: Chair{Provider: "claude_code"}})
+	dest := filepath.Join(home, "projects", claudeProjectName(dir))
+	if err := os.MkdirAll(dest, 0700); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte(`{"type":"user","message":{"content":"` + strings.Repeat("x", 9<<20) + `"}}` + "\n" + `{"type":"assistant","message":{"id":"m","content":"km-begin nonce\nready\nkm-end nonce"}}` + "\n")
+	if err := os.WriteFile(filepath.Join(dest, "s.jsonl"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, _, cause := c.read(context.Background(), "nonce", "")
+	if !ok || got != "ready" {
+		t.Fatalf("%q %v %s", got, ok, cause)
+	}
+}
+
+func TestOversizedFinalTranscriptMessageFailsClosed(t *testing.T) {
+	home, dir := t.TempDir(), t.TempDir()
+	c := openReply(home, Step{Dir: dir, Chair: Chair{Provider: "claude_code"}})
+	dest := filepath.Join(home, "projects", claudeProjectName(dir))
+	if err := os.MkdirAll(dest, 0700); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte(`{"type":"assistant","message":{"id":"m","content":"km-begin nonce\n` + strings.Repeat("x", maxReplyRange) + `\nkm-end nonce"}}` + "\n")
+	if err := os.WriteFile(filepath.Join(dest, "s.jsonl"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, ok, _, cause := c.read(context.Background(), "nonce", "")
+	if ok || cause != "the final message exceeds 8 MiB" {
+		t.Fatalf("%v %s", ok, cause)
+	}
+}
+
+func TestTranscriptSizeNudgeNamesTheCauseWithoutClaimingBrokenMarkers(t *testing.T) {
+	got := nudgeFor(ReplyTranscript, "the final message exceeds 8 MiB")
+	if !strings.Contains(got, "8 MiB") || !strings.Contains(got, "shorter") || strings.Contains(got, "bracketed") || strings.Contains(got, "marker") {
+		t.Fatal(got)
+	}
+}
+
+func TestTranscriptReplyRemovesOnlyTerminalControls(t *testing.T) {
+	text, ok := transcriptReply("km-begin nonce\n\n👩‍👩‍👧 a‍b\x00\x1b\a\r\x7f\u009b\t\ufeff\n\nkm-end nonce", "nonce")
+	if !ok || text != "👩‍👩‍👧 a‍b\t\ufeff" {
+		t.Fatalf("%q %v", text, ok)
+	}
+	screen, _ := bracketedReply("km-begin nonce\na‍b\nkm-end nonce", "nonce")
+	if screen != "a b" {
+		t.Fatalf("screen %q", screen)
+	}
+}
+
+func TestUnrelatedMalformedAndStringContentTranscriptsDoNotPreventReply(t *testing.T) {
+	home, dir := t.TempDir(), t.TempDir()
+	c := openReply(home, Step{Dir: dir, Chair: Chair{Provider: "claude_code"}})
+	dest := filepath.Join(home, "projects", claudeProjectName(dir))
+	if err := os.MkdirAll(dest, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string]string{
+		"malformed.jsonl": "garbage\n",
+		"string.jsonl":    `{"type":"assistant","message":{"id":"other","content":"unrelated reply"}}` + "\n",
+		"valid.jsonl":     `{"type":"assistant","message":{"id":"m","content":"km-begin nonce\nready\nkm-end nonce"}}` + "\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dest, name), []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, ok, _, cause := c.read(context.Background(), "nonce", "")
+	if !ok || got != "ready" {
+		t.Fatalf("%q %v %s", got, ok, cause)
+	}
+}
+
+func TestANonceAcrossReadChunksStillMakesMalformedTranscriptFailClosed(t *testing.T) {
+	home, dir := t.TempDir(), t.TempDir()
+	c := openReply(home, Step{Dir: dir, Chair: Chair{Provider: "claude_code"}})
+	const nonce = "nonce-crossing-chunks"
+	prefix := `{"type":"user","message":{"content":"`
+	prompt := prefix + strings.Repeat("x", replyChunk-len(prefix)-2) + nonce + `"}}` + "\n"
+	path := filepath.Join(home, "projects", claudeProjectName(dir), "s.jsonl")
+	appendUsage(t, path, []byte(prompt+"broken JSON\n"))
+	_, ok, source, cause := c.read(context.Background(), nonce, "km-begin "+nonce+"\nscreen must not win\nkm-end "+nonce)
+	if ok || source != ReplyTranscript || cause != "invalid transcript JSON" {
+		t.Fatalf("ok %v source %q cause %q", ok, source, cause)
+	}
+}
+
+func TestTwoMatchingTranscriptsFailClosedThroughEngineStep(t *testing.T) {
+	old := replyTranscriptWait
+	replyTranscriptWait = 10 * time.Millisecond
+	defer func() { replyTranscriptWait = old }()
+	home, dir := t.TempDir(), t.TempDir()
+	var prompts []string
+	e := Engine{Config: Config{Worktree: dir}, ClaudeHome: home}
+	e.Stepper = messageFuncStepper(func(s Step) (StepResult, error) {
+		prompts = append(prompts, s.Prompt)
+		nonce := regexp.MustCompile(`km-begin ([0-9a-f]+)`).FindStringSubmatch(s.Prompt)[1]
+		dest := filepath.Join(home, "projects", claudeProjectName(dir))
+		if err := os.MkdirAll(dest, 0700); err != nil {
+			return StepResult{}, err
+		}
+		data, _ := json.Marshal(map[string]any{"type": "assistant", "message": map[string]any{"id": nonce, "content": "km-begin " + nonce + "\nreply\nkm-end " + nonce}})
+		for _, name := range []string{"a.jsonl", "b.jsonl"} {
+			f, err := os.OpenFile(filepath.Join(dest, name), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+			if err != nil {
+				return StepResult{}, err
+			}
+			_, err = f.Write(append(data, '\n'))
+			f.Close()
+			if err != nil {
+				return StepResult{}, err
+			}
+		}
+		return StepResult{TerminalID: "chair", LastMessage: "km-begin " + nonce + "\nscreen\nkm-end " + nonce}, nil
+	})
+	_, err := e.step(context.Background(), Step{Name: "review", Chair: Chair{Provider: "claude_code", Reply: ReplyMessage}, ReplyPath: "reply"})
+	if !errors.Is(err, errNoReply) || len(prompts) != 2 || !strings.Contains(prompts[1], "multiple transcripts contain the nonce") {
+		t.Fatalf("error %v prompts %v", err, prompts)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "reply")); !os.IsNotExist(err) {
+		t.Fatalf("reply exists: %v", err)
+	}
+}
+
+func TestEngineWritesTranscriptJoinersExactly(t *testing.T) {
+	home, dir := t.TempDir(), t.TempDir()
+	e := Engine{Config: Config{Worktree: dir}, ClaudeHome: home}
+	e.Stepper = messageFuncStepper(func(s Step) (StepResult, error) {
+		nonce := regexp.MustCompile(`km-begin ([0-9a-f]+)`).FindStringSubmatch(s.Prompt)[1]
+		dest := filepath.Join(home, "projects", claudeProjectName(dir))
+		if err := os.MkdirAll(dest, 0700); err != nil {
+			return StepResult{}, err
+		}
+		data, _ := json.Marshal(map[string]any{"type": "assistant", "message": map[string]any{"id": "m", "content": "km-begin " + nonce + "\n👩‍👩‍👧 a‍b\nkm-end " + nonce}})
+		if err := os.WriteFile(filepath.Join(dest, "s.jsonl"), append(data, '\n'), 0600); err != nil {
+			return StepResult{}, err
+		}
+		return StepResult{TerminalID: "chair"}, nil
+	})
+	_, err := e.step(context.Background(), Step{Name: "review", Chair: Chair{Provider: "claude_code", Reply: ReplyMessage}, ReplyPath: "reply"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "reply"))
+	if err != nil || string(data) != "👩‍👩‍👧 a‍b\n" {
+		t.Fatalf("%q %v", data, err)
+	}
+}
+
+func TestTranscriptNudgesDescribeTheirActualCauses(t *testing.T) {
+	bracketOpening := "You ended your turn without a complete bracketed final message. Finish anything still owed, then give the whole reply again."
+	otherOpening := "km could not capture your final message. Finish anything still owed, then give the whole reply again."
+	for _, tc := range []struct {
+		cause   string
+		bracket bool
+	}{
+		{"marker not on a line of its own", true}, {"missing begin and end markers", true}, {"missing begin marker", true}, {"missing end marker", true}, {"repeated or out of order markers", true},
+		{"tool call in the final message", false}, {replySizeCause, false}, {"the transcript ended in a half-written line", false}, {"the transcript was still being written", false}, {"no transcript holds the nonce", false}, {"no final message in the transcript", false}, {"multiple transcripts contain the nonce", false}, {"invalid transcript JSON", false}, {"empty reply", false}, {"transcript disappeared or shrank", false}, {"transcript shrank", false}, {"read error", false},
+	} {
+		t.Run(tc.cause, func(t *testing.T) {
+			opening := otherOpening
+			if tc.bracket {
+				opening = bracketOpening
+			}
+			want := opening
+			if tc.cause == replySizeCause {
+				want += " Make the reply shorter."
+			}
+			want += " The problem was: " + tc.cause + "."
+			if got := nudgeFor(ReplyTranscript, tc.cause); got != want {
+				t.Fatalf("got %q; want %q", got, want)
+			}
+		})
+	}
+	wantScreen := bracketOpening + " Stay within about 35 lines, counting wrapped lines; keep lines under 200 characters; start no line with >, ❯, ● or ⏺, including inside code blocks; avoid diffs and tables."
+	if got := nudgeFor(ReplyScreen, replySizeCause); got != wantScreen {
+		t.Fatalf("screen got %q; want %q", got, wantScreen)
+	}
+}
+
+func TestMalformedLineInNonceHoldingTranscriptFailsClosed(t *testing.T) {
+	home, dir := t.TempDir(), t.TempDir()
+	c := openReply(home, Step{Dir: dir, Chair: Chair{Provider: "claude_code"}})
+	dest := filepath.Join(home, "projects", claudeProjectName(dir))
+	if err := os.MkdirAll(dest, 0700); err != nil {
+		t.Fatal(err)
+	}
+	data := `{"type":"user","message":{"content":"nonce"}}` + "\n" + "broken json\n"
+	if err := os.WriteFile(filepath.Join(dest, "s.jsonl"), []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, ok, _, cause := c.read(context.Background(), "nonce", "")
+	if ok || cause != "invalid transcript JSON" {
+		t.Fatalf("%v %s", ok, cause)
+	}
+}
+
+func TestSettledTranscriptReplyDoesNotWaitForTheDeadline(t *testing.T) {
+	home, dir := t.TempDir(), t.TempDir()
+	c := openReply(home, Step{Dir: dir, Chair: Chair{Provider: "claude_code"}})
+	dest := filepath.Join(home, "projects", claudeProjectName(dir))
+	if err := os.MkdirAll(dest, 0700); err != nil {
+		t.Fatal(err)
+	}
+	data := `{"type":"assistant","message":{"content":"km-begin nonce\nready\nkm-end nonce"}}` + "\n"
+	if err := os.WriteFile(filepath.Join(dest, "s.jsonl"), []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	_, ok, _, cause := c.read(context.Background(), "nonce", "")
+	if !ok || time.Since(start) > time.Second {
+		t.Fatalf("ok %v after %s: %s", ok, time.Since(start), cause)
+	}
+}
+
+func TestLateTranscriptReplyWaitsAFullIntervalAfterItsFirstSighting(t *testing.T) {
+	old := replyTranscriptWait
+	replyTranscriptWait = 200 * time.Millisecond
+	defer func() { replyTranscriptWait = old }()
+	home, dir := t.TempDir(), t.TempDir()
+	c := openReply(home, Step{Dir: dir, Chair: Chair{Provider: "claude_code"}})
+	dest := filepath.Join(home, "projects", claudeProjectName(dir))
+	if err := os.MkdirAll(dest, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dest, "s.jsonl")
+	if err := os.WriteFile(path, []byte("{\"type\":\"user\",\"message\":{\"content\":\"nonce\"}}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	var written time.Time
+	calls := 0
+	c.poll = func() {
+		calls++
+		if calls == 2 {
+			time.Sleep(time.Until(start.Add(195 * time.Millisecond)))
+			f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = f.WriteString(`{"type":"assistant","message":{"id":"m","content":"km-begin nonce\nready\nkm-end nonce"}}` + "\n")
+			f.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			written = time.Now()
+		}
+	}
+	_, ok, _, cause := c.read(context.Background(), "nonce", "")
+	elapsed := time.Since(written)
+	if !ok || elapsed < 20*time.Millisecond {
+		t.Fatalf("ok %v cause %q interval %s", ok, cause, elapsed)
+	}
+}
+
+func TestTranscriptThatKeepsGrowingDoesNotSettle(t *testing.T) {
+	old := replyTranscriptWait
+	replyTranscriptWait = 50 * time.Millisecond
+	defer func() { replyTranscriptWait = old }()
+	home, dir := t.TempDir(), t.TempDir()
+	c := openReply(home, Step{Dir: dir, Chair: Chair{Provider: "claude_code"}})
+	dest := filepath.Join(home, "projects", claudeProjectName(dir))
+	if err := os.MkdirAll(dest, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dest, "s.jsonl")
+	valid := `{"type":"assistant","message":{"id":"m","content":"km-begin nonce\nready\nkm-end nonce"}}` + "\n"
+	if err := os.WriteFile(path, []byte(valid), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c.poll = func() {
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = f.WriteString("{\"type\":\"user\"}\n")
+		f.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, ok, _, cause := c.read(context.Background(), "nonce", "")
+	if ok || cause != "the transcript was still being written" {
+		t.Fatalf("ok %v cause %q", ok, cause)
+	}
+}
+
+func TestCompletedTranscriptLineIsJudgedAsPartOfTheFinalMessage(t *testing.T) {
+	old := replyTranscriptWait
+	replyTranscriptWait = 100 * time.Millisecond
+	defer func() { replyTranscriptWait = old }()
+	home, dir := t.TempDir(), t.TempDir()
+	c := openReply(home, Step{Dir: dir, Chair: Chair{Provider: "claude_code"}})
+	dest := filepath.Join(home, "projects", claudeProjectName(dir))
+	if err := os.MkdirAll(dest, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dest, "s.jsonl")
+	valid := `{"type":"assistant","message":{"id":"m","content":"km-begin nonce\nready\nkm-end nonce"}}` + "\n" + `{"type":"assistant","message":{"id":"m","content":[{"type":"tool_use"}]}}`
+	if err := os.WriteFile(path, []byte(valid), 0600); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	c.poll = func() {
+		calls++
+		if calls == 2 {
+			f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = f.WriteString("\n")
+			f.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	_, ok, _, cause := c.read(context.Background(), "nonce", "")
+	if ok || cause != "tool call in the final message" {
+		t.Fatalf("ok %v cause %q", ok, cause)
+	}
+}
+
+func TestMultipleLinesOfOneOversizedFinalMessageFailClosed(t *testing.T) {
+	home, dir := t.TempDir(), t.TempDir()
+	c := openReply(home, Step{Dir: dir, Chair: Chair{Provider: "claude_code"}})
+	dest := filepath.Join(home, "projects", claudeProjectName(dir))
+	if err := os.MkdirAll(dest, 0700); err != nil {
+		t.Fatal(err)
+	}
+	line := func(text string) []byte {
+		data, err := json.Marshal(map[string]any{"type": "assistant", "message": map[string]any{"id": "m", "content": text}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return append(data, '\n')
+	}
+	data := append(line("km-begin nonce\n"+strings.Repeat("x", maxReplyRange/2)), line(strings.Repeat("y", maxReplyRange/2)+"\nkm-end nonce")...)
+	if err := os.WriteFile(filepath.Join(dest, "s.jsonl"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, ok, _, cause := c.read(context.Background(), "nonce", "")
+	if ok || cause != replySizeCause {
+		t.Fatalf("ok %v cause %q", ok, cause)
 	}
 }

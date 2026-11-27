@@ -10,10 +10,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf16"
 )
 
 type Tokens struct {
@@ -117,7 +118,28 @@ func NewLogMeter() *LogMeter {
 const maxUsageRange = 64 << 20
 const maxUsageLine = 4 << 20
 
-var claudeProjectName = regexp.MustCompile(`[^a-zA-Z0-9]`)
+func claudeProjectName(path string) string {
+	units := utf16.Encode([]rune(path))
+	var name strings.Builder
+	var hash int32
+	for _, unit := range units {
+		hash = hash*31 + int32(unit)
+		if unit >= 'a' && unit <= 'z' || unit >= 'A' && unit <= 'Z' || unit >= '0' && unit <= '9' {
+			name.WriteByte(byte(unit))
+		} else {
+			name.WriteByte('-')
+		}
+	}
+	result := name.String()
+	if len(result) > 200 {
+		h := int64(hash)
+		if h < 0 {
+			h = -h
+		}
+		result = result[:200] + "-" + strconv.FormatInt(h, 36)
+	}
+	return result
+}
 
 func (m *LogMeter) Open(ctx context.Context, step Step) (close func() Usage, err error) {
 	close = func() Usage { return unknownUsage("unreadable-log") }
@@ -317,7 +339,7 @@ func (m *LogMeter) logs(step Step) (map[string]usageSnapshot, error) {
 	pattern := "*.jsonl"
 	switch step.Chair.Provider {
 	case "claude_code":
-		dirs = []string{filepath.Join(m.ClaudeHome, "projects", claudeProjectName.ReplaceAllString(step.Dir, "-"))}
+		dirs = []string{filepath.Join(m.ClaudeHome, "projects", claudeProjectName(step.Dir))}
 	case "copilot_cli", "antigravity_cli":
 		var err error
 		if step.Chair.Provider == "copilot_cli" {
