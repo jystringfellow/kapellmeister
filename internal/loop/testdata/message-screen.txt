@@ -1,0 +1,22 @@
+km-begin 1234567890abcdef
+
+Review Summary
+
+All checks passed and the change is ready.
+
+- The input is validated
+- Edge cases are handled
+- The unit tests pass
+
+This is the first plain line.
+This is the second plain line.
+This is the third plain line.
+
+def greet(name):
+return f"Hello, {name}!"
+This line is longer than two hundred and twenty characters. It is here to check that long lines wrap or render correctly in the terminal output, so it keeps going with more words about formatting, rendering, wrapping,
+and display until it is past the limit.
+
+APPROVE
+
+km-end 1234567890abcdef

@@ -12,8 +12,9 @@ import (
 )
 
 type statusRecord struct {
-	Part  string      `json:"part"`
-	Chair *loop.Chair `json:"chair"`
+	ReplySource string      `json:"reply_source,omitempty"`
+	Part        string      `json:"part"`
+	Chair       *loop.Chair `json:"chair"`
 	reportPartRecord
 	At          time.Time `json:"at"`
 	TerminalID  string    `json:"terminal_id"`
@@ -48,6 +49,8 @@ type statusSection struct {
 }
 
 type statusChair struct {
+	Reply       string           `json:"reply,omitempty"`
+	ReplySource string           `json:"reply_source,omitempty"`
 	Definition  string           `json:"definition,omitempty"`
 	NativeAgent string           `json:"native_agent,omitempty"`
 	ModelSource string           `json:"model_source,omitempty"`
@@ -107,11 +110,12 @@ type statusCurrent struct {
 }
 
 type statusTrail struct {
-	Step       string `json:"step"`
-	Round      int    `json:"round"`
-	Exit       string `json:"exit"`
-	Chair      string `json:"chair"`
-	DurationMS int64  `json:"duration_ms"`
+	ReplySource string `json:"reply_source,omitempty"`
+	Step        string `json:"step"`
+	Round       int    `json:"round"`
+	Exit        string `json:"exit"`
+	Chair       string `json:"chair"`
+	DurationMS  int64  `json:"duration_ms"`
 }
 
 func statusStepName(name string) string {
@@ -268,6 +272,9 @@ func addStatusData(run *statusRun, recorded reportRun) {
 			run.Usage.add(record)
 		}
 		if chair != nil && record.Chair != nil {
+			if record.ReplySource != "" {
+				chair.ReplySource = record.ReplySource
+			}
 			chair.Usage.add(record)
 			updateStatusBinding(chair, record)
 			chair.Step, chair.Since = record.Step, record.At
@@ -286,7 +293,7 @@ func addStatusData(run *statusRun, recorded reportRun) {
 		if step.Part != "" && record.Chair == nil {
 			continue
 		}
-		entry := statusTrail{Step: name, Round: record.Round, DurationMS: 0}
+		entry := statusTrail{Step: name, Round: record.Round, DurationMS: 0, ReplySource: record.ReplySource}
 		if record.DurationMS != nil {
 			entry.DurationMS = *record.DurationMS
 		}

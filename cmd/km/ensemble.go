@@ -79,6 +79,9 @@ func lineUpSpec(s loop.Settings, worktree, name string, roles map[string]*string
 			return s, loop.Chairs{}, nil, fmt.Errorf("-%s cannot override ensemble %s from %s; edit it, or copy it to %s and edit that", role, name, spec.Path, loop.Home()+"/"+ensemble.UserDir)
 		}
 	}
+	if err := spec.Fits(s.Score.Score); err != nil {
+		return s, loop.Chairs{}, nil, err
+	}
 	members, err := spec.Bind(s.Defined, s.Agents)
 	if err != nil {
 		return s, loop.Chairs{}, nil, err
@@ -151,6 +154,10 @@ func prepareMember(ctx context.Context, client *cao.Client, policy loop.Policy, 
 	if err != nil {
 		return m, err
 	}
+	if m.Chair.Reply == loop.ReplyMessage && chair.Provider != "claude_code" {
+		return m, fmt.Errorf("reply = %q is allowed only on claude_code; other providers are refused until proven live", m.Chair.Reply)
+	}
+	chair.Reply = m.Chair.Reply
 	if m.Chair.NativeAgent != "" {
 		if chair.Provider != "claude_code" {
 			return m, fmt.Errorf("%s cannot play native agent %s (only claude_code can)", spec, m.Chair.NativeAgent)

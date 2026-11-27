@@ -179,8 +179,12 @@ func (m *LogMeter) Open(ctx context.Context, step Step) (close func() Usage, err
 		}
 		chosen := grown[0]
 		matches := 0
+		match := step.UsageMatch
+		if match == "" {
+			match = step.ReplyPath
+		}
 		for _, g := range grown {
-			if g.path == g.parent && step.ReplyPath != "" && bytes.Contains(g.data, []byte(step.ReplyPath)) {
+			if g.path == g.parent && match != "" && bytes.Contains(g.data, []byte(match)) {
 				chosen = g
 				matches++
 			}

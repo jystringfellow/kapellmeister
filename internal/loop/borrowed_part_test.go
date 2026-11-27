@@ -329,3 +329,24 @@ func TestABorrowedBodyMayContainRulesAfterExactFrontMatter(t *testing.T) {
 		}
 	}
 }
+
+func TestABorrowedPartOnAMessageChairAsksForTheFinalMessageAndNoFile(t *testing.T) {
+	e := &Engine{Config: Config{ScratchDir: "scratch"}, Score: Score{Name: "custom", Steps: []ScoreStep{{Name: "work", Part: "writer"}}, Parts: []Part{{Name: "writer", From: "agent.md", Prompt: map[string]string{"work": "Write to {reply}."}}}}}
+	for _, kind := range []StepKind{KindReview, KindDecide, KindTest} {
+		got := e.brief(ScoreStep{Name: "work", Part: "writer", Kind: kind}, handoff{files: []string{"input.md"}}, "reply.md", Chair{Provider: "claude_code", Reply: ReplyMessage})
+		for _, want := range []string{"Write to {reply}.", "Read input.md.", "Do not write or modify any file", "Put APPROVE or CHANGES alone on the last line before the closing km-end line."} {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s missing %q: %s", kind, want, got)
+			}
+		}
+		for _, unwanted := range []string{"reply.md", "Write your reply to", "final message (not a file)", "of the reply file"} {
+			if strings.Contains(got, unwanted) {
+				t.Errorf("%s has %q: %s", kind, unwanted, got)
+			}
+		}
+	}
+	got := e.brief(ScoreStep{Name: "work", Part: "writer", Kind: KindTest}, handoff{}, "reply.md", Chair{Provider: "claude_code", Reply: ReplyMessage})
+	if !strings.Contains(got, "Do not write or modify any file, apart from what you create under scratch.") {
+		t.Fatalf("test step: %s", got)
+	}
+}

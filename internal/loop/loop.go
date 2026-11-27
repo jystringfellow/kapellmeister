@@ -15,10 +15,12 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 type Chair struct {
+	Reply          string          `json:"reply,omitempty"`
 	Manifest       *NativeManifest `json:"-"`
 	NativeAgent    string          `json:"native_agent,omitempty"`
 	Agent          string          `json:"agent,omitempty"`
@@ -100,6 +102,7 @@ type Step struct {
 	Prompt        string
 	Dir           string
 	ReplyPath     string
+	UsageMatch    string
 	KeepTerminal  bool
 	ReuseTerminal string
 	FreshTerminal bool
@@ -184,6 +187,7 @@ type Config struct {
 
 type Record struct {
 	PartText      string         `json:"part_text,omitempty"`
+	ReplySource   string         `json:"reply_source,omitempty"`
 	ModelSource   string         `json:"model_source,omitempty"`
 	NudgedAfterMS *int64         `json:"nudged_after_ms,omitempty"`
 	Memory        string         `json:"memory,omitempty"`
@@ -257,6 +261,7 @@ type VerifyRetry struct {
 }
 
 type Result struct {
+	ReplySource   string        `json:"reply_source,omitempty"`
 	Restores      []Restore     `json:"restores,omitempty"`
 	VerifyRetried []VerifyRetry `json:"verify_retried,omitempty"`
 	Strict        *StrictResult `json:"strict,omitempty"`
@@ -298,6 +303,7 @@ type Reseater interface {
 }
 
 type Engine struct {
+	replyScreen     atomic.Bool
 	Reseater        Reseater
 	kept            map[string]*keptChair
 	keptOrder       []string
@@ -339,7 +345,16 @@ func RunDirRel(runID string) string {
 	return filepath.Join(".kapellmeister", "runs", runID)
 }
 
+func (e *Engine) ReplySource() string {
+	if e.replyScreen.Load() {
+		return ReplyScreen
+	}
+	return ""
+}
+
 func (e *Engine) Run(ctx context.Context) (res Result, err error) {
+	e.replyScreen.Store(false)
+	defer func() { res.ReplySource = e.ReplySource() }()
 	e.score = e.Score
 	if len(e.score.Steps) == 0 {
 		e.score = DefaultScore()
@@ -676,6 +691,9 @@ func (e *Engine) step(ctx context.Context, s Step) (StepResult, error) {
 		nudge := s
 		nudge.Name, nudge.ReuseTerminal = s.Name+"-nudge", out.TerminalID
 		nudge.Prompt = nudgePrompt(s.ReplyPath)
+		if s.Chair.Reply == ReplyMessage {
+			nudge.Prompt = "You ended your turn without a complete bracketed final message. Finish anything still owed, then give the whole reply again."
+		}
 		nudge.noNudge, nudge.NudgedAfter = true, out.replyWait
 		var nudged StepResult
 		nudged, err = e.attempt(ctx, nudge)
@@ -735,6 +753,19 @@ var errNoReply = errors.New("no reply file")
 
 func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 	chair := s.Chair
+	nonce := ""
+	if chair.Reply == ReplyMessage {
+		var nonceErr error
+		nonce, nonceErr = messageNonce()
+		if nonceErr != nil {
+			return StepResult{}, nonceErr
+		}
+		s.Prompt += messagePrompt(nonce)
+		s.UsageMatch = nonce
+		if err := os.Remove(filepath.Join(e.Config.Worktree, s.ReplyPath)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return StepResult{}, err
+		}
+	}
 	rec := Record{Memory: s.Memory, MemoryReason: s.MemoryReason, Part: e.playingScore().StepPart(s.Name), Retry: s.Retry, RunID: e.Config.RunID, Round: s.Round, Step: s.Name, ChairName: s.ChairName, Chair: &chair, Reply: s.ReplyPath,
 		Tier: s.Assignment.Tier, Effort: s.Assignment.Effort, TierSource: s.Assignment.Source}
 	if part, ok := e.playingScore().Part(rec.Part); ok && chair.SuppliesPart(part.From) {
@@ -782,9 +813,45 @@ func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 	if err == nil {
 		var reply string
 		var waited time.Duration
-		reply, waited, err = e.awaitReply(ctx, s.ReplyPath, out.TerminalID, !s.noNudge)
+		if chair.Reply == ReplyMessage {
+			path := filepath.Join(e.Config.Worktree, s.ReplyPath)
+			if removeErr := os.Remove(path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+				err = removeErr
+			} else {
+				var ok bool
+				reply, ok = bracketedReply(out.LastMessage, nonce)
+				if !ok {
+					err = fmt.Errorf("%w at %s", errNoReply, s.ReplyPath)
+				} else {
+					var f *os.File
+					f, err = os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+					if err == nil {
+						_, err = f.WriteString(reply + "\n")
+						closeErr := f.Close()
+						if err == nil {
+							err = closeErr
+						}
+					}
+					if err == nil {
+						reply, err = e.readReply(s.ReplyPath)
+						if err == nil && strings.TrimSpace(reply) == "" {
+							err = emptyReplyError{s.ReplyPath}
+						}
+					}
+					if err == nil {
+						rec.ReplySource = ReplyScreen
+						e.replyScreen.Store(true)
+					}
+				}
+			}
+		} else {
+			reply, waited, err = e.awaitReply(ctx, s.ReplyPath, out.TerminalID, !s.noNudge)
+		}
 		out.replyWait = waited
 		rec.ReplyChars, rec.ReplyWaitMS = len(reply), waited.Milliseconds()
+	}
+	if err != nil && chair.Reply == ReplyMessage {
+		_ = os.Remove(filepath.Join(e.Config.Worktree, s.ReplyPath))
 	}
 	if closeUsage != nil {
 		usage := closeUsage()
@@ -1079,7 +1146,12 @@ func (e *Engine) classify(ctx context.Context, round int, subject, path, chairNa
 		return "", err
 	}
 	text, _ := e.readReply(verdictPath)
-	verdict := firstVerdict(text, out.LastMessage)
+	var verdict string
+	if e.classifierChair().Reply == ReplyMessage {
+		verdict = firstVerdict(text)
+	} else {
+		verdict = firstVerdict(text, out.LastMessage)
+	}
 	e.record(Record{RunID: e.Config.RunID, Round: round, Step: "verdict-" + subject, ChairName: chairName, Verdict: verdict, Reply: path})
 	e.progress("  %s verdict: %s", firstSet(chairName, subject), verdict)
 	return verdict, nil

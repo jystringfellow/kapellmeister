@@ -33,7 +33,7 @@ func (c conductor) seat(ctx context.Context, prefix string) (Report, error) {
 	}
 	report := Report{Ensemble: c.Ensemble, Queue: filepath.Join(c.Worktree, loop.RunDirRel(runID), "cues.jsonl"), Chairs: make([]ChairReport, len(c.Members))}
 	for i, m := range c.Members {
-		report.Chairs[i] = ChairReport{Address: m.Address(c.Ensemble), Chair: m.Chair.String(), NativeAgent: m.Chair.NativeAgent}
+		report.Chairs[i] = ChairReport{Address: m.Address(c.Ensemble), Chair: m.Chair.String(), NativeAgent: m.Chair.NativeAgent, Reply: m.Chair.Reply}
 	}
 	report.Session = c.boot(ctx, "km-"+c.Ensemble+"-"+randomHex(3), report.Chairs)
 	return report, nil

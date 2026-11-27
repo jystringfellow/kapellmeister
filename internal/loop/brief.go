@@ -13,6 +13,9 @@ func FocusBlock(focus string) string {
 }
 
 func (e *Engine) brief(spec ScoreStep, h handoff, path string, chair Chair) string {
+	if chair.Reply == ReplyMessage {
+		path = finalMessage
+	}
 	cfg := e.Config
 	lessons := e.lessonsFor(spec.Name, chair)
 	switch spec.Brief {
@@ -38,6 +41,9 @@ func (e *Engine) brief(spec ScoreStep, h handoff, path string, chair Chair) stri
 	part, _ := e.playingScore().Part(spec.Part)
 	instructions := part.Prompt[spec.Name]
 	if part.From == "" {
+		if chair.Reply == ReplyMessage && e.playingScore().Source == "built-in" {
+			instructions = strings.NewReplacer("Do not modify any file other than {reply}. When done, reply with one short sentence.", "Do not write or modify any file; your reply goes in {reply}.", "Write your review to {reply}", "Give your review in {reply}", "Write to {reply}", "Give in {reply}").Replace(instructions)
+		}
 		instructions = strings.NewReplacer("{reply}", path, "{inputs}", strings.Join(h.files, ", "), "{plan}", h.path(0), "{verify}", h.verifyPath, "{verification}", strings.TrimRight(verifyLine(cfg.VerifyCommand, h.verify, h.verifyPath), "\n"), "{check}", cfg.CheckCommand, "{scratch}", cfg.ScratchDir).Replace(instructions)
 	} else if chair.SuppliesPart(part.From) {
 		instructions = ""
@@ -54,16 +60,12 @@ func (e *Engine) brief(spec ScoreStep, h handoff, path string, chair Chair) stri
 	if spec.Kind == KindTest {
 		prompt += "Everything you create stays under " + cfg.ScratchDir + ".\n"
 	}
-	prompt += replyLine(path)
+	prompt += replyLine(chair, path)
 	if part.From != "" && (spec.Kind != KindProduce || spec.Writes == "reply") {
-		if spec.Kind == KindTest {
-			prompt += "Do not modify any file other than " + path + ", apart from what you create under " + cfg.ScratchDir + ".\n"
-		} else {
-			prompt += "Do not modify any file other than " + path + ".\n"
-		}
+		prompt += modifyLine(chair, spec.Kind, path, cfg.ScratchDir)
 	}
 	if spec.Kind != KindProduce {
-		prompt += verdictLine()
+		prompt += verdictLine(chair)
 	}
 	return prompt
 }
@@ -77,6 +79,9 @@ func (e *Engine) classifierChair() Chair {
 }
 
 func (e *Engine) classifyBrief(subject, path, out string) string {
+	if e.classifierChair().Reply == ReplyMessage {
+		out = finalMessage
+	}
 	score := e.playingScore()
 	part, ok := score.Part(score.Classifier)
 	if !ok || part.Prompt["classify"] == "" {
@@ -101,7 +106,27 @@ func inputNotes(h handoff) string {
 	return out
 }
 
-func replyLine(path string) string { return "Write your reply to " + path + ".\n" }
-func verdictLine() string {
+func replyLine(chair Chair, path string) string {
+	if chair.Reply == ReplyMessage {
+		return ""
+	}
+	return "Write your reply to " + path + ".\n"
+}
+
+func modifyLine(chair Chair, kind StepKind, path, scratch string) string {
+	line := "Do not modify any file other than " + path
+	if chair.Reply == ReplyMessage {
+		line = "Do not write or modify any file"
+	}
+	if kind == KindTest {
+		line += ", apart from what you create under " + scratch
+	}
+	return line + ".\n"
+}
+
+func verdictLine(chair Chair) string {
+	if chair.Reply == ReplyMessage {
+		return "Put APPROVE or CHANGES alone on the last line before the closing km-end line.\n"
+	}
 	return "Put APPROVE or CHANGES alone on the last line of the reply file.\n"
 }

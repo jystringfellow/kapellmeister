@@ -71,6 +71,12 @@ func playCommand(args []string) error {
 	}
 	chairs, err := standing.RebuildChairsFor(s.Score.Score)
 	if err != nil {
+		if !errors.Is(err, ensemble.ErrNoRecordedBinding) {
+			spec, found, findErr := ensemble.Find(standing.Ensemble, loop.Home(), standing.Worktree, s.Defined)
+			if findErr == nil && found && spec.Fits(s.Score.Score) != nil {
+				return fmt.Errorf("%s: %w", spec.Path, err)
+			}
+		}
 		return err
 	}
 	if s.Score.Score.Source != "" {

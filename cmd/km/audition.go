@@ -127,6 +127,9 @@ func printChairTable(w io.Writer, r ensemble.Report, cueHeader string) {
 			cue = millis(c.CueMS)
 		}
 		chair := c.Chair
+		if c.Reply == loop.ReplyMessage {
+			chair += " reply message"
+		}
 		if c.NativeAgent != "" {
 			chair += " (native agent " + c.NativeAgent + ")"
 		}
