@@ -217,10 +217,12 @@ func printScoreFiles(w io.Writer, files []loop.ScoreFile, chairs loop.Chairs) {
 				fmt.Fprintf(w, "  %s", file.FrontMatter)
 			}
 			occupants := chairs.Of(file.Name)
-			var matches []loop.Chair
+			var matches, mismatches []loop.Chair
 			for _, c := range occupants {
-				if c.SuppliesPart(file.From) {
+				if c.SuppliesPart(file.From, file.SHA256) {
 					matches = append(matches, c)
+				} else if c.NamesPart(file.From) {
+					mismatches = append(mismatches, c)
 				}
 			}
 			if len(matches) > 0 {
@@ -234,6 +236,19 @@ func printScoreFiles(w io.Writer, files []loop.ScoreFile, chairs loop.Chairs) {
 				if len(matches) < len(occupants) && len(addresses) > 0 {
 					fmt.Fprintf(w, " for %s", strings.Join(addresses, ", "))
 				}
+			}
+			if len(mismatches) > 0 {
+				fmt.Fprint(w, "  part text kept in the prompt")
+				var addresses []string
+				for _, c := range mismatches {
+					if c.Address != "" {
+						addresses = append(addresses, plain(c.Address))
+					}
+				}
+				if len(mismatches) < len(occupants) && len(addresses) > 0 {
+					fmt.Fprintf(w, " for %s", strings.Join(addresses, ", "))
+				}
+				fmt.Fprintf(w, ": not the definition pinned for agent %s", plain(mismatches[0].NativeAgent))
 			}
 			fmt.Fprintln(w)
 		}

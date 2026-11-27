@@ -36,8 +36,20 @@ type Chair struct {
 	Timeout        time.Duration   `json:"timeout,omitempty"`
 }
 
-func (c Chair) SuppliesPart(from string) bool {
+func (c Chair) NamesPart(from string) bool {
 	return c.NativeAgent != "" && from == ".claude/agents/"+c.NativeAgent+".md"
+}
+
+func (c Chair) SuppliesPart(from, sum string) bool {
+	if !c.NamesPart(from) || c.Manifest == nil || sum == "" {
+		return false
+	}
+	for _, entry := range c.Manifest.Entries {
+		if string(entry.Path) == from && entry.SHA256 == sum {
+			return true
+		}
+	}
+	return false
 }
 
 func SplitTier(spec string) (string, string, error) {
@@ -768,8 +780,10 @@ func (e *Engine) attempt(ctx context.Context, s Step) (StepResult, error) {
 	}
 	rec := Record{Memory: s.Memory, MemoryReason: s.MemoryReason, Part: e.playingScore().StepPart(s.Name), Retry: s.Retry, RunID: e.Config.RunID, Round: s.Round, Step: s.Name, ChairName: s.ChairName, Chair: &chair, Reply: s.ReplyPath,
 		Tier: s.Assignment.Tier, Effort: s.Assignment.Effort, TierSource: s.Assignment.Source}
-	if part, ok := e.playingScore().Part(rec.Part); ok && chair.SuppliesPart(part.From) {
+	if part, ok := e.playingScore().Part(rec.Part); ok && chair.SuppliesPart(part.From, part.FromSHA256) {
 		rec.PartText = "part text supplied by agent " + chair.NativeAgent
+	} else if ok && chair.NamesPart(part.From) {
+		rec.PartText = "part text kept in the prompt: " + part.From + " is not the definition pinned for agent " + chair.NativeAgent
 	}
 	retryNote := ""
 	if s.Retry > 0 {

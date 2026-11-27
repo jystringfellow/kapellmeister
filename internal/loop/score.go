@@ -46,6 +46,7 @@ type ScoreStep struct {
 }
 
 type Part struct {
+	FromSHA256   string
 	From         string
 	ResumeTokens int64
 	ResumeSteps  int

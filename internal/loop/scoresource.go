@@ -119,6 +119,7 @@ func (r scoreReader) loadText(name, text string, file ScoreFile) (LoadedScore, e
 			if err != nil {
 				return LoadedScore{}, err
 			}
+			part.FromSHA256 = borrowed.SHA256
 			part.Prompt = map[string]string{}
 			for _, step := range loaded.Score.StepsOf(part.Name) {
 				part.Prompt[step.Name] = body
