@@ -52,7 +52,18 @@ func (r scoreReader) borrowed(score, name, path string) (string, ScoreFile, erro
 	}
 	blob := r.engine.readTextBlob(fields[0], fields[2])
 	if blob.reason != "" {
-		return fail("%s", blob.reason)
+		reason := blob.reason
+		if reason == "control characters" || reason == "invisible or direction-changing characters" {
+			text, err := r.engine.gitOutput("cat-file", "blob", fields[2])
+			if err == nil {
+				if i := strings.Index(text, "\ufeff"); i >= 0 {
+					reason = fmt.Sprintf("line %d: has a byte order mark; remove the BOM", 1+strings.Count(text[:i], "\n"))
+				} else if i := strings.Index(text, "\r\n"); i >= 0 {
+					reason = fmt.Sprintf("line %d: has CRLF line endings; convert the file to LF", 1+strings.Count(text[:i], "\n"))
+				}
+			}
+		}
+		return fail("%s", reason)
 	}
 	file.SHA256 = fmt.Sprintf("%x", sha256.Sum256([]byte(blob.text)))
 	body, note, err := stripBorrowedFrontMatter(blob.text)
@@ -90,7 +101,12 @@ func stripBorrowedFrontMatter(text string) (string, string, error) {
 		var keys []string
 		for _, key := range []string{"tools", "disallowedTools", "model"} {
 			for _, line := range lines[1:end] {
-				if strings.HasPrefix(line, key+":") {
+				candidate, _, ok := strings.Cut(line, ":")
+				candidate = strings.TrimRight(candidate, " \t")
+				if len(candidate) >= 2 && (candidate[0] == '\'' || candidate[0] == '"') && candidate[len(candidate)-1] == candidate[0] {
+					candidate = candidate[1 : len(candidate)-1]
+				}
+				if ok && candidate == key {
 					keys = append(keys, key)
 					break
 				}

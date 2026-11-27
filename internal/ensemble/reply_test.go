@@ -160,3 +160,13 @@ reply="message"`, loop.BuiltInAgents())
 		}
 	}
 }
+
+func TestMessageChairsCanProduceOnlyRepliesWithBorrowedParts(t *testing.T) {
+	for _, writes := range []string{"reply", ""} {
+		score := loop.Score{Name: "custom", Parts: []loop.Part{{Name: "writer", From: "agent.md"}}, Steps: []loop.ScoreStep{{Name: "work", Part: "writer", Kind: loop.KindProduce, Writes: writes}}}
+		_, err := ChairsFor(score, []Member{{Section: "all", Name: "one", Part: "writer", Chair: loop.Chair{Reply: loop.ReplyMessage}}})
+		if writes == "reply" && err != nil || writes != "reply" && (err == nil || !strings.Contains(err.Error(), "worktree-changing")) {
+			t.Fatalf("%s: %v", writes, err)
+		}
+	}
+}
