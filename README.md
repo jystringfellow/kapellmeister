@@ -796,8 +796,9 @@ A chair can set `native_agent = "NAME"` to play a Claude Code agent through CAO'
 `native_agent` profile field. Only `claude_code` can play it; the definition sets its model,
 so a native chair cannot specify a tier, tier pin or explicit model. NAME starts with a lowercase
 letter or digit and contains only lowercase letters, digits, `_` and `-`. The generated profile
-`km-<agent>-native-<NAME>` must be at most 59 characters, leaving room for CAO's
-five-character window suffix within its 64-character limit.
+`km-<agent>-native-<NAME>` uses only letters, digits, `_` and `-`, and must be at most 59 characters, leaving room for CAO's
+five-character window suffix within its 64-character limit. Native chairs in user ensembles name
+agents rather than using raw `provider:profile` entries.
 
 For a repository ensemble, `.claude/agents/NAME.md` must be a regular file at the base commit,
 declare `name: NAME`, and no other project agent file may declare that name. A user or text
@@ -809,18 +810,35 @@ Code to report "not found" and the launch to time out.
 
 Native chairs require the worktree to be the repository root. When km binds a native chair for
 run, audition or rehearse, before any chair runs, it pins a manifest of the entire base commit's
-`.claude/agents/` tree with each path, mode and SHA-256, verifying file content against its git
-object ID. At binding km trusts the commit and tree objects. Before each launch km compares the
-worktree tree with that manifest without reading the git object store again, because Claude Code
-resolves agents by front-matter name, not file name. A standing ensemble's manifest lives in its
-record in km's state directory, which km does not protect from a chair writing outside its worktree.
-`km reseat` and `km play` refuse a native chair without a pinned manifest; rehearse again.
-The comparison uses raw bytes, so a CRLF checkout such as one using `.gitattributes eol=crlf`
-is refused. km creates an empty
-`.claude/agents/` when needed to prevent Claude Code falling back to the main checkout. The
-summary and `native_files_changed` name changes anywhere in that tree. The user directory is
-not checked beyond the named file's name at binding; only simple one-line name forms are read,
-and the check is not atomic with the agent's read.
+`.claude/agents/` tree because Claude Code resolves agents by front-matter name, not file name.
+The manifest records each path, size and SHA-256, verifying file content against its git object ID.
+At binding km trusts the commit and tree objects. Before each launch km compares the worktree
+files byte for byte with that manifest, checking size first and without reading the git object store
+again. A standing ensemble's manifest lives in its record in km's state directory, which km does not
+protect from a chair writing outside its worktree. `km reseat` and `km play` refuse a native chair
+without a pinned manifest; rehearse again. A CRLF checkout such as one using `.gitattributes eol=crlf`
+is refused. km creates an empty `.claude/agents/` when needed to prevent Claude Code falling back
+to the main checkout. The summary and `native_files_changed` name changes anywhere in that tree.
+
+Agent front matter must use simple unquoted keys, nested block mappings and sequences, one-line
+plain or quoted values, one-line flow sequences of scalars, and block scalars without indentation
+digits. Keys must be unique within each mapping. Anchors, tags, aliases, flow mappings, merge keys,
+quoted or complex keys, and multi-line quoted values are refused. The top-level name must be a
+one-line string; quote values YAML would not read as strings. A plain value may contain `: ` only
+in a top-level key other than `name`; then no other name line or comment on the name is allowed.
+Front-matter lines may not contain `---`. km refuses files outside this subset and names the line,
+including in every agent file under `.claude/agents/` and the user definition.
+
+Run `KM_LIVE_CLAUDE=1 go test ./internal/loop -run TestClaudeCodeLoadsTheNameKmReadsForEveryFixture -v -count=1`
+when Claude Code is upgraded.
+
+Limits:
+
+- `.claude/agent-memory/NAME/` and `.claude/skills/` can feed a persona that enables them; km does not pin them.
+- The check is not atomic with launch; a process left by an earlier chair could change a file between the check and Claude Code's read.
+- Claude Code 2.1.332 did not load agents from nested or parent `.claude/agents/` directories, so km does not check them.
+- Settings are out of scope and km does not check them; `permissions.additionalDirectories` in project settings added no agents with Claude Code 2.1.332.
+- The user directory is checked only for the named file's name, at binding.
 
 This is the only launch option km passes: an open option list could change permissions, load
 code, or override the model and session settings km owns.

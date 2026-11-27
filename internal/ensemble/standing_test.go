@@ -151,7 +151,7 @@ func TestMissingOccupantsNamesEveryChairCAOReports404For(t *testing.T) {
 }
 
 func TestStandingManifestRoundTripsWithoutMutatingItsCaller(t *testing.T) {
-	for _, manifest := range []*loop.NativeManifest{{Entries: []loop.NativeManifestEntry{}}, {Entries: []loop.NativeManifestEntry{{Path: []byte{0xff, 'x'}, Mode: "100644", SHA256: "hash", LFSHA256: "lf"}}}} {
+	for _, manifest := range []*loop.NativeManifest{{Entries: []loop.NativeManifestEntry{}}, {Entries: []loop.NativeManifestEntry{{Path: []byte{0xff, 'x'}, Size: 42, SHA256: "hash"}}}} {
 		dir := t.TempDir()
 		s := Standing{Session: "test", Chairs: []StandingChair{{Binding: loop.Chair{NativeAgent: "demo", Manifest: manifest}}}}
 		if err := s.Save(dir); err != nil {

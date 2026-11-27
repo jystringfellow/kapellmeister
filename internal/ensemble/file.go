@@ -263,7 +263,7 @@ func parse(name, path, text string, portable bool, agents loop.Agents, available
 					agent += "@" + c.Tier
 				}
 
-				if err := checkAgent(agent, portable, agents); err != nil {
+				if err := checkAgent(agent, portable || c.NativeAgent != "", agents); err != nil {
 					return fail(key+".agents", "%v", err)
 				}
 			}

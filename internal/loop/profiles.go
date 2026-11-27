@@ -3,6 +3,7 @@ package loop
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
 )
 
@@ -101,8 +102,20 @@ func (p *Policy) EffortVariants(steps map[string][]Chair) []EffortVariant {
 	return out
 }
 
+var nativeProfileCharacters = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+func CheckNativeProfileCharacters(profile string) error {
+	if !nativeProfileCharacters.MatchString(profile) {
+		return fmt.Errorf("native profile %q has characters outside [A-Za-z0-9_-]; use a named agent or a profile of letters, digits, _ and -", profile)
+	}
+	return nil
+}
+
 func NativeProfileName(agent, name string) (string, error) {
 	profile := "km-" + agent + "-native-" + name
+	if err := CheckNativeProfileCharacters(profile); err != nil {
+		return "", err
+	}
 	if len(profile) > 59 {
 		return "", fmt.Errorf("native profile %s is %d characters; the limit is 59 to leave room for CAO's five-character window suffix within its 64-character limit; shorten native_agent or the agent name", profile, len(profile))
 	}
