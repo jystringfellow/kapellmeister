@@ -33,7 +33,7 @@ func (c conductor) seat(ctx context.Context, prefix string) (Report, error) {
 	}
 	report := Report{Ensemble: c.Ensemble, Queue: filepath.Join(c.Worktree, loop.RunDirRel(runID), "cues.jsonl"), Chairs: make([]ChairReport, len(c.Members))}
 	for i, m := range c.Members {
-		report.Chairs[i] = ChairReport{Address: m.Address(c.Ensemble), Chair: m.Chair.String()}
+		report.Chairs[i] = ChairReport{Address: m.Address(c.Ensemble), Chair: m.Chair.String(), NativeAgent: m.Chair.NativeAgent}
 	}
 	report.Session = c.boot(ctx, "km-"+c.Ensemble+"-"+randomHex(3), report.Chairs)
 	return report, nil
@@ -60,7 +60,11 @@ func (c conductor) boot(ctx context.Context, name string, chairs []ChairReport) 
 	first := 0
 	for ; first < len(c.Members) && session == ""; first++ {
 		start := time.Now()
-		t, err := c.Client.CreateSession(ctx, name, c.launch(c.Members[first]))
+		var t cao.Terminal
+		err := c.Members[first].Chair.CheckDefinition(c.Worktree)
+		if err == nil {
+			t, err = c.Client.CreateSession(ctx, name, c.launch(c.Members[first]))
+		}
 		c.booted(ctx, c.Members[first], t, err, time.Since(start), &chairs[first])
 		if err == nil {
 			session = t.SessionName
@@ -80,7 +84,11 @@ func (c conductor) boot(ctx context.Context, name string, chairs []ChairReport) 
 
 func (c conductor) bootInto(ctx context.Context, session string, m Member, r *ChairReport) {
 	start := time.Now()
-	t, err := c.Client.AddTerminal(ctx, session, c.launch(m))
+	var t cao.Terminal
+	err := m.Chair.CheckDefinition(c.Worktree)
+	if err == nil {
+		t, err = c.Client.AddTerminal(ctx, session, c.launch(m))
+	}
 	c.booted(ctx, m, t, err, time.Since(start), r)
 }
 
@@ -99,10 +107,12 @@ func (c conductor) booted(ctx context.Context, m Member, t cao.Terminal, err err
 		return
 	}
 	r.TerminalID = t.ID
-	if t.Model != nil {
-		r.Model = *t.Model
+	if m.Chair.NativeAgent == "" {
+		if t.Model != nil {
+			r.Model = *t.Model
+		}
+		r.Honored = t.ModelHonored
 	}
-	r.Honored = t.ModelHonored
 	if err := c.Client.SetGroup(ctx, t.ID, []string{c.Ensemble, m.Section}); err != nil {
 		r.Problem = "group: " + err.Error()
 		return

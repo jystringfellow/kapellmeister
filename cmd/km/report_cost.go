@@ -159,6 +159,10 @@ func (report *runReport) addCosts(prices map[string]loop.ReportPrice, source str
 	}
 	if report.Parts != nil {
 		for _, row := range report.Parts.Rows {
+			if row.NativeAgent != "" {
+				row.ReportCost = &ReportCost{}
+				continue
+			}
 			row.ReportCost = row.Usage.cost(prices)
 			row.UnpricedModels = note(row.Usage.models)
 		}

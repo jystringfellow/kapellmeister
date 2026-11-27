@@ -44,21 +44,30 @@ func preflightSeats(ctx context.Context, client *cao.Client, wt string, s loop.S
 	if err != nil {
 		return members, nil, nil, err
 	}
-	if preflightFailure(results, s.PreflightTimeout) == nil {
-		return members, nil, nil, nil
-	}
 	all := slices.Clone(results)
 	cleanup := func() {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
-		for _, r := range all {
+		for i := range all {
+			r := &all[i]
 			if r.OK || r.Session == "" {
 				continue
 			}
 			if err := (loop.CAOStepper{Client: client}).Unseat(cleanupCtx, r.Session); err != nil {
 				fmt.Fprintf(os.Stderr, "preflight teardown failed for %s: %v\n", r.Session, err)
+			} else {
+				r.Session, r.TerminalID = "", ""
 			}
 		}
+	}
+	for _, result := range results {
+		if result.DefinitionError != "" {
+			cleanup()
+			return members, nil, nil, preflightFailure(all, s.PreflightTimeout)
+		}
+	}
+	if preflightFailure(results, s.PreflightTimeout) == nil {
+		return members, nil, nil, nil
 	}
 	defer func() {
 		if ctx.Err() != nil {
@@ -94,8 +103,8 @@ func preflightSeats(ctx context.Context, client *cao.Client, wt string, s loop.S
 	var pending []pendingSeat
 	for i, m := range members {
 		if r := failure(m); r != nil {
-			first, later := spec.Listed(m.Section, m.Name, s.Agents)
-			pending = append(pending, pendingSeat{index: i, later: slices.Clone(later), change: ensemble.SeatChange{Address: m.Address(spec.Name), BlockedAgent: first, BlockedProvider: m.Chair.Provider, Reason: r.Reason()}})
+			first, later := spec.Listed(m.Section, m.Name, s.Agents, s.Defined)
+			pending = append(pending, pendingSeat{index: i, later: slices.Clone(later), change: ensemble.SeatChange{Address: m.Address(spec.Name), BlockedAgent: first, BlockedProvider: m.Chair.Provider, Reason: r.Reason(), NativeAgent: m.Chair.NativeAgent}})
 		}
 	}
 	if !s.SeatFallback {
@@ -132,8 +141,17 @@ func preflightSeats(ctx context.Context, client *cao.Client, wt string, s loop.S
 					continue
 				}
 				original := members[p.index]
+				if original.Chair.NativeAgent != "" {
+					resolved, resolveErr := s.Defined.ResolveChair(agent)
+					if resolveErr == nil && resolved.Provider != "claude_code" {
+						base, _, _ := loop.SplitTier(agent)
+						reject(fmt.Sprintf("%s cannot play native agent %s (only claude_code can)", base, original.Chair.NativeAgent))
+						continue
+					}
+				}
 				m, e := spec.Seat(s.Defined, original.Section, original.Name, agent)
 				if e == nil {
+					m.Chair = m.Chair.WithDefinitionOf(original.Chair)
 					e = checkPin(*policy, m.Part, m.Address(spec.Name), agent, m.Chair)
 				}
 				if e != nil {
@@ -168,6 +186,12 @@ func preflightSeats(ctx context.Context, client *cao.Client, wt string, s loop.S
 			all = append(all, rs...)
 			if e != nil {
 				return members, nil, nil, e
+			}
+			for _, result := range rs {
+				if result.DefinitionError != "" {
+					cleanup()
+					return members, nil, nil, preflightFailure(all, s.PreflightTimeout)
+				}
 			}
 			remember(rs)
 		}

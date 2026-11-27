@@ -22,6 +22,11 @@ type CAOStepper struct {
 }
 
 func (c CAOStepper) Run(ctx context.Context, s Step) (StepResult, error) {
+	if s.ReuseTerminal == "" {
+		if err := s.Chair.CheckDefinition(s.Dir); err != nil {
+			return StepResult{}, err
+		}
+	}
 	if s.ReuseTerminal != "" {
 		if err := c.Client.SetDescription(ctx, s.ReuseTerminal, s.Label); err != nil {
 			if ctx.Err() == nil && !errors.Is(err, context.Canceled) {
@@ -39,6 +44,9 @@ func (c CAOStepper) Run(ctx context.Context, s Step) (StepResult, error) {
 		ReuseTerminalID:  s.ReuseTerminal,
 		Description:      s.Label,
 		Timeout:          s.Timeout.Seconds(),
+	}
+	if s.Chair.NativeAgent != "" {
+		req.Model = ""
 	}
 	if s.ReuseTerminal == "" {
 		req.SessionName = c.Session
@@ -84,6 +92,9 @@ func (c CAOStepper) Screen(ctx context.Context, terminalID string) (string, stri
 }
 
 func (c CAOStepper) Seat(ctx context.Context, name string, chair Chair, dir string) (Seat, error) {
+	if err := chair.CheckDefinition(dir); err != nil {
+		return Seat{}, err
+	}
 	t, err := c.Client.CreateSession(ctx, name, cao.Launch{Provider: chair.Provider, Profile: chair.Profile, Model: chair.Model, WorkingDirectory: dir})
 	var herr *cao.HTTPError
 	if errors.As(err, &herr) && herr.TerminalID != "" {

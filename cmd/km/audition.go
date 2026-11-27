@@ -47,6 +47,15 @@ func auditionCommand(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := resolveEnsembleMembers(wt, *name, s.Defined, members); err != nil {
+		return err
+	}
+	if len(members) > 0 {
+		chairs, err = ensemble.ChairsFor(s.Score.Score, members)
+		if err != nil {
+			return err
+		}
+	}
 	if *timeout == 0 {
 		*timeout = s.PreflightTimeout
 	}
@@ -117,7 +126,11 @@ func printChairTable(w io.Writer, r ensemble.Report, cueHeader string) {
 		if c.CueMS > 0 {
 			cue = millis(c.CueMS)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s", c.Address, c.Chair, millis(c.BootMS), cue, result)
+		chair := c.Chair
+		if c.NativeAgent != "" {
+			chair += " (native agent " + c.NativeAgent + ")"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s", c.Address, chair, millis(c.BootMS), cue, result)
 		if permissions {
 			fmt.Fprintf(tw, "\t%s", c.Permissions)
 		}

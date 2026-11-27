@@ -19,7 +19,7 @@ func TestBindSeatsTheFirstAvailableAgentAndListsTheOnesAfterIt(t *testing.T) {
 	if members[0].Chair.Provider != "copilot_cli" {
 		t.Fatalf("first provider = %s", members[0].Chair.Provider)
 	}
-	first, later := s.Listed("review", "lead", []string{"copilot", "claude"})
+	first, later := s.Listed("review", "lead", []string{"copilot", "claude"}, loop.BuiltInAgents())
 	if first != "copilot" || !slices.Equal(later, []string{"claude"}) {
 		t.Fatalf("listed = %q, %v", first, later)
 	}

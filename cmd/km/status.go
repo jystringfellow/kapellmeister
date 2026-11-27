@@ -78,6 +78,9 @@ func statusAt(args []string, stdout, stderr io.Writer, now time.Time) error {
 	for _, recorded := range unfinishedRuns(found) {
 		run := statusRun{RunID: recorded.RunID, Path: recorded.Path, Started: recorded.Started, Repository: recorded.Repository, Ensemble: statusSeating{Name: recorded.Ensemble, Sections: []statusSection{}}, Playing: []statusStep{}, Liveness: "unknown"}
 		if state := recorded.state; state != nil {
+			if state.Seating != nil {
+				run.Ensemble.Sections = state.Seating.Sections
+			}
 			run.SeatsChanged, run.ProvidersLost = state.SeatsChanged, state.ProvidersLost
 			run.Command, run.Round, run.MaxRounds = state.Command, state.Round, state.MaxRounds
 			run.EnsembleSource, run.Why = state.EnsembleSource, state.Why
@@ -194,6 +197,15 @@ func printStatus(stdout io.Writer, runs []statusRun, now time.Time) error {
 		return err
 	}
 	for _, run := range runs {
+		for _, section := range run.Ensemble.Sections {
+			for _, chair := range section.Chairs {
+				if chair.NativeAgent != "" {
+					if _, err := fmt.Fprintf(stdout, "native %s: %s native agent %s\n", plain(run.RunID), plain(chair.Address), plain(chair.NativeAgent)); err != nil {
+						return err
+					}
+				}
+			}
+		}
 		if run.Why != "" {
 			if _, err := fmt.Fprintf(stdout, "why %s: %s\n", plain(run.RunID), plain(run.Why)); err != nil {
 				return err

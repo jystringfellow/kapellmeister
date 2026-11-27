@@ -792,6 +792,39 @@ part = "tester"
 agents = ["claude"]
 ```
 
+A chair can set `native_agent = "NAME"` to play a Claude Code agent through CAO's
+`native_agent` profile field. Only `claude_code` can play it; the definition sets its model,
+so a native chair cannot specify a tier, tier pin or explicit model. NAME starts with a lowercase
+letter or digit and contains only lowercase letters, digits, `_` and `-`. The generated profile
+`km-<agent>-native-<NAME>` must be at most 59 characters, leaving room for CAO's
+five-character window suffix within its 64-character limit.
+
+For a repository ensemble, `.claude/agents/NAME.md` must be a regular file at the base commit,
+declare `name: NAME`, and no other project agent file may declare that name. A user or text
+ensemble may instead use `$CLAUDE_CONFIG_DIR/agents/NAME.md` (default
+`~/.claude/agents/NAME.md`); it must declare the same name, and no project file at the base may
+declare it. The user file must also be visible to the agent's own Claude config directory:
+CAO clears `CLAUDE*` environment variables for its pane, and a missing definition causes Claude
+Code to report "not found" and the launch to time out.
+
+Native chairs require the worktree to be the repository root. When km binds a native chair for
+run, audition or rehearse, before any chair runs, it pins a manifest of the entire base commit's
+`.claude/agents/` tree with each path, mode and SHA-256, verifying file content against its git
+object ID. At binding km trusts the commit and tree objects. Before each launch km compares the
+worktree tree with that manifest without reading the git object store again, because Claude Code
+resolves agents by front-matter name, not file name. A standing ensemble's manifest lives in its
+record in km's state directory, which km does not protect from a chair writing outside its worktree.
+`km reseat` and `km play` refuse a native chair without a pinned manifest; rehearse again.
+The comparison uses raw bytes, so a CRLF checkout such as one using `.gitattributes eol=crlf`
+is refused. km creates an empty
+`.claude/agents/` when needed to prevent Claude Code falling back to the main checkout. The
+summary and `native_files_changed` name changes anywhere in that tree. The user directory is
+not checked beyond the named file's name at binding; only simple one-line name forms are read,
+and the check is not atomic with the agent's read.
+
+This is the only launch option km passes: an open option list could change permissions, load
+code, or override the model and session settings km owns.
+
 An optional top-level `description` is nonempty text of at most 512 bytes.
 `km repertoire` shows it; it does not change how a run plays.
 
@@ -2228,6 +2261,8 @@ JSON includes `restores` and `retries` counts per run and the numbers of runs wi
 totals. Each run's `verify_retried` is the same list `result.json` holds (`round`, `attempts`),
 and totals count the runs that have one as `verify_retried_runs`.
 
+Native chairs appear in their own part rows with their agent name and unknown cost.
+
 Runs with substituted chairs add `seats changed: N`, counting runs, followed by each run id and
 its substitution, overlap and lost-provider lines under `seats changed`. `km report -json`
 includes each run's `seats_changed` and `providers_lost` lists, and totals include
@@ -2569,6 +2604,8 @@ p         beta   1        0        0        0       0/0            0/0          
 Detached runs appear here like foreground runs, including while preflight is still running.
 Use `km wait RUN` to wait for one and receive its final summary and exit status, or read the
 `output.log` path printed by `km run -detach` for progress.
+
+Native chairs show their agent name and identify the model as set by the agent.
 
 `km status -json` includes `seats_changed` and `providers_lost` for runs with substitutions.
 `km wait RUN` repeats the `seats changed` summary; `km wait -json RUN` includes both lists in

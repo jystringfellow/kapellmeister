@@ -2,6 +2,7 @@ package ensemble
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -146,5 +147,32 @@ func TestMissingOccupantsNamesEveryChairCAOReports404For(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestStandingManifestRoundTripsWithoutMutatingItsCaller(t *testing.T) {
+	for _, manifest := range []*loop.NativeManifest{{Entries: []loop.NativeManifestEntry{}}, {Entries: []loop.NativeManifestEntry{{Path: []byte{0xff, 'x'}, Mode: "100644", SHA256: "hash", LFSHA256: "lf"}}}} {
+		dir := t.TempDir()
+		s := Standing{Session: "test", Chairs: []StandingChair{{Binding: loop.Chair{NativeAgent: "demo", Manifest: manifest}}}}
+		if err := s.Save(dir); err != nil {
+			t.Fatal(err)
+		}
+		if s.Chairs[0].Manifest != nil {
+			t.Fatal("Save mutated caller")
+		}
+		got, err := ListStanding(dir)
+		if err != nil || len(got) != 1 || !reflect.DeepEqual(got[0].Chairs[0].Binding.Manifest, manifest) {
+			t.Fatalf("%+v %v", got, err)
+		}
+	}
+}
+
+func TestChairJSONOmitsItsNativeManifest(t *testing.T) {
+	data, err := json.Marshal(loop.Chair{NativeAgent: "demo", Manifest: &loop.NativeManifest{Entries: []loop.NativeManifestEntry{{Path: []byte("secret")}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "manifest") || strings.Contains(string(data), "secret") {
+		t.Fatalf("%s", data)
 	}
 }
