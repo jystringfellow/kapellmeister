@@ -17,11 +17,13 @@ type ScoreSource struct {
 	AllowRepository bool
 }
 type ScoreFile struct {
-	Kind   string `json:"kind"`
-	Name   string `json:"name"`
-	Source string `json:"source"`
-	Path   string `json:"path"`
-	SHA256 string `json:"sha256"`
+	Kind        string `json:"kind"`
+	Name        string `json:"name"`
+	Source      string `json:"source"`
+	Path        string `json:"path"`
+	SHA256      string `json:"sha256"`
+	From        string `json:"from,omitempty"`
+	FrontMatter string `json:"front_matter,omitempty"`
 }
 type LoadedScore struct {
 	Score Score
@@ -31,9 +33,11 @@ type scoreReader struct {
 	src    ScoreSource
 	engine *Engine
 	tree   map[string][]string
+	base   string
 }
 
 const ScoreSizeLimit = 64 << 10
+const partSizeLimit = 256 << 10
 
 var scoreName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
@@ -57,6 +61,7 @@ func newScoreReader(src ScoreSource) (scoreReader, error) {
 		if err != nil {
 			return r, err
 		}
+		r.base = strings.TrimSpace(base)
 		entries, err := r.engine.gitOutput("ls-tree", "-r", "-z", strings.TrimSpace(base), "--", ".kapellmeister/scores", ".kapellmeister/parts")
 		if err != nil {
 			return r, err
@@ -109,6 +114,18 @@ func (r scoreReader) loadText(name, text string, file ScoreFile) (LoadedScore, e
 			part.Prompt = built.Prompt
 			continue
 		}
+		if part.From != "" {
+			body, borrowed, err := r.borrowed(loaded.Files[0].Path, part.Name, part.From)
+			if err != nil {
+				return LoadedScore{}, err
+			}
+			part.Prompt = map[string]string{}
+			for _, step := range loaded.Score.StepsOf(part.Name) {
+				part.Prompt[step.Name] = body
+			}
+			loaded.Files = append(loaded.Files, borrowed)
+			continue
+		}
 		text, file, err := r.read("part", part.Name)
 		if err != nil {
 			if !strings.HasPrefix(err.Error(), "unknown ") {
@@ -151,7 +168,7 @@ func (r scoreReader) read(kind, name string) (string, ScoreFile, error) {
 	file := ScoreFile{Kind: kind, Name: name, Source: "user", Path: path}
 	limit := int64(ScoreSizeLimit)
 	if kind == "part" {
-		limit = 256 << 10
+		limit = partSizeLimit
 	}
 	tooLarge := func(path string, size int64) error {
 		return fmt.Errorf("%s: %s file is %d bytes, over the %d-byte limit", path, kind, size, limit)

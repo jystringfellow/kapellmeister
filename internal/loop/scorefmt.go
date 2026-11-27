@@ -26,6 +26,9 @@ func (s Score) File() string {
 			memory = MemoryFresh
 		}
 		fmt.Fprintf(&out, "\n[parts.%s]\nmemory = %q\n", part.Name, memory)
+		if part.From != "" {
+			fmt.Fprintf(&out, "from = %q\n", part.From)
+		}
 		if part.Optional {
 			out.WriteString("optional = true\n")
 		}

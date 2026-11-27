@@ -69,7 +69,11 @@ func rehearseCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	printScoreFiles(os.Stdout, s.Score.Files)
+	seated, err := addressedChairs(wt, *name, chairs, members, s.Score.Score)
+	if err != nil {
+		return err
+	}
+	printScoreFiles(os.Stdout, s.Score.Files, seated)
 	printExcluded(os.Stdout, wt)
 	ctx, stop := loop.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
