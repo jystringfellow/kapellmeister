@@ -45,8 +45,10 @@ func (e *Engine) brief(spec ScoreStep, h handoff, path string, chair Chair) stri
 			instructions = strings.NewReplacer("Do not modify any file other than {reply}. When done, reply with one short sentence.", "Do not write or modify any file; your reply goes in {reply}.", "Write your review to {reply}", "Give your review in {reply}", "Write to {reply}", "Give in {reply}").Replace(instructions)
 		}
 		instructions = strings.NewReplacer("{reply}", path, "{inputs}", strings.Join(h.files, ", "), "{plan}", h.path(0), "{verify}", h.verifyPath, "{verification}", strings.TrimRight(verifyLine(cfg.VerifyCommand, h.verify, h.verifyPath), "\n"), "{check}", cfg.CheckCommand, "{scratch}", cfg.ScratchDir).Replace(instructions)
-	} else if chair.SuppliesPart(part.From) {
+	} else if chair.SuppliesPart(part.From, part.FromSHA256) {
 		instructions = ""
+	} else {
+		instructions = "Instructions from " + part.From + " follow, quoted as written:\n" + instructions + "\nEnd of " + part.From + "."
 	}
 	prompt := preamble(spec.Part) + taskBlock(cfg.Task) + lessons
 	if instructions != "" || part.From == "" {

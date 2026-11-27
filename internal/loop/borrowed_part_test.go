@@ -13,7 +13,7 @@ import (
 )
 
 func TestBorrowedPartPathsAreValidated(t *testing.T) {
-	for _, path := range []string{"", "/a.md", "a/../b.md", "a/./b.md", "a//b.md", `a\b.md`, ".git/a.md", "a.txt", "a\x01.md"} {
+	for _, path := range []string{"", "/a.md", "a/../b.md", "a/./b.md", "a//b.md", `a\b.md`, ".git/a.md", ".GIT/a.md", "a.txt", "a\x01.md"} {
 		text := smallScoreFile + "\n[parts.writer]\nfrom = " + strconvQuote(path) + "\n"
 		_, err := decodeScore(text, "score.toml", "small")
 		if err == nil || !strings.Contains(err.Error(), "score.toml") || !strings.Contains(err.Error(), "part writer") || strings.Contains(err.Error(), "unknown key") || !strings.Contains(err.Error(), "from") {
@@ -41,7 +41,7 @@ func TestBorrowedPartsReadCommittedTextWithoutFrontMatter(t *testing.T) {
 	if part.Prompt["draft"] != "Literal {unknown}\n## step: other" {
 		t.Fatalf("prompt = %q", part.Prompt["draft"])
 	}
-	if len(got.Files) != 2 || got.Files[1].From != ".claude/agents/writer.md" || got.Files[1].SHA256 != fmt.Sprintf("%x", sha256.Sum256([]byte("---\ntools: Read\nmodel: x\n---\nLiteral {unknown}\n## step: other\n"))) {
+	if part.FromSHA256 != got.Files[1].SHA256 || len(got.Files) != 2 || got.Files[1].From != ".claude/agents/writer.md" || got.Files[1].SHA256 != fmt.Sprintf("%x", sha256.Sum256([]byte("---\ntools: Read\nmodel: x\n---\nLiteral {unknown}\n## step: other\n"))) {
 		t.Fatalf("files = %+v", got.Files)
 	}
 }
@@ -67,6 +67,8 @@ func TestBorrowedFrontMatterNamesOnlyUnindentedSettings(t *testing.T) {
 		{"---\ntools: yes\n---\nbody", "body", "front matter ignored, including tools", false},
 		{"---\ntools: yes\nmodel: yes\n---\nbody", "body", "front matter ignored, including tools and model", false},
 		{"---\n tools: ignored\nmodel: x\ntools: y\ndisallowedTools: z\n---\nbody", "body", "front matter ignored, including tools, disallowedTools and model", false},
+		{"---\n\"tools\": x\n---\nbody", "body", "front matter ignored, including tools", false},
+		{"---\n  \"tools\": x\n\tmodel : x\n\"tools': x\n\"\"model\"\": x\n---\nbody", "body", "front matter ignored", false},
 		{"---\nmodel: x", "", "", true},
 		{"---\n---\n \n", "", "", true},
 	} {
@@ -125,13 +127,13 @@ func TestBorrowedPartsRefuseUnavailableAndNonRegularEntries(t *testing.T) {
 
 func TestNativeAgentSuppliesOnlyItsMatchingBorrowedPart(t *testing.T) {
 	body := "unique borrowed body"
-	e := &Engine{Score: Score{Name: "custom", Steps: []ScoreStep{{Name: "draft", Part: "writer"}}, Parts: []Part{{Name: "writer", From: ".claude/agents/writer.md", Prompt: map[string]string{"draft": body}}}}}
+	e := &Engine{Score: Score{Name: "custom", Steps: []ScoreStep{{Name: "draft", Part: "writer"}}, Parts: []Part{{Name: "writer", From: ".claude/agents/writer.md", FromSHA256: "hash", Prompt: map[string]string{"draft": body}}}}}
 	spec := ScoreStep{Name: "draft", Part: "writer", Kind: KindReview}
 	for _, tc := range []struct {
 		agent string
 		want  bool
 	}{{"writer", false}, {"other", true}, {"", true}} {
-		got := e.brief(spec, handoff{}, "reply.md", Chair{NativeAgent: tc.agent})
+		got := e.brief(spec, handoff{}, "reply.md", Chair{NativeAgent: tc.agent, Manifest: &NativeManifest{Entries: []NativeManifestEntry{{Path: []byte(".claude/agents/writer.md"), SHA256: "hash"}}}})
 		if strings.Contains(got, body) != tc.want || !strings.Contains(got, "Write your reply to reply.md.") {
 			t.Errorf("agent %q: %s", tc.agent, got)
 		}
@@ -234,8 +236,8 @@ func TestReservedBorrowedPartNamesAreRefusedWhenLoadingScores(t *testing.T) {
 func TestBorrowedPartRecordsTheAgentThatSuppliesItsText(t *testing.T) {
 	for _, tc := range []struct{ agent, from, want string }{{"writer", ".claude/agents/writer.md", "part text supplied by agent writer"}, {"writer", "other.md", ""}, {"", ".claude/agents/writer.md", ""}} {
 		e, _, records := newEngine(t, passing)
-		e.Score = Score{Name: "custom", Steps: []ScoreStep{{Name: "draft", Part: "writer"}}, Parts: []Part{{Name: "writer", From: tc.from}}}
-		_, err := e.step(context.Background(), Step{Name: "draft", Chair: Chair{Provider: "p", Profile: "x", NativeAgent: tc.agent}, ReplyPath: "reply.md"})
+		e.Score = Score{Name: "custom", Steps: []ScoreStep{{Name: "draft", Part: "writer"}}, Parts: []Part{{Name: "writer", From: tc.from, FromSHA256: "hash"}}}
+		_, err := e.step(context.Background(), Step{Name: "draft", Chair: Chair{Provider: "p", Profile: "x", NativeAgent: tc.agent, Manifest: &NativeManifest{Entries: []NativeManifestEntry{{Path: []byte(".claude/agents/writer.md"), SHA256: "hash"}}}}, ReplyPath: "reply.md"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -348,5 +350,184 @@ func TestABorrowedPartOnAMessageChairAsksForTheFinalMessageAndNoFile(t *testing.
 	got := e.brief(ScoreStep{Name: "work", Part: "writer", Kind: KindTest}, handoff{}, "reply.md", Chair{Provider: "claude_code", Reply: ReplyMessage})
 	if !strings.Contains(got, "Do not write or modify any file, apart from what you create under scratch.") {
 		t.Fatalf("test step: %s", got)
+	}
+}
+
+func TestBorrowedTextIsDelimitedByLinesNamingItsFile(t *testing.T) {
+	e := &Engine{Score: Score{Name: "custom", Steps: []ScoreStep{{Name: "work", Part: "writer"}}, Parts: []Part{{Name: "writer", From: "agent.md", Prompt: map[string]string{"work": "body"}}}}}
+	got := e.brief(ScoreStep{Name: "work", Part: "writer", Kind: KindProduce}, handoff{}, "reply", Chair{})
+	if !strings.Contains(got, "Instructions from agent.md follow, quoted as written:\nbody\nEnd of agent.md.\n") {
+		t.Fatal(got)
+	}
+}
+
+func TestQuotedAndSpacedFrontMatterKeysAreNamed(t *testing.T) {
+	for _, line := range []string{`"tools": x`, `'tools': x`, `model : x`, `"disallowedTools" : x`} {
+		_, note, err := stripBorrowedFrontMatter("---\n" + line + "\n---\nbody")
+		if err != nil || note == "front matter ignored" {
+			t.Fatalf("%q: %q %v", line, note, err)
+		}
+	}
+}
+
+func TestBorrowedFilesWithCRLFOrABOMAreRefusedNamingTheLineAndTheFix(t *testing.T) {
+	for _, tc := range []struct{ body, want string }{{"a\r\nb", "line 1: has CRLF line endings; convert the file to LF"}, {"a\nb\nc\r\n", "line 3: has CRLF line endings; convert the file to LF"}, {"\ufeffa", "line 1: has a byte order mark; remove the BOM"}, {"\ufeffa\r\n", "line 1: has a byte order mark; remove the BOM"}, {"a\rb", "control characters"}} {
+		s := scoreFileSource(t)
+		s.Worktree = t.TempDir()
+		scoreFileGit(t, s.Worktree, "init", "-q")
+		scoreFileGit(t, s.Worktree, "config", "core.autocrlf", "false")
+		scoreFileWrite(t, s.Home, "scores/small.toml", strings.Replace(smallScoreFile, "memory = \"fresh\"", "memory = \"fresh\"\nfrom = \"agent.md\"", 1))
+		scoreFileWrite(t, s.Worktree, "agent.md", tc.body)
+		scoreFileGit(t, s.Worktree, "add", ".")
+		scoreFileGit(t, s.Worktree, "commit", "-qm", "fixture")
+		_, err := LoadScore("small", s)
+		if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "part drafter") || !strings.Contains(err.Error(), "agent.md") {
+			t.Errorf("%q: %v", tc.body, err)
+		}
+	}
+}
+
+func TestBorrowedTextIsKeptWhenTheChairHasNoPinnedDefinition(t *testing.T) {
+	e := &Engine{Score: Score{Name: "custom", Steps: []ScoreStep{{Name: "work", Part: "writer"}}, Parts: []Part{{Name: "writer", From: ".claude/agents/writer.md", Prompt: map[string]string{"work": "body"}}}}}
+	got := e.brief(ScoreStep{Name: "work", Part: "writer", Kind: KindProduce}, handoff{}, "reply", Chair{NativeAgent: "writer"})
+	if !strings.Contains(got, "body") {
+		t.Fatal(got)
+	}
+}
+
+func TestBorrowedTextIsDroppedOnlyWhenItEqualsThePinnedDefinition(t *testing.T) {
+	path := ".claude/agents/writer.md"
+	for _, tc := range []struct {
+		name, sum string
+		manifest  *NativeManifest
+		drop      bool
+	}{
+		{"match", "hash", &NativeManifest{Entries: []NativeManifestEntry{{Path: []byte(path), SHA256: "hash"}}}, true},
+		{"different", "other", &NativeManifest{Entries: []NativeManifestEntry{{Path: []byte(path), SHA256: "hash"}}}, false},
+		{"missing", "hash", &NativeManifest{}, false}, {"nil", "hash", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := &Engine{Score: Score{Name: "custom", Steps: []ScoreStep{{Name: "work", Part: "writer"}}, Parts: []Part{{Name: "writer", From: path, FromSHA256: tc.sum, Prompt: map[string]string{"work": "unique body"}}}}}
+			got := e.brief(ScoreStep{Name: "work", Part: "writer", Kind: KindReview}, handoff{files: []string{"input"}}, "reply", Chair{NativeAgent: "writer", Manifest: tc.manifest, Reply: ReplyMessage})
+			if strings.Contains(got, "unique body") == tc.drop || strings.Contains(got, "Instructions from ") == tc.drop || strings.Contains(got, "End of ") == tc.drop {
+				t.Fatal(got)
+			}
+			for _, want := range []string{"Read input.", "kapellmeister did not verify", "Do not write or modify any file.", "closing km-end line"} {
+				if !strings.Contains(got, want) {
+					t.Fatal(got)
+				}
+			}
+		})
+	}
+}
+
+func TestMessageChairMayProduceAReplyFromABorrowedPart(t *testing.T) {
+	e := &Engine{Score: Score{Name: "custom", Steps: []ScoreStep{{Name: "work", Part: "writer"}}, Parts: []Part{{Name: "writer", From: "agent.md", Prompt: map[string]string{"work": "body"}}}}}
+	got := e.brief(ScoreStep{Name: "work", Part: "writer", Kind: KindProduce, Writes: "reply"}, handoff{}, "reply.md", Chair{Reply: ReplyMessage})
+	if !strings.Contains(got, "Do not write or modify any file.") || strings.Contains(got, "reply.md") || strings.Contains(got, "Write your reply to") || strings.Contains(got, "APPROVE") {
+		t.Fatal(got)
+	}
+}
+
+func TestBorrowedPathsResolveFromTheWorktreeDirectoryLikeRepositoryParts(t *testing.T) {
+	s := scoreFileSource(t)
+	root := t.TempDir()
+	scoreFileGit(t, root, "init", "-q")
+	scoreFileWrite(t, s.Home, "scores/small.toml", strings.Replace(smallScoreFile, "memory = \"fresh\"", "memory = \"fresh\"\nfrom = \"a.md\"", 1))
+	scoreFileWrite(t, root, "a.md", "root")
+	scoreFileWrite(t, root, "sub/a.md", "sub")
+	scoreFileWrite(t, root, "sub/.kapellmeister/parts/drafter.md", "sub part")
+	scoreFileGit(t, root, "add", ".")
+	scoreFileGit(t, root, "commit", "-qm", "fixture")
+	s.Worktree = filepath.Join(root, "sub")
+	got, err := LoadScore("small", s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	part, _ := got.Score.Part("drafter")
+	if part.Prompt["draft"] != "sub" {
+		t.Fatal(part)
+	}
+	scoreFileWrite(t, s.Home, "scores/small.toml", smallScoreFile)
+	if err := os.Remove(filepath.Join(s.Home, "parts/drafter.md")); err != nil {
+		t.Fatal(err)
+	}
+	repoPart, err := LoadScore("small", s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ := repoPart.Score.Part("drafter")
+	if p.Prompt["draft"] != "sub part" {
+		t.Fatal(p)
+	}
+	scoreFileWrite(t, s.Home, "scores/small.toml", strings.Replace(smallScoreFile, "memory = \"fresh\"", "memory = \"fresh\"\nfrom = \"a.md\"", 1))
+	scoreFileGit(t, root, "rm", "sub/a.md")
+	scoreFileGit(t, root, "commit", "-qm", "remove")
+	_, err = LoadScore("small", s)
+	if err == nil || !strings.Contains(err.Error(), "does not exist") {
+		t.Fatal(err)
+	}
+}
+
+func TestBorrowedPathsRefuseSymlinkedDirectoriesAndGitlinks(t *testing.T) {
+	for _, link := range []bool{true, false} {
+		t.Run(fmt.Sprint(link), func(t *testing.T) {
+			s := scoreFileSource(t)
+			s.Worktree = t.TempDir()
+			scoreFileGit(t, s.Worktree, "init", "-q")
+			path := "agent.md"
+			want := "not a regular file"
+			if link {
+				path = "dir/agent.md"
+				want = "does not exist"
+				scoreFileWrite(t, s.Worktree, "real/agent.md", "body")
+				if err := os.Symlink("real", filepath.Join(s.Worktree, "dir")); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				nested := filepath.Join(s.Worktree, "agent.md")
+				if err := os.MkdirAll(nested, 0755); err != nil {
+					t.Fatal(err)
+				}
+				scoreFileGit(t, nested, "init", "-q")
+				scoreFileWrite(t, nested, "body", "body")
+				scoreFileGit(t, nested, "add", ".")
+				scoreFileGit(t, nested, "-c", "commit.gpgsign=false", "commit", "-qm", "fixture")
+			}
+			scoreFileWrite(t, s.Home, "scores/small.toml", strings.Replace(smallScoreFile, "memory = \"fresh\"", "memory = \"fresh\"\nfrom = \""+path+"\"", 1))
+			scoreFileGit(t, s.Worktree, "add", ".")
+			scoreFileGit(t, s.Worktree, "commit", "-qm", "fixture")
+			_, err := LoadScore("small", s)
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestTheFixedBlockIsLastForEveryStepKind(t *testing.T) {
+	e := &Engine{Config: Config{ScratchDir: "scratch"}, Score: Score{Name: "custom", Steps: []ScoreStep{{Name: "work", Part: "writer"}}, Parts: []Part{{Name: "writer", From: "agent.md", Prompt: map[string]string{"work": "body"}}}}}
+	for _, tc := range []struct {
+		kind   StepKind
+		writes string
+	}{{KindProduce, ""}, {KindProduce, "reply"}, {KindReview, ""}, {KindDecide, ""}, {KindTest, ""}} {
+		spec := ScoreStep{Name: "work", Part: "writer", Kind: tc.kind, Writes: tc.writes}
+		chair := Chair{Focus: "focus"}
+		h := handoff{files: []string{"input"}, inputs: []stepReply{{failed: []string{"other"}}}}
+		want := "End of agent.md.\n" + FocusBlock("focus") + inputNotes(h) + verifyLine("", VerifyResult{}, "")
+		if tc.kind == KindTest {
+			want += "Everything you create stays under scratch.\n"
+		}
+		want += replyLine(chair, "reply")
+		if tc.kind != KindProduce || tc.writes == "reply" {
+			want += modifyLine(chair, tc.kind, "reply", "scratch")
+		}
+		if tc.kind != KindProduce {
+			want += verdictLine(chair)
+		}
+		got := e.brief(spec, h, "reply", chair)
+		if !strings.HasSuffix(got, want) {
+			t.Fatalf("%s: %s", tc.kind, got)
+		}
 	}
 }

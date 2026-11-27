@@ -1297,25 +1297,31 @@ it remains usable. No approval prompt is added inside the run.
 
 A custom part can use a repository file with `from = ".claude/agents/reviewer.md"` in
 its `[parts.NAME]` table. Built-in part names are reserved. The path must be a clean relative
-repository path ending in `.md`, with no empty, `.` or `..` segments, backslashes, or `.git/`
+path ending in `.md`, with no empty, `.` or `..` segments, backslashes, or `.git/`
 prefix. It must be a regular file in the base commit and at most 256 KiB. User scores can borrow
-repository files too; `[run] repository_scores = false` refuses them.
+repository files too; `[run] repository_scores = false` refuses them. Paths resolve from the
+directory given as the worktree, like repository `.kapellmeister/` scores and parts: with
+`-worktree repo/sub`, `a.md` means `repo/sub/a.md`. Files with CRLF line endings or a byte
+order mark are refused; convert them to LF or remove the BOM.
 
 A leading block between lines containing only `---` is ignored, and an unclosed block is refused.
 The opening line must be the file's first line and each delimiter exactly `---`; a delimiter
 with surrounding whitespace, or one after leading blank lines, is refused and named by line.
 The source line identifies ignored front matter and names `tools`, `disallowedTools` and `model`
-when present as top-level keys. The remaining text must be nonempty. It is quoted as written:
+when unindented, quoted or unquoted, with or without spaces before the colon. The remaining text
+must be nonempty. It is quoted as written:
 placeholders are not substituted and `## step:` headings are not split. Every step receives the
-whole text followed by a fixed block with its input files, verification result when available,
+whole text between begin and end lines naming the file, followed by a fixed block with its input
+files, verification result when available,
 reply instructions and contract; for a `reply = "message"` chair it asks for the bracketed final
 message and no file. When no verify output is available yet for the step, its line is
 omitted. The source line and run result record the path and SHA-256; the summary names a borrowed
 file changed by the run. `km score check`, `km score show` and `km repertoire` show the path.
 
-If a chair sets `native_agent = "NAME"` and borrows `.claude/agents/NAME.md`, Claude Code supplies
-the part text through the agent definition. The prompt keeps the fixed block and records that the
-agent supplied the text.
+If a chair sets `native_agent = "NAME"` and borrows `.claude/agents/NAME.md`, the text and
+delimiters are omitted only when the file matches the definition pinned for that chair. If HEAD
+moves after rehearsal and the file differs, the text stays in the prompt. The source line and step
+record say whether the agent supplied the text or why it was kept. The fixed block always follows.
 
 ## Configuration
 
