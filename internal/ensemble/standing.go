@@ -147,7 +147,7 @@ func (s Standing) Unbriefed() []string {
 func (s Standing) Unpinned() []string {
 	var out []string
 	for _, c := range s.Chairs {
-		if c.Binding.NativeAgent != "" && c.Binding.Manifest == nil {
+		if c.Binding.NativeAgent != "" && !c.Binding.Manifest.Pinned() {
 			out = append(out, c.Address)
 		}
 	}

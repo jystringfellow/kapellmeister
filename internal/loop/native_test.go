@@ -1128,7 +1128,7 @@ func TestNameReaderAcceptsSimpleNamesAndRefusesUnreadableFrontMatter(t *testing.
 			if (err != nil) != tc.bad {
 				t.Fatalf("%v", err)
 			}
-			if !tc.bad && tc.want != "" && (top != tc.want) {
+			if top != tc.want {
 				t.Fatal(top)
 			}
 		})
@@ -1516,4 +1516,147 @@ func TestSubsetRefusalAppliesToRepositoryAndUserDefinitions(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestDefinitionsClaudeCodeWouldNotLoadAreRefusedByTargetAndUserPaths(t *testing.T) {
+	for _, fixture := range []string{"no-closing-delimiter", "lenient-with-block-scalar", "lenient-with-commented-empty-key", "crlf-lenient", "nul-in-plain-value", "lenient-trailing-space-name", "lenient-under-digit-key"} {
+		for _, user := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/user=%v", fixture, user), func(t *testing.T) {
+				data, err := os.ReadFile(filepath.Join("testdata/native-front-matter/refused", fixture+".md"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				dir := t.TempDir()
+				gitTestNative(t, dir, "init", "-q")
+				path := filepath.Join(dir, ".claude/agents/demo.md")
+				if user {
+					config := t.TempDir()
+					t.Setenv("CLAUDE_CONFIG_DIR", config)
+					path = filepath.Join(config, "agents/demo.md")
+				}
+				if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, data, 0644); err != nil {
+					t.Fatal(err)
+				}
+				gitTestNative(t, dir, "commit", "--allow-empty", "-qm", "base")
+				if !user {
+					gitTestNative(t, dir, "add", ".")
+					gitTestNative(t, dir, "commit", "-qm", "definition")
+				}
+				_, err = ResolveNativeDefinition(dir, Chair{NativeAgent: "demo"}, !user)
+				if err == nil || !strings.Contains(err.Error(), pathForTest(dir, path)) || (user && !strings.Contains(err.Error(), "could not read the front matter")) {
+					t.Fatalf("got %v", err)
+				}
+			})
+		}
+	}
+}
+func pathForTest(dir, path string) string {
+	if strings.HasPrefix(path, dir+string(os.PathSeparator)) {
+		p, _ := filepath.Rel(dir, path)
+		return filepath.ToSlash(p)
+	}
+	return path
+}
+
+func TestAControlCharacterInFrontMatterIsRefusedButATabAndTheBodyAreNot(t *testing.T) {
+	for _, tc := range []struct {
+		text string
+		bad  bool
+	}{
+		{"---\nname: demo\n---\r\n", true}, {"---\r\nname: demo\n---\n", true}, {"---\nname: demo\nx: a\x7fb\n---\n", true}, {"---\nname: demo\n# a\x00b\n---\n", true},
+		{"---\nname: demo\t\n---\t\n", false}, {"---\nname: demo\n---\n\r\x00", false},
+	} {
+		t.Run(fmt.Sprintf("%q", tc.text), func(t *testing.T) {
+			_, err := nativeName("x", []byte(tc.text))
+			if (err != nil) != tc.bad {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestEveryAgentFileOverTheSizeCapIsRefused(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		user, exact bool
+	}{{"other.md", false, false}, {"other.txt", false, false}, {"demo.md", false, false}, {"demo.md", true, false}, {"other.txt", false, true}} {
+		t.Run(fmt.Sprintf("%s/user=%v/exact=%v", tc.name, tc.user, tc.exact), func(t *testing.T) {
+			dir := t.TempDir()
+			gitTestNative(t, dir, "init", "-q")
+			base := filepath.Join(dir, ".claude/agents")
+			os.MkdirAll(base, 0755)
+			os.WriteFile(filepath.Join(base, "demo.md"), []byte("---\nname: demo\n---\n"), 0644)
+			path := filepath.Join(base, tc.name)
+			if tc.user {
+				config := t.TempDir()
+				t.Setenv("CLAUDE_CONFIG_DIR", config)
+				path = filepath.Join(config, "agents/demo.md")
+				os.MkdirAll(filepath.Dir(path), 0755)
+				os.Remove(filepath.Join(base, "demo.md"))
+			}
+			size := 256*1024 + 1
+			if tc.exact {
+				size--
+			}
+			os.WriteFile(path, bytes.Repeat([]byte("x"), size), 0644)
+			gitTestNative(t, dir, "add", ".")
+			gitTestNative(t, dir, "commit", "--allow-empty", "-qm", "base")
+			_, err := ResolveNativeDefinition(dir, Chair{NativeAgent: "demo"}, !tc.user)
+			if tc.exact {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "exceeds 256 KiB") || !strings.Contains(err.Error(), pathForTest(dir, path)) {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestTheSizeCapIsAppliedBeforeAFileIsRead(t *testing.T) {
+	t.Run("base", func(t *testing.T) {
+		dir := t.TempDir()
+		gitTestNative(t, dir, "init", "-q")
+		path := filepath.Join(dir, ".claude/agents/demo.md")
+		os.MkdirAll(filepath.Dir(path), 0755)
+		os.WriteFile(path, []byte("---\nname: demo\n---\n"), 0644)
+		gitTestNative(t, dir, "add", ".")
+		gitTestNative(t, dir, "commit", "-qm", "base")
+		oid := strings.TrimSpace(gitTestNative(t, dir, "rev-parse", "HEAD:.claude/agents/demo.md"))
+		obj := filepath.Join(dir, ".git/objects", oid[:2], oid[2:])
+		var b bytes.Buffer
+		z := zlib.NewWriter(&b)
+		content := bytes.Repeat([]byte("x"), 256*1024+1)
+		fmt.Fprintf(z, "blob %d\x00", len(content))
+		z.Write(content)
+		z.Close()
+		os.Chmod(obj, 0644)
+		os.WriteFile(obj, b.Bytes(), 0444)
+		_, err := ResolveNativeDefinition(dir, Chair{NativeAgent: "demo"}, true)
+		if err == nil || !strings.Contains(err.Error(), "exceeds 256 KiB") {
+			t.Fatal(err)
+		}
+	})
+	t.Run("user", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root can read mode 0000")
+		}
+		dir := t.TempDir()
+		gitTestNative(t, dir, "init", "-q")
+		gitTestNative(t, dir, "commit", "--allow-empty", "-qm", "base")
+		config := t.TempDir()
+		t.Setenv("CLAUDE_CONFIG_DIR", config)
+		path := filepath.Join(config, "agents/demo.md")
+		os.MkdirAll(filepath.Dir(path), 0755)
+		os.WriteFile(path, bytes.Repeat([]byte("x"), 256*1024+1), 0000)
+		_, err := ResolveNativeDefinition(dir, Chair{NativeAgent: "demo"}, false)
+		if err == nil || !strings.Contains(err.Error(), "exceeds 256 KiB") {
+			t.Fatal(err)
+		}
+	})
 }

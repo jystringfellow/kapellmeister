@@ -48,7 +48,7 @@ func reseatCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	if standing.Chairs[index].Binding.NativeAgent != "" && standing.Chairs[index].Binding.Manifest == nil {
+	if standing.Chairs[index].Binding.NativeAgent != "" && !standing.Chairs[index].Binding.Manifest.Pinned() {
 		return unpinnedError(standing.Session, []string{standing.Chairs[index].Address})
 	}
 	text, err := taskText(standing.Task, "")

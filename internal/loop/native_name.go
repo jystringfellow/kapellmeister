@@ -30,21 +30,43 @@ func nativeName(path string, data []byte) (string, error) {
 	if !strings.HasPrefix(lines[0], "---") || strings.TrimFunc(lines[0][3:], func(r rune) bool { return unicode.IsSpace(r) || r == '\ufeff' }) != "" {
 		return "", nil
 	}
+	control := func(line string, n int) error {
+		for _, r := range line {
+			if r == '\r' {
+				_, err := fail(n, "CR line endings")
+				return err
+			}
+			if r != '\t' && unicode.IsControl(r) {
+				_, err := fail(n, "control character")
+				return err
+			}
+		}
+		return nil
+	}
+	if err := control(lines[0], 1); err != nil {
+		return "", err
+	}
 	frames := []nativeFrame{{column: 0, keys: map[string]bool{}}}
 	pending := -1
 	var block *nativeBlock
 	lenient := false
 	nameLine, nameComment := 0, false
 	offenders := []int{}
+	closed := false
+	blockLine, commentedLine, trailingName := 0, 0, false
+	lenientDigitLine := 0
 	for i := 1; i < len(lines); i++ {
 		line := lines[i]
-		if strings.TrimRight(line, " \t\r") == "---" {
+		if err := control(line, i+1); err != nil {
+			return "", err
+		}
+		if strings.TrimRight(line, " \t") == "---" {
+			closed = true
 			break
 		}
 		if strings.Contains(line, "---") {
 			return fail(i+1, "contains ---")
 		}
-		line = strings.TrimSuffix(line, "\r")
 		if strings.ContainsAny(line, "\r\u0085\u2028\u2029\ufeff") {
 			return fail(i+1, "invalid line break")
 		}
@@ -113,6 +135,7 @@ func nativeName(path string, data []byte) (string, error) {
 					return fail(i+1, "invalid sequence value")
 				}
 				if kind == "block" {
+					blockLine = i + 1
 					block = &nativeBlock{column: indent}
 				}
 				continue
@@ -136,10 +159,14 @@ func nativeName(path string, data []byte) (string, error) {
 			if column != 0 || isName {
 				return fail(i+1, "colon in plain scalar")
 			}
+			if strings.ContainsAny(key, "0123456789") {
+				lenientDigitLine = i + 1
+			}
 			lenient = true
 		}
 		if isName {
 			nameLine = i + 1
+			trailingName = strings.TrimRightFunc(line, unicode.IsSpace) != line
 			nameComment = comment
 			if kind != "plain" && kind != "quoted" || value == "" {
 				return fail(i+1, "name must be a string")
@@ -147,11 +174,18 @@ func nativeName(path string, data []byte) (string, error) {
 			name = value
 		}
 		if kind == "empty" {
+			if comment {
+				commentedLine = i + 1
+			}
 			pending = column
 		}
 		if kind == "block" {
+			blockLine = i + 1
 			block = &nativeBlock{column: column}
 		}
+	}
+	if !closed {
+		return fail(len(lines), "no closing --- line")
 	}
 	if lenient {
 		if nameComment {
@@ -161,6 +195,18 @@ func nativeName(path string, data []byte) (string, error) {
 			if n != nameLine {
 				return fail(n, "name line with lenient value")
 			}
+		}
+		if blockLine != 0 {
+			return fail(blockLine, "block scalar with lenient value")
+		}
+		if commentedLine != 0 {
+			return fail(commentedLine, "commented empty key with lenient value")
+		}
+		if trailingName {
+			return fail(nameLine, "trailing whitespace on name with lenient value")
+		}
+		if lenientDigitLine != 0 {
+			return fail(lenientDigitLine, "lenient value under a key with a digit")
 		}
 	}
 	return name, nil

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -16,7 +17,12 @@ import (
 
 var ErrNativeDefinition = errors.New("native agent definition")
 
-type nativeEntry struct{ mode, oid string }
+const nativeSizeLimit = 256 * 1024
+
+type nativeEntry struct {
+	mode, oid string
+	size      int64
+}
 type NativeDifference struct{ Path, Reason string }
 type NativeManifest struct {
 	Entries []NativeManifestEntry `json:"entries"`
@@ -28,6 +34,17 @@ type NativeManifestEntry struct {
 }
 
 func nativeHash(data []byte) string { return fmt.Sprintf("%x", sha256.Sum256(data)) }
+func (m *NativeManifest) Pinned() bool {
+	if m == nil {
+		return false
+	}
+	for _, e := range m.Entries {
+		if e.Size == 0 && e.SHA256 != nativeHash(nil) {
+			return false
+		}
+	}
+	return true
+}
 func (c Chair) WithDefinitionOf(o Chair) Chair {
 	c.Definition, c.DefinitionBase, c.Manifest = o.Definition, o.DefinitionBase, o.Manifest
 	return c
@@ -41,7 +58,7 @@ func nativePaths(paths []string) string {
 }
 
 func nativeTree(e *Engine, base string) (map[string]nativeEntry, error) {
-	out, err := e.gitOutput("--no-replace-objects", "ls-tree", "-r", "-z", base, "--", ".claude/agents")
+	out, err := e.gitOutput("--no-replace-objects", "ls-tree", "-r", "-l", "-z", base, "--", ".claude/agents")
 	if err != nil {
 		return nil, err
 	}
@@ -52,10 +69,17 @@ func nativeTree(e *Engine, base string) (map[string]nativeEntry, error) {
 		}
 		meta, path, ok := strings.Cut(row, "\t")
 		f := strings.Fields(meta)
-		if !ok || len(f) != 3 {
+		if !ok || len(f) != 4 {
 			return nil, fmt.Errorf("invalid git tree entry")
 		}
-		entries[path] = nativeEntry{f[0], f[2]}
+		size := int64(0)
+		if f[3] != "-" {
+			size, err = strconv.ParseInt(f[3], 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid git tree entry size")
+			}
+		}
+		entries[path] = nativeEntry{f[0], f[2], size}
 	}
 	return entries, nil
 }
@@ -265,6 +289,9 @@ func ResolveNativeDefinitionAt(worktree, base string, chair Chair, portable bool
 		if entry.mode != "100644" && entry.mode != "100755" {
 			return chair, fmt.Errorf("%s: not a regular file", nativePath(p))
 		}
+		if entry.size > nativeSizeLimit {
+			return chair, fmt.Errorf("%s at %s: exceeds 256 KiB", nativePath(p), base)
+		}
 		data, err := nativeBlob(&e, entry.oid)
 		if err != nil {
 			return chair, err
@@ -310,9 +337,6 @@ func ResolveNativeDefinitionAt(worktree, base string, chair Chair, portable bool
 			}
 			return chair, fmt.Errorf("%s at %s: %s", path, base, reason)
 		}
-		if len(blob.text) > 256*1024 {
-			return chair, fmt.Errorf("%s at %s: exceeds 256 KiB", path, base)
-		}
 		if err := check(path, []byte(blob.text)); err != nil {
 			return chair, err
 		}
@@ -338,6 +362,9 @@ func ResolveNativeDefinitionAt(worktree, base string, chair Chair, portable bool
 		info, err := os.Stat(userPath)
 		if err != nil || !info.Mode().IsRegular() {
 			return chair, fmt.Errorf("native agent definition missing at %s in base commit %s and %s", nativePath(path), base, nativePath(userPath))
+		}
+		if info.Size() > nativeSizeLimit {
+			return chair, fmt.Errorf("%s: exceeds 256 KiB", nativePath(userPath))
 		}
 		data, err := os.ReadFile(userPath)
 		if err != nil {

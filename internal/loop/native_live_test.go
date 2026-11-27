@@ -2,6 +2,7 @@ package loop
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -45,6 +46,8 @@ func TestClaudeCodeLoadsTheNameKmReadsForEveryFixture(t *testing.T) {
 		defer cancel()
 		cmd := exec.CommandContext(ctx, "claude", "-p", "hi", "--output-format", "stream-json", "--verbose")
 		cmd.Dir = dir
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
 		for _, e := range os.Environ() {
 			k, _, _ := strings.Cut(e, "=")
 			if strings.HasPrefix(k, "CLAUDE") || strings.HasPrefix(k, "ANTHROPIC") || strings.HasPrefix(k, "TMUX") || k == "CAO_TERMINAL_ID" {
@@ -76,12 +79,15 @@ func TestClaudeCodeLoadsTheNameKmReadsForEveryFixture(t *testing.T) {
 				break
 			}
 		}
-		cancel()
-		_ = cmd.Wait()
-		if !found {
-			return nil, fmt.Errorf("no init event: %v", ctx.Err())
+		scanErr := scanner.Err()
+		if found {
+			cancel()
+			_ = cmd.Wait()
+			return agents, nil
 		}
-		return agents, nil
+		waitErr := cmd.Wait()
+		ctxErr := ctx.Err()
+		return nil, fmt.Errorf("no init event: scan: %v; wait: %v; context: %v; stderr: %s", scanErr, waitErr, ctxErr, stderr.String())
 	}
 	baseline, err := run("")
 	if err != nil {
@@ -100,11 +106,7 @@ func TestClaudeCodeLoadsTheNameKmReadsForEveryFixture(t *testing.T) {
 			t.Run(kind+"/"+filepath.Base(path), func(t *testing.T) {
 				agents, err := run(path)
 				if err != nil {
-					if kind == "accepted" {
-						t.Fatal(err)
-					}
-					t.Log(err)
-					return
+					t.Fatal(err)
 				}
 				var added []string
 				for _, n := range agents {
@@ -122,8 +124,13 @@ func TestClaudeCodeLoadsTheNameKmReadsForEveryFixture(t *testing.T) {
 					t.Fatal(err)
 				}
 				name, err := nativeName(path, data)
-				want := strings.TrimSuffix(filepath.Base(path), ".md")
-				if err != nil || name != want || len(added) != 1 || added[0] != want {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(added) == 0 {
+					t.Fatal("Claude Code lists no agent")
+				}
+				if len(added) != 1 || added[0] != name {
 					t.Fatalf("km=%q Claude=%q: %v", name, added, err)
 				}
 			})
