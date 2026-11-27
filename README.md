@@ -826,14 +826,17 @@ digits. Keys must be unique within each mapping. Anchors, tags, aliases, flow ma
 quoted or complex keys, and multi-line quoted values are refused. The top-level name must be a
 one-line string; quote values YAML would not read as strings. A plain value may contain `: ` only
 in a top-level key other than `name` made of letters, `_` and `-`. Then no other name line is
-allowed, nor a comment or trailing whitespace on the name line, a block scalar, or a key whose
-value is only a comment. Front matter must have a closing `---` line and may contain no CR or
-control characters except tab. Other front-matter lines may not contain `---`. km refuses files
-outside this subset and names the line, in every agent file under `.claude/agents/` and in the
-user definition. Each `.md` agent file km reads must be at most 256 KiB.
+allowed, nor a comment or trailing whitespace on the name line, a top-level key whose value is a
+block scalar, or a top-level key whose value is only a comment. Front matter must have a closing
+`---` line and may contain no CR or control characters except tab. Other front-matter lines may
+not contain `---`. km refuses files outside this subset and names the line, in every agent file
+under `.claude/agents/` and in the user definition. Each file under `.claude/agents/` and the user
+definition must be at most 256 KiB.
 
 Run `KM_LIVE_CLAUDE=1 go test ./internal/loop -run TestClaudeCodeLoadsTheNameKmReadsForEveryFixture -v -count=1`
-when Claude Code is upgraded.
+when Claude Code is upgraded. It fails if Claude Code does not load exactly the name km reads for
+an accepted fixture, or if a Claude Code run errors. For a refused fixture it only logs what
+Claude Code loaded.
 
 Limits:
 
