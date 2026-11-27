@@ -711,7 +711,11 @@ standard error while built-in and user scores remain listed.
 ## Check a file
 
 `km ensemble check [-worktree DIR] [-name NAME] [-json] FILE` checks an ensemble's
-syntax, score fit, and agent readiness. `km score check` accepts the same flags and
+syntax, score fit, and agent readiness. It also resolves each `native_agent` definition at
+the worktree's HEAD as a launch would, treating a file in the repository's ensemble directory
+as a repository ensemble. Outside a git repository, or in one with no commits, it prints a note
+that the definitions were not checked. `km ensemble save` and the run's own check leave
+definitions to the launch, which resolves them at the run's base commit. `km score check` accepts the same flags and
 checks a score and its parts. With `-text`, ensemble entries must name agents from
 `[agents] available`, optionally with a tier (`claude@large`).
 The default name is the file basename without `.toml`;
@@ -813,7 +817,9 @@ declare it. The user file must also be visible to the agent's own Claude config 
 CAO clears `CLAUDE*` environment variables for its pane, and a missing definition causes Claude
 Code to report "not found" and the launch to time out.
 
-Native chairs require the worktree to be the repository root. When km binds a native chair for
+Native chairs require the worktree to be the repository root. At the base commit `.claude` and
+`.claude/agents` must be directories, not symlinks; other files and directories under `.claude`,
+such as `settings.json`, lock files or `skills/`, are ignored. When km binds a native chair for
 run, audition or rehearse, before any chair runs, it pins a manifest of the entire base commit's
 `.claude/agents/` tree because Claude Code resolves agents by front-matter name, not file name.
 The manifest records each path, size and SHA-256, verifying file content against its git object ID.

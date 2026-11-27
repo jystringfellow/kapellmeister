@@ -95,6 +95,12 @@ func nativeBlobMatches(data []byte, oid string) bool {
 	h.Write(data)
 	return fmt.Sprintf("%x", h.Sum(nil)) == oid
 }
+func uncommittedNote(worktree, path string) string {
+	if _, err := os.Lstat(filepath.Join(worktree, path)); err != nil {
+		return ""
+	}
+	return "; " + path + " exists in the worktree but is not committed"
+}
 func nativePath(path string) string {
 	if !utf8.ValidString(path) || strings.IndexFunc(path, func(r rune) bool { return !unicode.IsPrint(r) }) >= 0 {
 		return fmt.Sprintf("%q", path)
@@ -268,7 +274,7 @@ func ResolveNativeDefinitionAt(worktree, base string, chair Chair, portable bool
 		}
 		meta, p, _ := strings.Cut(row, "\t")
 		f := strings.Fields(meta)
-		if len(f) >= 2 && f[1] != "tree" {
+		if (p == ".claude" || p == ".claude/agents") && len(f) >= 2 && f[1] != "tree" {
 			return chair, fmt.Errorf("%s: not a regular directory", p)
 		}
 	}
@@ -344,7 +350,7 @@ func ResolveNativeDefinitionAt(worktree, base string, chair Chair, portable bool
 		chair.Definition = "repository"
 	} else {
 		if portable {
-			return chair, fmt.Errorf("%s does not exist at base commit %s", path, base)
+			return chair, fmt.Errorf("%s does not exist at base commit %s%s", path, base, uncommittedNote(worktree, path))
 		}
 		config := os.Getenv("CLAUDE_CONFIG_DIR")
 		if config == "" {
@@ -357,7 +363,7 @@ func ResolveNativeDefinitionAt(worktree, base string, chair Chair, portable bool
 		userPath := filepath.Join(config, "agents", chair.NativeAgent+".md")
 		info, err := os.Stat(userPath)
 		if err != nil || !info.Mode().IsRegular() {
-			return chair, fmt.Errorf("native agent definition missing at %s in base commit %s and %s", nativePath(path), base, nativePath(userPath))
+			return chair, fmt.Errorf("native agent definition missing at %s in base commit %s and %s%s", nativePath(path), base, nativePath(userPath), uncommittedNote(worktree, path))
 		}
 		if info.Size() > nativeSizeLimit {
 			return chair, fmt.Errorf("%s: exceeds 256 KiB", nativePath(userPath))
