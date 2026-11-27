@@ -711,8 +711,11 @@ standard error while built-in and user scores remain listed.
 ## Check a file
 
 `km ensemble check [-worktree DIR] [-name NAME] [-json] FILE` checks an ensemble's
-syntax, score fit, and agent readiness, and resolves each `native_agent` definition at the
-worktree's HEAD as a launch does. `km score check` accepts the same flags and
+syntax, score fit, and agent readiness. It also resolves each `native_agent` definition at
+the worktree's HEAD as a launch would, treating a file in the repository's ensemble directory
+as a repository ensemble. Outside a git repository, or in one with no commits, it prints a note
+that the definitions were not checked. `km ensemble save` and the run's own check leave
+definitions to the launch, which resolves them at the run's base commit. `km score check` accepts the same flags and
 checks a score and its parts. With `-text`, ensemble entries must name agents from
 `[agents] available`, optionally with a tier (`claude@large`).
 The default name is the file basename without `.toml`;

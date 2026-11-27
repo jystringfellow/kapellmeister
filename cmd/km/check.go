@@ -66,7 +66,7 @@ func checkCommand(kind string, args []string, in io.Reader, out, stderr io.Write
 	}
 	data, err := readTextFile(kind, label, path, in)
 	if err == nil {
-		err = checkContent(&result, label, string(data), *worktree, stderr, held)
+		err = checkContent(&result, label, string(data), *worktree, stderr, held, kind == "ensemble" && checkedEnsembleIsPortable(*name, path, *worktree))
 	}
 	if err != nil {
 		result.Errors = append(result.Errors, err.Error())
@@ -101,7 +101,7 @@ func checkCommand(kind string, args []string, in io.Reader, out, stderr io.Write
 	return nil
 }
 
-func checkContent(result *checkResult, label, content, worktree string, stderr io.Writer, held bool) error {
+func checkContent(result *checkResult, label, content, worktree string, stderr io.Writer, held, portable bool) error {
 	home := loop.Home()
 	settings, err := loop.LoadSettings(home, worktree)
 	if err != nil {
@@ -126,9 +126,12 @@ func checkContent(result *checkResult, label, content, worktree string, stderr i
 		}
 		return err
 	}
-	_, reason, err := checkEnsemble(result.Name, label, content, worktree, stderr, held)
+	spec, reason, err := checkEnsemble(result.Name, label, content, worktree, stderr, held)
 	if err != nil {
 		return err
+	}
+	if err := checkNativeDefinitions(worktree, spec, portable, stderr); err != nil {
+		return fmt.Errorf("%s: %w", label, err)
 	}
 	result.Reason = reason
 	*result.Ready = reason == ""
@@ -168,35 +171,51 @@ func checkEnsemble(name, label, content, worktree string, stderr io.Writer, held
 	if err := spec.Fits(score); err != nil {
 		return spec, "", err
 	}
-	if err := checkNativeDefinitions(worktree, spec); err != nil {
-		return spec, "", fmt.Errorf("%s: %w", label, err)
-	}
 	return spec, repertoireReadiness(spec, score, settings), nil
 }
 
-func checkNativeDefinitions(worktree string, spec ensemble.Spec) error {
-	if worktree == "" {
-		return nil
-	}
-	base := ""
+func checkNativeDefinitions(worktree string, spec ensemble.Spec, portable bool, stderr io.Writer) error {
+	var chairs []ensemble.ChairSpec
+	var addresses []string
 	for _, section := range spec.Sections {
 		for _, c := range section.Chairs {
-			if c.NativeAgent == "" {
-				continue
-			}
-			if base == "" {
-				out, err := gitOutput(worktree, "rev-parse", "HEAD")
-				if err != nil {
-					return err
-				}
-				base = strings.TrimSpace(out)
-			}
-			if _, err := loop.ResolveNativeDefinitionAt(worktree, base, loop.Chair{NativeAgent: c.NativeAgent}, spec.Portable()); err != nil {
-				return fmt.Errorf("%s.%s: native agent %s: %w", section.Name, c.Name, c.NativeAgent, err)
+			if c.NativeAgent != "" {
+				chairs = append(chairs, c)
+				addresses = append(addresses, section.Name+"."+c.Name)
 			}
 		}
 	}
+	if len(chairs) == 0 || worktree == "" {
+		return nil
+	}
+	if _, err := gitOutput(worktree, "rev-parse", "--show-toplevel"); err != nil {
+		fmt.Fprintf(stderr, "note: native agent definitions not checked: %s is not a git repository\n", worktree)
+		return nil
+	}
+	base, err := gitOutput(worktree, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+	if err != nil {
+		fmt.Fprintf(stderr, "note: native agent definitions not checked: %s has no commits\n", worktree)
+		return nil
+	}
+	for i, c := range chairs {
+		if _, err := loop.ResolveNativeDefinitionAt(worktree, base, loop.Chair{NativeAgent: c.NativeAgent}, portable); err != nil {
+			return fmt.Errorf("%s: native agent %s: %w", addresses[i], c.NativeAgent, err)
+		}
+	}
 	return nil
+}
+
+func checkedEnsembleIsPortable(name, path, worktree string) bool {
+	located, portable, found := ensemble.Locate(name, loop.Home(), worktree)
+	if !found || !portable || path == "-" {
+		return false
+	}
+	a, err := os.Stat(located)
+	if err != nil {
+		return false
+	}
+	b, err := os.Stat(path)
+	return err == nil && os.SameFile(a, b)
 }
 
 func readTextFile(kind, label, path string, in io.Reader) ([]byte, error) {
