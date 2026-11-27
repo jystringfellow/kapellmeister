@@ -39,25 +39,33 @@ func (e *Engine) brief(spec ScoreStep, h handoff, path string, chair Chair) stri
 		return testPrompt(cfg.Task, h.path(0), h.path(1), h.path(2), cfg.VerifyCommand, h.verify, h.verifyPath, cfg.ScratchDir, path, e.chairTimeout(chair), os.Getpid(), lessons, cfg.CAOURL, cfg.StateDir, e.measurements) + FocusBlock(chair.Focus)
 	}
 	part, _ := e.playingScore().Part(spec.Part)
-	template := part.Prompt[spec.Name]
-	if chair.Reply == ReplyMessage && e.playingScore().Source == "built-in" {
-		template = strings.NewReplacer("Do not modify any file other than {reply}. When done, reply with one short sentence.", "Do not write or modify any file; your reply goes in {reply}.", "Write your review to {reply}", "Give your review in {reply}", "Write to {reply}", "Give in {reply}").Replace(template)
+	instructions := part.Prompt[spec.Name]
+	if part.From == "" {
+		if chair.Reply == ReplyMessage && e.playingScore().Source == "built-in" {
+			instructions = strings.NewReplacer("Do not modify any file other than {reply}. When done, reply with one short sentence.", "Do not write or modify any file; your reply goes in {reply}.", "Write your review to {reply}", "Give your review in {reply}", "Write to {reply}", "Give in {reply}").Replace(instructions)
+		}
+		instructions = strings.NewReplacer("{reply}", path, "{inputs}", strings.Join(h.files, ", "), "{plan}", h.path(0), "{verify}", h.verifyPath, "{verification}", strings.TrimRight(verifyLine(cfg.VerifyCommand, h.verify, h.verifyPath), "\n"), "{check}", cfg.CheckCommand, "{scratch}", cfg.ScratchDir).Replace(instructions)
+	} else if chair.SuppliesPart(part.From) {
+		instructions = ""
 	}
-	instructions := strings.NewReplacer("{reply}", path, "{inputs}", strings.Join(h.files, ", "), "{plan}", h.path(0), "{verify}", h.verifyPath, "{verification}", strings.TrimRight(verifyLine(cfg.VerifyCommand, h.verify, h.verifyPath), "\n"), "{check}", cfg.CheckCommand, "{scratch}", cfg.ScratchDir).Replace(template)
-	prompt := preamble(spec.Part) + taskBlock(cfg.Task) + lessons + instructions + "\n" + FocusBlock(chair.Focus)
+	prompt := preamble(spec.Part) + taskBlock(cfg.Task) + lessons
+	if instructions != "" || part.From == "" {
+		prompt += instructions + "\n"
+	}
+	prompt += FocusBlock(chair.Focus)
 	prompt += inputNotes(h)
+	if part.From != "" && (cfg.VerifyCommand == "" || h.verifyPath != "") {
+		prompt += verifyLine(cfg.VerifyCommand, h.verify, h.verifyPath)
+	}
 	if spec.Kind == KindTest {
 		prompt += "Everything you create stays under " + cfg.ScratchDir + ".\n"
 	}
-	if chair.Reply != ReplyMessage {
-		prompt += "Write your reply to " + path + ".\n"
+	prompt += replyLine(chair, path)
+	if part.From != "" && (spec.Kind != KindProduce || spec.Writes == "reply") {
+		prompt += modifyLine(chair, spec.Kind, path, cfg.ScratchDir)
 	}
 	if spec.Kind != KindProduce {
-		if chair.Reply == ReplyMessage {
-			prompt += "Put APPROVE or CHANGES alone on the last line before the closing km-end line.\n"
-		} else {
-			prompt += "Put APPROVE or CHANGES alone on the last line of the reply file.\n"
-		}
+		prompt += verdictLine(chair)
 	}
 	return prompt
 }
@@ -96,4 +104,29 @@ func inputNotes(h handoff) string {
 		out += "These chairs failed to finish their reply: " + strings.Join(failed, ", ") + ". Their reply files are missing.\n"
 	}
 	return out
+}
+
+func replyLine(chair Chair, path string) string {
+	if chair.Reply == ReplyMessage {
+		return ""
+	}
+	return "Write your reply to " + path + ".\n"
+}
+
+func modifyLine(chair Chair, kind StepKind, path, scratch string) string {
+	line := "Do not modify any file other than " + path
+	if chair.Reply == ReplyMessage {
+		line = "Do not write or modify any file"
+	}
+	if kind == KindTest {
+		line += ", apart from what you create under " + scratch
+	}
+	return line + ".\n"
+}
+
+func verdictLine(chair Chair) string {
+	if chair.Reply == ReplyMessage {
+		return "Put APPROVE or CHANGES alone on the last line before the closing km-end line.\n"
+	}
+	return "Put APPROVE or CHANGES alone on the last line of the reply file.\n"
 }

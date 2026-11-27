@@ -46,6 +46,7 @@ type ScoreStep struct {
 }
 
 type Part struct {
+	From         string
 	ResumeTokens int64
 	ResumeSteps  int
 	Name         string

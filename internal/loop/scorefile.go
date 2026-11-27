@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/BurntSushi/toml"
 )
 
 type scorePartFile struct {
+	From         *string `toml:"from"`
 	ResumeTokens *int64  `toml:"resume_tokens"`
 	ResumeSteps  *int    `toml:"resume_steps"`
 	Memory       *Memory `toml:"memory"`
@@ -65,7 +67,17 @@ func decodeScoreWithPartText(text, path, name string, ownPartText bool) (Score, 
 				return Score{}, scoreError(path, "part "+name, "%s", message)
 			}
 			if p, ok := parts[name].(map[string]any); ok {
-				if err := scoreKeys(path, "part "+name, p, "memory", "optional", "resume_tokens", "resume_steps"); err != nil {
+				if v, exists := p["from"]; exists {
+					if _, built := DefaultScore().Part(name); built {
+						return Score{}, scoreError(path, "part "+name, "from is reserved for built-in parts")
+					}
+					if value, ok := v.(string); ok {
+						if reason := invalidBorrowedPath(value); reason != "" {
+							return Score{}, scoreError(path, "part "+name, "from %q: %s", value, reason)
+						}
+					}
+				}
+				if err := scoreKeys(path, "part "+name, p, "memory", "optional", "resume_tokens", "resume_steps", "from"); err != nil {
 					return Score{}, err
 				}
 			}
@@ -299,6 +311,9 @@ func decodeScoreWithPartText(text, path, name string, ownPartText bool) (Score, 
 			}
 		}
 		part := Part{Name: name, Memory: memory, Optional: p.Optional}
+		if p.From != nil {
+			part.From = *p.From
+		}
 		for _, limit := range []struct {
 			name  string
 			value int64
@@ -370,4 +385,28 @@ func valueOrZero[T ~int | ~int64](value *T) T {
 		return *value
 	}
 	return 0
+}
+
+func invalidBorrowedPath(p string) string {
+	if p == "" || strings.HasPrefix(p, "/") || strings.Contains(p, `\`) {
+		return "must be a clean relative repository path"
+	}
+	for _, r := range p {
+		if !unicode.IsPrint(r) {
+			return "contains a non-printable character"
+		}
+	}
+	segments := strings.Split(p, "/")
+	for _, segment := range segments {
+		if segment == "" || segment == "." || segment == ".." {
+			return "must be a clean relative repository path"
+		}
+	}
+	if strings.EqualFold(segments[0], ".git") {
+		return "must not be under .git"
+	}
+	if !strings.HasSuffix(p, ".md") {
+		return "must end in .md"
+	}
+	return ""
 }

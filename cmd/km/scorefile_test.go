@@ -114,7 +114,7 @@ func playRepositoryScore(t *testing.T, changes bool) (ensembleSummary, string) {
 		t.Fatalf("settings = %+v", s)
 	}
 	var opening bytes.Buffer
-	printScoreFiles(&opening, s.Score.Files)
+	printScoreFiles(&opening, s.Score.Files, loop.Chairs{})
 	for _, file := range s.Score.Files {
 		if !strings.Contains(opening.String(), file.Path+"  "+file.SHA256[:12]) {
 			t.Fatalf("opening = %s", opening.String())

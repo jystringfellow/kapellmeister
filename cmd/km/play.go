@@ -119,7 +119,7 @@ func playCommand(args []string) error {
 		return fmt.Errorf("chair(s) %s have no occupant in session %s; take it down with km ensemble down %s and km rehearse again; %s", strings.Join(missing, ", "), standing.Session, standing.Session, reseatHints(standing.Session, missing))
 	}
 	printSources(os.Stdout, s)
-	printScoreFiles(os.Stdout, s.Score.Files)
+	printScoreFiles(os.Stdout, s.Score.Files, chairs)
 	fmt.Printf("ensemble %s (session %s); sizing and tier escalation off\n", standing.Ensemble, standing.Session)
 	var members []ensemble.Member
 	terminals := map[string]string{}

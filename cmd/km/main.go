@@ -52,7 +52,7 @@ const usage = `usage:
   km preflight -worktree DIR [-agents LIST] [-tier T]       check each agent starts and answers
   km profiles install [-cao URL] [-replace] [AGENT ...]       install embedded base chair profiles
   km mcp                                                    serve run tools over MCP stdio
-  km score show NAME                                        print a built-in score (default as TOML; review with part texts)
+  km score show [-worktree DIR] NAME                        print a score and built-in part texts
   km version                                                print the version
   km config [-worktree DIR]                                  show the effective settings and the files they come from`
 
@@ -83,7 +83,7 @@ func execute(args []string, stderr io.Writer) int {
 		if len(args) > 1 && args[1] == "check" {
 			err = checkCommand("score", args[2:], os.Stdin, os.Stdout, stderr, "")
 		} else {
-			err = scoreCommand(args[1:], os.Stdout)
+			err = scoreCommand(args[1:], os.Stdout, stderr)
 		}
 	case "profiles":
 		if len(args) < 2 || args[1] != "install" {
@@ -678,7 +678,7 @@ func runAt(ctx context.Context, args []string, stdout, stderr io.Writer, handle 
 		}
 	} else {
 		printSources(output, s)
-		printScoreFiles(output, s.Score.Files)
+		printScoreFiles(output, s.Score.Files, seated)
 		if *ensembleName != "" {
 			fmt.Fprintf(output, "ensemble %s\nseat fallback %s\n", *ensembleName, map[bool]string{true: "on", false: "off"}[s.SeatFallback])
 		}
