@@ -25,13 +25,36 @@ func partForStep(name string) Part {
 	return part
 }
 
+const finalMessage = "your final message (not a file)"
+
+func replyTemplate(template, out string) string {
+	if out != finalMessage {
+		return template
+	}
+	return strings.NewReplacer(
+		"write an implementation plan to %s", "give an implementation plan in %s",
+		"Write your review to %s", "Give your review in %s",
+		"Write to %s:", "Give in %s:",
+		"Do not modify any file other than %s. When done, reply with one short sentence.", "Do not write or modify any file; your reply goes in %s.",
+		"alone on the last line of the review file", "alone on the last line before the closing km-end line",
+		"alone on the last line of the decision file", "alone on the last line before the closing km-end line",
+		"alone on the last line of the report", "alone on the last line before the closing km-end line",
+		"Write the test plan to %s and change no other file. When done, reply with one short sentence.", "Give the test plan in %s and change no file.",
+		"Append each scenario's result to %s as soon as that scenario finishes: what you ran, pass or fail, and evidence. Do not wait until the end to write the report.", "Report each scenario in %s: what you ran, pass or fail, and evidence.",
+		"Write exactly one word to %s", "Put exactly one word in %s",
+		"Do not modify any other file. Then reply with that same word.", "Do not write or modify any file.",
+		"Write only a JSON array to %s", "Put only a JSON array in %s",
+		"When done, reply with one short sentence.\n", "",
+	).Replace(template)
+}
+
 func planPrompt(task, out string, askSize bool, lessons string) string {
 	sizeLine := ""
 	if askSize {
 		sizeLine = sizeRequest
 	}
 	part := partForStep("plan")
-	return preamble(part.Name) + taskBlock(task) + lessons + fmt.Sprintf(part.Prompt["plan"], out, sizeLine, out)
+	return preamble(part.Name) + taskBlock(task) + lessons + fmt.Sprintf(replyTemplate(part.Prompt["plan"], out), out, sizeLine, out)
 }
 
 const sizeRequest = "End the plan with one line of the form `Size: small|medium|large — <one-line reason>`, rating how capable a model the implementation and review need: small for a mechanical change in one place, medium for a contained change with tests, large for cross-cutting, subtle, concurrent or security-sensitive work.\n"
@@ -85,7 +108,7 @@ func verifyLine(command string, v VerifyResult, path string) string {
 
 func reviewPrompt(task, plan, summary, command string, v VerifyResult, verifyPath, out, lessons string) string {
 	part := partForStep("review")
-	return preamble(part.Name) + taskBlock(task) + lessons + fmt.Sprintf(part.Prompt["review"], plan, summary, verifyLine(command, v, verifyPath), verifiedNote(command), out, out)
+	return preamble(part.Name) + taskBlock(task) + lessons + fmt.Sprintf(replyTemplate(part.Prompt["review"], out), plan, summary, verifyLine(command, v, verifyPath), verifiedNote(command), out, out)
 }
 
 func gatePrompt(task, plan, summary string, reviews, failed []string, command string, v VerifyResult, verifyPath, out, lessons string) string {
@@ -102,7 +125,7 @@ func gatePrompt(task, plan, summary string, reviews, failed []string, command st
 		approve = "Approve when the task is done, the verification passed, and nothing is blocking."
 	}
 	part := partForStep("gate")
-	return preamble(part.Name) + taskBlock(task) + lessons + fmt.Sprintf(part.Prompt["gate"], plan, summary, reviewNote, failedNote, verifyLine(command, v, verifyPath), verifiedNote(command), approve, out, out)
+	return preamble(part.Name) + taskBlock(task) + lessons + fmt.Sprintf(replyTemplate(part.Prompt["gate"], out), plan, summary, reviewNote, failedNote, verifyLine(command, v, verifyPath), verifiedNote(command), approve, out, out)
 }
 
 func testPlanPrompt(task, plan, out, scratch string, timeout time.Duration, conductorPID int, lessons, caoURL, stateDir string) string {
@@ -111,7 +134,7 @@ func testPlanPrompt(task, plan, out, scratch string, timeout time.Duration, cond
 		limit = fmt.Sprintf("The test step has a time limit of %s. Plan scenarios ordered by risk (highest first) and sized to fit that limit.\n", timeout)
 	}
 	part := partForStep("test-plan")
-	return preamble(part.Name) + taskBlock(task) + lessons + testerProcessBriefing(conductorPID, scratch, caoURL, stateDir) + fmt.Sprintf(part.Prompt["test-plan"], plan, limit, scratch, out)
+	return preamble(part.Name) + taskBlock(task) + lessons + testerProcessBriefing(conductorPID, scratch, caoURL, stateDir) + fmt.Sprintf(replyTemplate(part.Prompt["test-plan"], out), plan, limit, scratch, out)
 }
 
 func testPrompt(task, plan, testPlan, summary, command string, v VerifyResult, verifyPath, scratch, out string, timeout time.Duration, conductorPID int, lessons, caoURL, stateDir string, measurements []string) string {
@@ -120,7 +143,7 @@ func testPrompt(task, plan, testPlan, summary, command string, v VerifyResult, v
 		limit = fmt.Sprintf("The test step has a time limit of %s. Stop starting new scenarios when about %s remains (the last tenth of the limit), leaving time to clean up and write your verdict.\n", timeout, timeout/10)
 	}
 	part := partForStep("test")
-	return preamble(part.Name) + taskBlock(task) + lessons + testerProcessBriefing(conductorPID, scratch, caoURL, stateDir) + fmt.Sprintf(part.Prompt["test"], plan, testPlan, summary, verifyLine(command, v, verifyPath), verifiedNote(command), limit, measurementsBlock(measurements), scratch, scratch, scratch, out)
+	return preamble(part.Name) + taskBlock(task) + lessons + testerProcessBriefing(conductorPID, scratch, caoURL, stateDir) + fmt.Sprintf(replyTemplate(part.Prompt["test"], out), plan, testPlan, summary, verifyLine(command, v, verifyPath), verifiedNote(command), limit, measurementsBlock(measurements), scratch, scratch, scratch, out)
 }
 
 func classifyPrompt(subject, path, out, lessons string) string {
@@ -139,7 +162,7 @@ func classifyPartPrompt(part Part, kind StepKind, subject, path, out, lessons st
 		subject = "test report"
 		nitNote = "APPROVE only when every scenario passed.\n"
 	}
-	return lessons + fmt.Sprintf(part.Prompt["classify"], path, subject, out, nitNote)
+	return lessons + fmt.Sprintf(replyTemplate(part.Prompt["classify"], out), path, subject, out, nitNote)
 }
 
 func nudgePrompt(path string) string {
@@ -155,7 +178,7 @@ func lessonsPrompt(task string, res Result, files []string, out string, parts []
 }
 
 func lessonsPartPrompt(part, task string, res Result, files []string, out string, parts []string) string {
-	return preamble(part) + taskBlock(task) + fmt.Sprintf(`
+	return preamble(part) + taskBlock(task) + fmt.Sprintf(replyTemplate(`
 The run ended with outcome %s after %d rounds. Read this run's records:
 %s
 From this run's plan, reviews and verdicts, what would have saved a round if a chair had known it at the start?
@@ -165,7 +188,7 @@ Write only a JSON array to %s, using this format:
 [{"part":"<%s>","lesson":"<one or two sentences>","evidence":"<which step and which finding>"}]
 Each lesson is limited to 400 characters and each evidence field to 300, with at most 4096 bytes of stored fields in total and a 32 KiB reply limit. Do not include control characters.
 Do not modify any file other than %s. When done, reply with one short sentence.
-`, res.Outcome, res.Rounds, strings.Join(files, "\n"), out, strings.Join(parts, "|"), out)
+`, out), res.Outcome, res.Rounds, strings.Join(files, "\n"), out, strings.Join(parts, "|"), out)
 }
 
 const lessonsOpen = "<lessons>"

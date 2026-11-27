@@ -20,6 +20,7 @@ import (
 )
 
 type PreflightResult struct {
+	CaptureFailed   bool     `json:"capture_failed,omitempty"`
 	DefinitionError string   `json:"definition_error,omitempty"`
 	SeatRetries     int      `json:"seat_retries,omitempty"`
 	SeatRetryError  string   `json:"seat_retry_error,omitempty"`
@@ -44,12 +45,12 @@ type PreflightResult struct {
 
 var blockerRE = regexp.MustCompile(`(?i)requires confirmation|do you want to proceed|needs review|do you trust|trust (this|all|the)|sign in|log ?in|authenticat|approve|allow .* to`)
 
-func ChairConfigKey(c Chair) [4]string {
-	return [4]string{c.Provider, c.Profile, c.Model, c.Tier}
+func ChairConfigKey(c Chair) [5]string {
+	return [5]string{c.Provider, c.Profile, c.Model, c.Tier, c.Reply}
 }
 
 func UniqueChairs(chairs ...Chair) []Chair {
-	seen := map[[4]string]bool{}
+	seen := map[[5]string]bool{}
 	var out []Chair
 	for _, s := range chairs {
 		key := ChairConfigKey(s)
@@ -292,7 +293,16 @@ func preflightChair(ctx context.Context, stepper interface {
 	}
 	if err == nil {
 		var out StepResult
-		out, err = stepper.Run(ctx, Step{Name: "preflight", Label: TerminalLabel("preflight", chair.Provider), Chair: chair, Prompt: preflightPrompt(rel), Dir: worktree, ReplyPath: rel, Timeout: timeout, ReuseTerminal: seat.TerminalID})
+		prompt := preflightPrompt(rel)
+		nonce := ""
+		if chair.Reply == ReplyMessage {
+			nonce, err = messageNonce()
+			prompt = "This is a readiness check. Do nothing else; your whole reply is the single word ready." + messagePrompt(nonce)
+		}
+		if err != nil {
+			return res, err
+		}
+		out, err = stepper.Run(ctx, Step{Name: "preflight", Label: TerminalLabel("preflight", chair.Provider), Chair: chair, Prompt: prompt, Dir: worktree, ReplyPath: rel, Timeout: timeout, ReuseTerminal: seat.TerminalID})
 		res.TimedOut = errors.Is(err, context.DeadlineExceeded)
 		if chair.NativeAgent == "" && out.ReportedModel != "" {
 			res.Model = out.ReportedModel
@@ -301,6 +311,19 @@ func preflightChair(ctx context.Context, stepper interface {
 			res.Honored = out.ModelHonored
 		}
 		if err == nil {
+			if chair.Reply == ReplyMessage {
+				text, ok := bracketedReply(out.LastMessage, nonce)
+				if ok && text == "ready" {
+					res.OK = true
+					res.DurationMS = time.Since(start).Milliseconds()
+					return res, nil
+				}
+				res.CaptureFailed = true
+				res.Error = "final-message reply not captured"
+				res.Screen = messageScreenTail(out.LastMessage)
+				res.DurationMS = time.Since(start).Milliseconds()
+				return res, errors.New(res.Error)
+			}
 			if awaitPreflightReply(ctx, abs, preflightReplyGrace) {
 				res.OK = true
 				res.DurationMS = time.Since(start).Milliseconds()
@@ -324,6 +347,17 @@ func preflightChair(ctx context.Context, stepper interface {
 		}
 	}
 	return res, err
+}
+
+func messageScreenTail(screen string) string {
+	lines := strings.Split(screen, "\n")
+	for i, line := range lines {
+		runes := []rune(line)
+		if len(runes) > screenLineRunes {
+			lines[i] = string(runes[len(runes)-screenLineRunes:])
+		}
+	}
+	return screenTail(strings.Join(lines, "\n"))
 }
 
 func screenTail(screen string) string {
@@ -434,6 +468,17 @@ func seatTimeout(preflight time.Duration) time.Duration {
 
 func (r PreflightResult) Reason() string {
 	text := cleanText(r.Blocker)
+	if r.CaptureFailed {
+		prefix := "final-message reply not captured"
+		tail := []rune(cleanText(r.Screen))
+		if len(tail) > 300-len(prefix)-2 {
+			tail = tail[len(tail)-(300-len(prefix)-2):]
+		}
+		if len(tail) > 0 {
+			return prefix + ": " + string(tail)
+		}
+		return prefix
+	}
 	if text == "" {
 		var lines []string
 		for _, line := range strings.Split(r.Screen, "\n") {

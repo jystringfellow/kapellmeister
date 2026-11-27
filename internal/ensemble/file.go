@@ -38,6 +38,7 @@ type Section struct {
 func (s Spec) Portable() bool { return s.portable }
 
 type ChairSpec struct {
+	Reply       string
 	NativeAgent string
 	Focus       string
 	Tier        string
@@ -55,6 +56,7 @@ type file struct {
 	Sections    map[string]struct {
 		Timeout string `toml:"timeout"`
 		Chairs  map[string]struct {
+			Reply       string   `toml:"reply"`
 			NativeAgent string   `toml:"native_agent"`
 			Focus       string   `toml:"focus"`
 			Part        string   `toml:"part"`
@@ -213,7 +215,15 @@ func parse(name, path, text string, portable bool, agents loop.Agents, available
 				return fail(fmt.Sprintf("chair %q", chairName), "%s", message)
 			}
 			c := raw.Chairs[chairName]
-			chair := ChairSpec{Name: chairName, Part: c.Part, Agents: c.Agents, Tier: c.Tier, Focus: c.Focus, NativeAgent: c.NativeAgent}
+			chair := ChairSpec{Reply: c.Reply, Name: chairName, Part: c.Part, Agents: c.Agents, Tier: c.Tier, Focus: c.Focus, NativeAgent: c.NativeAgent}
+			if md.IsDefined("sections", sectionName, "chairs", chairName, "reply") {
+				if c.Reply != "file" && c.Reply != loop.ReplyMessage {
+					return Spec{}, fmt.Errorf("%s: %s: invalid reply %q (want file or message)", path, (Member{Section: sectionName, Name: chairName}).Address(name), c.Reply)
+				}
+				if c.Reply == "file" {
+					chair.Reply = ""
+				}
+			}
 			if md.IsDefined("sections", sectionName, "chairs", chairName, "native_agent") {
 				address := (Member{Section: sectionName, Name: chairName}).Address(name)
 				if !validNativeAgent.MatchString(c.NativeAgent) {
@@ -330,7 +340,7 @@ func (s Spec) Bind(agents loop.Agents, available []string) ([]Member, error) {
 					continue
 				}
 				resolved, err := agents.ResolveChair(entry)
-				if c.NativeAgent != "" && (err != nil || resolved.Provider != "claude_code") {
+				if (c.NativeAgent != "" || c.Reply == loop.ReplyMessage) && (err != nil || resolved.Provider != "claude_code") {
 					continue
 				}
 				agent, ok = entry, true
@@ -338,7 +348,22 @@ func (s Spec) Bind(agents loop.Agents, available []string) ([]Member, error) {
 			}
 			if !ok {
 				m := Member{Section: section.Name, Name: c.Name}
-				return nil, &UnavailableError{Path: s.Path, Address: m.Address(s.Name), Section: section.Name, Chair: c.Name, Agents: c.Agents, Available: available, NativeAgent: c.NativeAgent}
+				unavailable := &UnavailableError{Path: s.Path, Address: m.Address(s.Name), Section: section.Name, Chair: c.Name, Agents: c.Agents, Available: available, NativeAgent: c.NativeAgent}
+				if c.Reply == loop.ReplyMessage {
+					var claude []string
+					for _, entry := range c.Agents {
+						resolved, err := agents.ResolveChair(entry)
+						if err == nil && resolved.Provider == "claude_code" {
+							claude = append(claude, entry)
+						}
+					}
+					if len(claude) == 0 {
+						unavailable.WrongProvider = true
+					} else {
+						unavailable.Agents = claude
+					}
+				}
+				return nil, unavailable
 			}
 			m, err := s.Seat(agents, section.Name, c.Name, agent)
 			if err != nil {
@@ -373,6 +398,17 @@ func ChairsOf(members []Member) (loop.Chairs, error) { return ChairsFor(loop.Def
 func ChairsFor(score loop.Score, members []Member) (loop.Chairs, error) {
 	byPart := map[string][]Member{}
 	for _, m := range members {
+		if m.Chair.Reply == loop.ReplyMessage {
+			for _, step := range score.StepsOf(m.Part) {
+				if step.Kind == loop.KindProduce && step.Writes != "reply" {
+					addr := m.Chair.Address
+					if addr == "" {
+						addr = m.Section + "." + m.Name
+					}
+					return loop.Chairs{}, fmt.Errorf("ensemble chair %s cannot use reply = message for worktree-changing step %s", addr, step.Name)
+				}
+			}
+		}
 		if _, ok := score.Part(m.Part); !ok && m.Part != "classifier" {
 			return loop.Chairs{}, fmt.Errorf("ensemble chair %s.%s plays unknown part %q", m.Section, m.Name, m.Part)
 		}
@@ -477,16 +513,23 @@ func ScoreName(name, home, worktree string) (string, error) {
 type UnavailableError struct {
 	Path, Address, Section, Chair string
 	NativeAgent                   string
+	WrongProvider                 bool
 	Agents, Available             []string
 }
 
 func (e *UnavailableError) Error() string {
+	if e.WrongProvider {
+		return fmt.Sprintf("%s: %s: reply = %q is allowed only on claude_code; other providers are refused until proven live", e.Path, e.Address, loop.ReplyMessage)
+	}
 	if e.NativeAgent != "" {
 		return fmt.Sprintf("%s: %s: no listed agent is an available claude_code agent; only claude_code can play native agent %s", e.Path, e.Address, e.NativeAgent)
 	}
 	return fmt.Sprintf("%s: %s: none of %s is in [agents] available (%s)", e.Path, e.Address, strings.Join(e.Agents, ", "), strings.Join(e.Available, ", "))
 }
 func (s Spec) Ready(score loop.Score, agents loop.Agents, available []string) error {
+	if err := s.replyFits(score); err != nil {
+		return err
+	}
 	members, err := s.Bind(agents, available)
 	if err != nil {
 		return err
@@ -495,7 +538,24 @@ func (s Spec) Ready(score loop.Score, agents loop.Agents, available []string) er
 	return err
 }
 
+func (s Spec) replyFits(score loop.Score) error {
+	for _, section := range s.Sections {
+		for _, chair := range section.Chairs {
+			if chair.Reply == loop.ReplyMessage {
+				for _, step := range score.StepsOf(chair.Part) {
+					if step.Kind == loop.KindProduce && step.Writes != "reply" {
+						return fmt.Errorf("%s: %s: reply = message cannot play worktree-changing step %s", s.Path, (Member{Section: section.Name, Name: chair.Name}).Address(s.Name), step.Name)
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
 func (s Spec) Fits(score loop.Score) error {
+	if err := s.replyFits(score); err != nil {
+		return err
+	}
 	var members []Member
 	for _, section := range s.Sections {
 		for _, chair := range section.Chairs {
@@ -532,7 +592,7 @@ func (s Spec) Listed(section, chair string, available []string, agents loop.Agen
 					for i, entry := range c.Agents {
 						if Eligible(entry, available) {
 							resolved, err := agents.ResolveChair(entry)
-							if c.NativeAgent != "" && (err != nil || resolved.Provider != "claude_code") {
+							if (c.NativeAgent != "" || c.Reply == loop.ReplyMessage) && (err != nil || resolved.Provider != "claude_code") {
 								continue
 							}
 							return entry, c.Agents[i+1:]
@@ -561,6 +621,9 @@ func (s Spec) Seat(agents loop.Agents, section, chair, entry string) (Member, er
 					if err != nil {
 						return Member{}, fmt.Errorf("%s: %s: %w", s.Path, m.Address(s.Name), err)
 					}
+					if c.Reply == loop.ReplyMessage && resolved.Provider != "claude_code" {
+						return Member{}, fmt.Errorf("%s: %s: reply = %q is allowed only on claude_code; other providers are refused until proven live", s.Path, m.Address(s.Name), c.Reply)
+					}
 					if c.NativeAgent != "" {
 						if resolved.Provider != "claude_code" {
 							return Member{}, fmt.Errorf("%s cannot play native agent %s (only claude_code can)", entry, c.NativeAgent)
@@ -572,6 +635,10 @@ func (s Spec) Seat(agents loop.Agents, section, chair, entry string) (Member, er
 						if err != nil {
 							return Member{}, err
 						}
+					}
+					resolved.Reply = c.Reply
+					if resolved.Reply == "file" {
+						resolved.Reply = ""
 					}
 					resolved.Focus = c.Focus
 					resolved.Timeout = firstDuration(c.Timeout, sec.Timeout, s.Timeout)

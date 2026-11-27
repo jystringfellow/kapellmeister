@@ -1302,6 +1302,9 @@ func checkPreflight(ctx context.Context, client *cao.Client, worktree string, ti
 	for _, r := range results {
 		d := (time.Duration(r.DurationMS) * time.Millisecond).Round(time.Second)
 		label := r.Chair.String()
+		if r.Chair.Reply == loop.ReplyMessage {
+			label += " reply message"
+		}
 		if r.Chair.NativeAgent != "" {
 			label += " (native agent " + r.Chair.NativeAgent + ")"
 		}
@@ -1339,7 +1342,9 @@ func preflightFailure(results []loop.PreflightResult, timeout time.Duration) err
 			continue
 		}
 		hint := r.Chair.String()
-		if definitionError {
+		if r.CaptureFailed {
+			hint += ": final-message reply not captured"
+		} else if definitionError {
 			copy := r
 			copy.Screen = ""
 			if reason := copy.Reason(); reason != "" {
@@ -1586,8 +1591,15 @@ func runEnsemble(ctx context.Context, p ensembleRun) (sum ensembleSummary, runEr
 	}
 	fmt.Fprintf(p.Progress, "  state     %s\n", p.StateDir)
 	for _, member := range p.Members {
-		if member.Chair.NativeAgent != "" {
-			fmt.Fprintf(p.Progress, "  chair     %s  native agent %s\n", member.Address(p.Ensemble), member.Chair.NativeAgent)
+		if member.Chair.NativeAgent != "" || member.Chair.Reply == loop.ReplyMessage {
+			line := ""
+			if member.Chair.NativeAgent != "" {
+				line += " native agent " + member.Chair.NativeAgent
+			}
+			if member.Chair.Reply == loop.ReplyMessage {
+				line += " reply message"
+			}
+			fmt.Fprintf(p.Progress, "  chair     %s %s\n", member.Address(p.Ensemble), strings.TrimSpace(line))
 		}
 	}
 	eng := &loop.Engine{Reseater: p.Reseater, Score: p.Score, Meter: p.Meter, Watcher: p.Watcher, Config: p.Config, Stepper: p.Stepper, Verify: p.Verify, Records: telemetry, Progress: p.Progress}
@@ -1598,6 +1610,7 @@ func runEnsemble(ctx context.Context, p ensembleRun) (sum ensembleSummary, runEr
 	}
 	warned := false
 	publish := func() {
+		state.ReplySource = eng.ReplySource()
 		if err := writeRunState(p.StateDir, state); err != nil && !warned {
 			fmt.Fprintln(os.Stderr, "km: recording current state:", plain(err.Error()))
 			warned = true
@@ -1717,6 +1730,9 @@ func finishRun(w io.Writer, sum ensembleSummary) error {
 
 func finishRunDetail(w io.Writer, sum ensembleSummary, detail bool) error {
 	printOutcome(w, sum)
+	if sum.ReplySource == loop.ReplyScreen {
+		fmt.Fprintln(w, "  reply     taken from the agent's screen; its formatting may differ (markdown rendered, lines re-wrapped)")
+	}
 	if len(sum.SeatsChanged) > 0 {
 		fmt.Fprintln(w, "seats changed")
 		for _, line := range ensemble.SeatLines(sum.SeatsChanged, sum.ProvidersLost) {

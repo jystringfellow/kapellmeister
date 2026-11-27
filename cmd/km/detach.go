@@ -111,7 +111,7 @@ func recordDetachedFailure(ctx context.Context, dir string, launch detachedLaunc
 		reason = sig.Error()
 	}
 	base, _ := gitOutput(launch.Worktree, "rev-parse", "HEAD")
-	sum := ensembleSummary{SeatsChanged: state.SeatsChanged, ProvidersLost: state.ProvidersLost, Result: loop.Result{RunID: launch.RunID, Worktree: launch.Worktree, RunDir: filepath.Join(launch.Worktree, loop.RunDirRel(launch.RunID)), Outcome: loop.Failed, Reason: reason}, Ensemble: state.Ensemble, EnsembleSource: state.EnsembleSource, Why: state.Why, Repository: state.Repository, BaseBranch: launch.BaseBranch, Base: base, DurationMS: time.Since(state.Started).Milliseconds()}
+	sum := ensembleSummary{SeatsChanged: state.SeatsChanged, ProvidersLost: state.ProvidersLost, Result: loop.Result{ReplySource: state.ReplySource, RunID: launch.RunID, Worktree: launch.Worktree, RunDir: filepath.Join(launch.Worktree, loop.RunDirRel(launch.RunID)), Outcome: loop.Failed, Reason: reason}, Ensemble: state.Ensemble, EnsembleSource: state.EnsembleSource, Why: state.Why, Repository: state.Repository, BaseBranch: launch.BaseBranch, Base: base, DurationMS: time.Since(state.Started).Milliseconds()}
 	if state.Seating != nil {
 		for _, section := range state.Seating.Sections {
 			for _, chair := range section.Chairs {

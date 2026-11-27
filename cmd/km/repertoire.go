@@ -224,7 +224,7 @@ func repertoireConfigEnsemble(name, home, worktree string, settings loop.Setting
 	if err != nil {
 		var unavailable *ensemble.UnavailableError
 		if errors.As(err, &unavailable) {
-			if unavailable.NativeAgent != "" {
+			if unavailable.NativeAgent != "" || unavailable.WrongProvider {
 				row.Reason = unavailable.Error()
 			} else {
 				row.Reason = fmt.Sprintf("%s: none of %s is available", unavailable.Chair, strings.Join(unavailable.Agents, ", "))
@@ -241,7 +241,7 @@ func repertoireReadiness(spec ensemble.Spec, score loop.Score, settings loop.Set
 	if err := spec.Ready(score, settings.Defined, settings.Agents); err != nil {
 		var unavailable *ensemble.UnavailableError
 		if errors.As(err, &unavailable) {
-			if unavailable.NativeAgent != "" {
+			if unavailable.NativeAgent != "" || unavailable.WrongProvider {
 				return unavailable.Error()
 			}
 			return fmt.Sprintf("%s.%s: none of %s is available", unavailable.Section, unavailable.Chair, strings.Join(unavailable.Agents, ", "))

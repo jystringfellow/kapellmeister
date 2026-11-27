@@ -97,10 +97,12 @@ func (s Standing) RebuildChairs() (loop.Chairs, error) {
 	return s.RebuildChairsFor(loop.DefaultScore())
 }
 
+var ErrNoRecordedBinding = errors.New("no recorded binding")
+
 func (s Standing) RebuildChairsFor(score loop.Score) (loop.Chairs, error) {
 	for _, c := range s.Chairs {
 		if c.Binding.Provider == "" {
-			return loop.Chairs{}, fmt.Errorf("session %s was rehearsed by an older km (no recorded binding); take it down and rehearse again", s.Session)
+			return loop.Chairs{}, fmt.Errorf("session %s was rehearsed by an older km (%w); take it down and rehearse again", s.Session, ErrNoRecordedBinding)
 		}
 	}
 	chairs, err := ChairsFor(score, s.Members())
