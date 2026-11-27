@@ -128,3 +128,14 @@ func TestNativeProfileNamesLeaveRoomForCAOsWindowSuffix(t *testing.T) {
 		})
 	}
 }
+
+func TestAUserNativeChairRejectsRawEntriesWithTheRepositoryAgentMessage(t *testing.T) {
+	for _, profile := range []string{"x/../../../y", "km-claude2"} {
+		text := fmt.Sprintf("[sections.dev.chairs.one]\npart = 'planner'\nagents = ['claude_code:%s']\nnative_agent = 'demo'\n", profile)
+		_, err := Check("band", "band.toml", text, loop.BuiltInAgents())
+		want := checkAgent("claude_code:"+profile, true, loop.BuiltInAgents())
+		if err == nil || want == nil || !strings.Contains(err.Error(), "band.toml") || !strings.Contains(err.Error(), want.Error()) {
+			t.Fatalf("%s: %v", profile, err)
+		}
+	}
+}

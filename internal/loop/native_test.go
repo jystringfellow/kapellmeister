@@ -510,7 +510,7 @@ func TestNativeDefinitionReportsCRLineEndings(t *testing.T) {
 	}
 	os.WriteFile(path, []byte("---\r\nname: demo\r\n---\r\n"), 0644)
 	err = chair.CheckDefinition(dir)
-	if err == nil || !strings.Contains(err.Error(), "line endings") {
+	if err == nil || !strings.Contains(err.Error(), "differs from the base commit") {
 		t.Fatal(err)
 	}
 }
@@ -600,10 +600,10 @@ func TestNativeBindingExplainsNamesAndListsAmbiguousDefinitions(t *testing.T) {
 		{"mismatch", "---\nname: renamed-agent\n---\n", "", []string{".claude/agents/demo.md", `declares name "renamed-agent", not "demo"`}, false},
 		{"missing-front-matter", "name: demo\n", "", []string{".claude/agents/demo.md", "no name"}, false},
 		{"missing-name", "---\ndescription: demo\n---\n", "", []string{".claude/agents/demo.md", "no name"}, false},
-		{"duplicate-names", "---\nname: demo\nname: other\n---\n", "", []string{".claude/agents/demo.md", "demo", "other"}, false},
+		{"duplicate-names", "---\nname: demo\nname: other\n---\n", "", []string{".claude/agents/demo.md:3:", "could not read the front matter"}, false},
 		{"quoted-definition", "---\nname: \"demo\" # comment\n---\n", "", nil, true},
 		{"ambiguous-tab-comment", "---\nname: demo\n---\n", "---\nname: demo\t# comment\n---\n", []string{"ambiguous", ".claude/agents/demo.md", ".claude/agents/sub/demo.md"}, false},
-		{"ambiguous-quoted-crlf", "---\nname: demo\n---\n", "---\r\n  'name': \"demo\" # comment\r\n---\r\n", []string{"ambiguous", ".claude/agents/demo.md", ".claude/agents/sub/demo.md"}, false},
+		{"ambiguous-quoted-crlf", "---\nname: demo\n---\n", "---\r\n  'name': \"demo\" # comment\r\n---\r\n", []string{"could not read the front matter", ".claude/agents/sub/demo.md"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -678,9 +678,6 @@ func TestNativeChecksKeepTheBasePinAndRejectOtherTreeChanges(t *testing.T) {
 			err = chair.CheckDefinition(dir)
 			if !errors.Is(err, ErrNativeDefinition) {
 				t.Fatalf("%s: %v", kind, err)
-			}
-			if kind == "content" && strings.Contains(err.Error(), "only in line endings") {
-				t.Fatal(err)
 			}
 			if kind == "commit-shadow" && !strings.Contains(err.Error(), "sub/x.md") {
 				t.Fatal(err)
@@ -919,7 +916,7 @@ func TestTheLaunchCheckNeverReadsTheGitObjectStoreAfterBinding(t *testing.T) {
 	if err := os.WriteFile(path, []byte("---\r\nname: demo\r\n---\r\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := chair.CheckDefinition(dir); err == nil || !strings.Contains(err.Error(), "only in line endings (CR)") {
+	if err := chair.CheckDefinition(dir); err == nil || !strings.Contains(err.Error(), "differs from the base commit") {
 		t.Fatalf("CR: %v", err)
 	}
 }
@@ -1025,4 +1022,641 @@ func TestNativeErrorsQuoteNonPrintablePaths(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestUnreadableShadowNamesAreRefused(t *testing.T) {
+	forms := []string{"name: &a demo", "name: !!str demo", "name: >-\n  demo", "name:\n  demo", "{name: demo}", "? name\n: demo", "<<: {name: demo}", `"name": demo`, `"na\x6de": demo`, "k: &k name\n*k : demo", "name: de\n  mo", `name: "d\x65mo"`}
+	for _, form := range forms {
+		t.Run(form, func(t *testing.T) {
+			dir := t.TempDir()
+			gitTestNative(t, dir, "init", "-q")
+			os.MkdirAll(filepath.Join(dir, ".claude/agents/sub"), 0755)
+			os.WriteFile(filepath.Join(dir, ".claude/agents/demo.md"), []byte("---\nname: demo\n---\n"), 0644)
+			os.WriteFile(filepath.Join(dir, ".claude/agents/sub/x.md"), []byte("---\n"+form+"\n---\n"), 0644)
+			gitTestNative(t, dir, "add", ".")
+			gitTestNative(t, dir, "commit", "-qm", "base")
+			_, err := ResolveNativeDefinition(dir, Chair{NativeAgent: "demo"}, true)
+			if err == nil || !strings.Contains(err.Error(), "sub/x.md") || !strings.Contains(err.Error(), "could not read the front matter") {
+				t.Fatalf("got %v", err)
+			}
+		})
+	}
+}
+
+func TestPlainNonStringNamesMustBeQuoted(t *testing.T) {
+	for _, value := range []string{"null", "~", "true", "FALSE", "yes", "no", "on", "off", "123", "1e3", "0xff", "0o17", ".inf", ".nan", "-1", "-.Inf", "-1.5", "-1e3", "2026-01-01"} {
+		t.Run(value, func(t *testing.T) {
+			dir := t.TempDir()
+			gitTestNative(t, dir, "init", "-q")
+			os.MkdirAll(filepath.Join(dir, ".claude/agents"), 0755)
+			os.WriteFile(filepath.Join(dir, ".claude/agents/demo.md"), []byte("---\nname: demo\n---\n"), 0644)
+			os.WriteFile(filepath.Join(dir, ".claude/agents/x.md"), []byte("---\nname: "+value+"\n---\n"), 0644)
+			gitTestNative(t, dir, "add", ".")
+			gitTestNative(t, dir, "commit", "-qm", "base")
+			_, err := ResolveNativeDefinition(dir, Chair{NativeAgent: "demo"}, true)
+			if err == nil || !strings.Contains(err.Error(), "must be quoted") {
+				t.Fatalf("got %v", err)
+			}
+		})
+	}
+}
+
+func TestFrontMatterContainingDelimiterTextIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	gitTestNative(t, dir, "init", "-q")
+	os.MkdirAll(filepath.Join(dir, ".claude/agents"), 0755)
+	os.WriteFile(filepath.Join(dir, ".claude/agents/demo.md"), []byte("---\ndescription: a ---\nname: demo\n---\n"), 0644)
+	gitTestNative(t, dir, "add", ".")
+	gitTestNative(t, dir, "commit", "-qm", "base")
+	_, err := ResolveNativeDefinition(dir, Chair{NativeAgent: "demo"}, true)
+	if err == nil || !strings.Contains(err.Error(), "contains ---") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestNativeProfileNamesExcludePathCharacters(t *testing.T) {
+	for _, v := range []string{"x/y", "x.y", "x y", "é"} {
+		if _, err := NativeProfileName(v, "demo"); err == nil {
+			t.Errorf("accepted %q", v)
+		}
+	}
+}
+
+func TestNativeManifestRecordsSizeAndDetectsSizeAndContentChanges(t *testing.T) {
+	dir := t.TempDir()
+	gitTestNative(t, dir, "init", "-q")
+	path := filepath.Join(dir, ".claude/agents/demo.md")
+	os.MkdirAll(filepath.Dir(path), 0755)
+	original := []byte("---\nname: demo\n---\n")
+	os.WriteFile(path, original, 0644)
+	gitTestNative(t, dir, "add", ".")
+	gitTestNative(t, dir, "commit", "-qm", "base")
+	chair, err := ResolveNativeDefinition(dir, Chair{NativeAgent: "demo"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(chair.Manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), fmt.Sprintf(`"size":%d`, len(original))) || strings.Contains(string(data), `"mode"`) || strings.Contains(string(data), `"lf_sha256"`) {
+		t.Fatal(string(data))
+	}
+	for _, changed := range [][]byte{append(append([]byte(nil), original...), 'x'), bytes.Repeat([]byte{'x'}, len(original))} {
+		os.WriteFile(path, changed, 0644)
+		if err := chair.CheckDefinition(dir); err == nil || !strings.Contains(err.Error(), "differs from the base commit") {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestNameReaderAcceptsSimpleNamesAndRefusesUnreadableFrontMatter(t *testing.T) {
+	for _, tc := range []struct {
+		body string
+		want string
+		bad  bool
+	}{
+		{"description: Use {x}\ntools: [Read, \"Bash(git:*)\"]\n", "", true},
+		{"name: 'demo'\n", "demo", false}, {"name: \"demo\" # c\n", "demo", false},
+		{"description: |\n  **Bold**: text\n", "", false},
+		{"name: demo---x\n", "", true}, {"description: a ---\nname: demo\n", "", true},
+		{"name: demo\rname: other\n", "", true}, {"name: demo\n  continued\n", "", true},
+		{"name: 123\n", "", true}, {"name: \"123\"\n", "123", false},
+	} {
+		t.Run(tc.body, func(t *testing.T) {
+			top, err := nativeName("file.md", []byte("---\n"+tc.body+"---\n"))
+			if (err != nil) != tc.bad {
+				t.Fatalf("%v", err)
+			}
+			if top != tc.want {
+				t.Fatal(top)
+			}
+		})
+	}
+}
+
+func TestUnreadableNamesAreRefusedInTargetAndUserDefinitions(t *testing.T) {
+	for _, user := range []bool{false, true} {
+		t.Run(fmt.Sprint(user), func(t *testing.T) {
+			dir := t.TempDir()
+			gitTestNative(t, dir, "init", "-q")
+			path := filepath.Join(dir, ".claude/agents/demo.md")
+			if user {
+				config := t.TempDir()
+				t.Setenv("CLAUDE_CONFIG_DIR", config)
+				path = filepath.Join(config, "agents/demo.md")
+			}
+			os.MkdirAll(filepath.Dir(path), 0755)
+			os.WriteFile(path, []byte("---\nname: &a demo\n---\n"), 0644)
+			gitTestNative(t, dir, "add", ".")
+			gitTestNative(t, dir, "commit", "--allow-empty", "-qm", "base")
+			_, err := ResolveNativeDefinition(dir, Chair{NativeAgent: "demo"}, !user)
+			if err == nil || !strings.Contains(err.Error(), "could not read the front matter") {
+				t.Fatalf("%v", err)
+			}
+		})
+	}
+}
+
+func TestAQuotedShadowNameIsAmbiguous(t *testing.T) {
+	dir := t.TempDir()
+	gitTestNative(t, dir, "init", "-q")
+	root := filepath.Join(dir, ".claude/agents")
+	os.MkdirAll(root, 0755)
+	os.WriteFile(filepath.Join(root, "demo.md"), []byte("---\nname: demo\n---\n"), 0644)
+	os.WriteFile(filepath.Join(root, "shadow.md"), []byte("---\nname: \"demo\"\n---\n"), 0644)
+	gitTestNative(t, dir, "add", ".")
+	gitTestNative(t, dir, "commit", "-qm", "base")
+	_, err := ResolveNativeDefinition(dir, Chair{NativeAgent: "demo"}, true)
+	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestASizeMismatchIsReportedBeforeReadingTheFile(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can read files without permissions")
+	}
+	dir := t.TempDir()
+	gitTestNative(t, dir, "init", "-q")
+	path := filepath.Join(dir, ".claude/agents/demo.md")
+	os.MkdirAll(filepath.Dir(path), 0755)
+	os.WriteFile(path, []byte("---\nname: demo\n---\n"), 0644)
+	gitTestNative(t, dir, "add", ".")
+	gitTestNative(t, dir, "commit", "-qm", "base")
+	chair, err := ResolveNativeDefinition(dir, Chair{NativeAgent: "demo"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("different size"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0000); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(path, 0644)
+	if err := chair.CheckDefinition(dir); err == nil || !strings.Contains(err.Error(), "differs from the base commit") {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestFlowMappingsAfterQuotedKeysAreRefused(t *testing.T) {
+	_, err := nativeName("x.md", []byte("---\n\"other: value\": {name: demo}\n---\n"))
+	if err == nil || !strings.Contains(err.Error(), "could not read the front matter") {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestFlowMappingsFollowingTabSeparatedValuesAreRefused(t *testing.T) {
+	_, err := nativeName("x.md", []byte("---\nmetadata:\t{name: demo}\n---\n"))
+	if err == nil {
+		t.Fatal("accepted flow mapping")
+	}
+}
+
+func TestNonYAMLLineBreaksInTheOpeningLineAreUnreadable(t *testing.T) {
+	for _, sep := range []string{"\r", "\u0085", "\u2028", "\u2029"} {
+		_, err := nativeName("shadow.md", []byte("---"+sep+"name: demo"+sep+"---"+sep))
+		if err == nil || !strings.Contains(err.Error(), "could not read the front matter") {
+			t.Errorf("%q: %v", sep, err)
+		}
+	}
+}
+
+func TestFlowMappingsAndTabSeparatedSequenceKeysAreUnreadable(t *testing.T) {
+	for _, line := range []string{"a:b: {name: demo}", `"a":{name: demo}`, `"a":[{name: demo}]`, "'a''b: c': {name: demo}", "-\tname: demo"} {
+		t.Run(line, func(t *testing.T) {
+			_, err := nativeName("shadow.md", []byte("---\n"+line+"\n---\n"))
+			if err == nil || !strings.Contains(err.Error(), "could not read the front matter") {
+				t.Fatalf("%v", err)
+			}
+		})
+	}
+}
+
+func TestNonYAMLWhitespaceIsPreservedInNamesAndRefusedAfterQuotes(t *testing.T) {
+	for _, value := range []string{"\u00a0demo", "demo\u00a0"} {
+		top, err := nativeName("shadow.md", []byte("---\nname: "+value+"\n---\n"))
+		if err != nil || top != value {
+			t.Errorf("%q: %q %v", value, top, err)
+		}
+	}
+	for _, body := range []string{"name: \"demo\"\u00a0", "name: demo\n  \u00a0"} {
+		_, err := nativeName("shadow.md", []byte("---\n"+body+"\n---\n"))
+		if err == nil {
+			t.Errorf("accepted %q", body)
+		}
+	}
+}
+
+func TestShadowNamesHiddenByTagsOrBOMsAreRefused(t *testing.T) {
+	for _, form := range []string{
+		"!<t>{name: demo, description: d}",
+		"\ufeff{name: demo, description: d}",
+		"\ufeffname: demo\ndescription: d",
+	} {
+		t.Run(form, func(t *testing.T) {
+			dir := t.TempDir()
+			gitTestNative(t, dir, "init", "-q")
+			root := filepath.Join(dir, ".claude/agents")
+			if err := os.MkdirAll(filepath.Join(root, "sub"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			for path, body := range map[string]string{
+				"demo.md":  "name: demo\ndescription: d",
+				"sub/x.md": form,
+			} {
+				if err := os.WriteFile(filepath.Join(root, path), []byte("---\n"+body+"\n---\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			gitTestNative(t, dir, "add", ".")
+			gitTestNative(t, dir, "commit", "-qm", "base")
+			_, err := ResolveNativeDefinition(dir, Chair{NativeAgent: "demo"}, true)
+			if err == nil || !strings.Contains(err.Error(), "sub/x.md") || !strings.Contains(err.Error(), "could not read the front matter") {
+				t.Fatalf("got %v", err)
+			}
+		})
+	}
+}
+
+func TestFlowMappingsInAttachedCollectionsAndContinuedSequencesAreRefused(t *testing.T) {
+	for _, body := range []string{
+		"&a{name: demo}",
+		"!!map{name: demo}",
+		`&a{"name":demo}`,
+		"x: &a{name: demo}",
+		"x: !!map{name: demo}",
+		"items:\n  - &a{name: demo}",
+		"[{name: demo}]",
+		"items:\n  [{name: demo}]",
+		"items:\n  - [{a: 1}]",
+		"x: [a,\nb, {a: 1}]",
+		"x: [don't,\n  {a: 1}]",
+	} {
+		t.Run(body, func(t *testing.T) {
+			_, err := nativeName("shadow.md", []byte("---\n"+body+"\n---\n"))
+			if err == nil || !strings.Contains(err.Error(), "shadow.md") || !strings.Contains(err.Error(), "could not read the front matter") {
+				t.Fatalf("got %v", err)
+			}
+		})
+	}
+}
+
+func TestFrontMatterRefusesUnlistedForms(t *testing.T) {
+	for _, body := range []string{"!<t>name: demo", "[a]: {b: 1}", "y: [<<: *a]", "description: \"x\n  ['\"\nname: demo", "name: demo\nname: demo"} {
+		t.Run(body, func(t *testing.T) {
+			_, err := nativeName("shadow.md", []byte("---\n"+body+"\n---\n"))
+			if err == nil {
+				t.Fatal("unlisted form was accepted")
+			}
+		})
+	}
+}
+
+func TestFrontMatterFixturesAcceptNamesAndRefuseShadowFiles(t *testing.T) {
+	for _, kind := range []string{"accepted", "refused"} {
+		paths, err := filepath.Glob(filepath.Join("testdata/native-front-matter", kind, "*.md"))
+		if err != nil || len(paths) == 0 {
+			t.Fatalf("%s: %v", kind, err)
+		}
+		for _, path := range paths {
+			t.Run(kind+"/"+filepath.Base(path), func(t *testing.T) {
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if kind == "accepted" {
+					top, err := nativeName(path, data)
+					want := strings.TrimSuffix(filepath.Base(path), ".md")
+					if err != nil || top != want {
+						t.Fatalf("%v %v", top, err)
+					}
+					return
+				}
+				dir := t.TempDir()
+				gitTestNative(t, dir, "init", "-q")
+				sub := filepath.Join(dir, ".claude/agents/sub")
+				if err := os.MkdirAll(sub, 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(sub, "x.md"), data, 0644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, ".claude/agents/demo.md"), []byte("---\nname: demo\n---\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+				gitTestNative(t, dir, "add", ".")
+				gitTestNative(t, dir, "commit", "-qm", "base")
+				_, err = ResolveNativeDefinition(dir, Chair{NativeAgent: "demo"}, true)
+				if err == nil || !strings.Contains(err.Error(), "sub/x.md:") || !strings.Contains(err.Error(), "could not read the front matter") {
+					t.Fatal(err)
+				}
+			})
+		}
+	}
+}
+
+func TestFrontMatterReportsTheOffendingLine(t *testing.T) {
+	for _, tc := range []struct {
+		body string
+		line string
+	}{
+		{"x:\n\tbad: value", ":3:"}, {"name: demo\nname: demo", ":3:"}, {"x: |\n    first\n  second", ":4:"}, {"x: |\n     \n   first", ":3:"}, {"name: demo\ndescription: Use when: x\nnotes: |\n  name: evil", ":5:"},
+	} {
+		t.Run(tc.body, func(t *testing.T) {
+			_, err := nativeName("x.md", []byte("---\n"+tc.body+"\n---\n"))
+			if err == nil || !strings.Contains(err.Error(), tc.line) {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestOpeningDelimiterAcceptsNonbreakingSpace(t *testing.T) {
+	top, err := nativeName("x.md", []byte("---\u00a0\nname: demo\n---\n"))
+	if err != nil || top != "demo" {
+		t.Fatalf("%q %v", top, err)
+	}
+}
+
+func TestUserDefinitionRefusesUnreadableBaseShadows(t *testing.T) {
+	dir := t.TempDir()
+	config := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", config)
+	gitTestNative(t, dir, "init", "-q")
+	if err := os.MkdirAll(filepath.Join(config, "agents"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(config, "agents/demo.md"), []byte("---\nname: demo\n---\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(dir, ".claude/agents/sub")
+	if err := os.MkdirAll(sub, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "x.md"), []byte("---\n!<t>name: demo\n---\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitTestNative(t, dir, "add", ".")
+	gitTestNative(t, dir, "commit", "-qm", "base")
+	_, err := ResolveNativeDefinition(dir, Chair{NativeAgent: "demo"}, false)
+	if err == nil || !strings.Contains(err.Error(), "sub/x.md:") {
+		t.Fatal(err)
+	}
+}
+
+func TestUserDefinitionRefusesAnUnreadableBaseFileOfTheSameName(t *testing.T) {
+	dir := t.TempDir()
+	config := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", config)
+	gitTestNative(t, dir, "init", "-q")
+	for _, root := range []string{config, filepath.Join(dir, ".claude")} {
+		if err := os.MkdirAll(filepath.Join(root, "agents"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(config, "agents/demo.md"), []byte("---\nname: demo\n---\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".claude/agents/demo.md"), []byte("---\n!<t>name: demo\n---\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitTestNative(t, dir, "add", ".")
+	gitTestNative(t, dir, "commit", "-qm", "base")
+	_, err := ResolveNativeDefinition(dir, Chair{NativeAgent: "demo"}, false)
+	if err == nil || !strings.Contains(err.Error(), "could not read the front matter") {
+		t.Fatal(err)
+	}
+}
+
+func TestPlainSequenceItemsRefuseColonSpace(t *testing.T) {
+	for _, v := range []string{"-  name: demo", "- name : demo", "- 1: demo", "- Use when: x"} {
+		t.Run(v, func(t *testing.T) {
+			_, err := nativeName("x.md", []byte("---\nx:\n  "+v+"\n---\n"))
+			if err == nil {
+				t.Fatal("accepted colon in sequence item")
+			}
+		})
+	}
+}
+func TestFlowSequenceItemsRefuseTabs(t *testing.T) {
+	_, err := nativeName("x.md", []byte("---\ny: [a\t]\n---\n"))
+	if err == nil {
+		t.Fatal("accepted tab in flow item")
+	}
+}
+
+func TestBlockBracketBeforeANameStillDetectsAShadow(t *testing.T) {
+	dir := t.TempDir()
+	gitTestNative(t, dir, "init", "-q")
+	sub := filepath.Join(dir, ".claude/agents/sub")
+	if err := os.MkdirAll(sub, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "x.md"), []byte("---\ndescription: |\n  [\"\nname: demo\n---\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".claude/agents/demo.md"), []byte("---\nname: demo\n---\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitTestNative(t, dir, "add", ".")
+	gitTestNative(t, dir, "commit", "-qm", "base")
+	_, err := ResolveNativeDefinition(dir, Chair{NativeAgent: "demo"}, true)
+	if err == nil || !strings.Contains(err.Error(), "ambiguous") || !strings.Contains(err.Error(), "sub/x.md") {
+		t.Fatal(err)
+	}
+}
+
+func TestFrontMatterStructureEdgesAreValidated(t *testing.T) {
+	for _, tc := range []struct {
+		body string
+		bad  bool
+	}{
+		{"x:\n    y:\n      z: a\n  bad: x", true},
+		{"x:\n  - k: a\n  - k: b\nname: demo", false},
+		{"x:\n- k: a\nname: demo", false},
+		{"x:\n  - k:\n    - a\n    other: b\nname: demo", false},
+		{"x: |\nname: demo", false},
+		{"x:\n  - |\n    body\nname: demo", false},
+	} {
+		t.Run(tc.body, func(t *testing.T) {
+			name, err := nativeName("x.md", []byte("---\n"+tc.body+"\n---\n"))
+			if (err != nil) != tc.bad || (!tc.bad && name != "demo") {
+				t.Fatalf("%q %v", name, err)
+			}
+		})
+	}
+}
+
+func TestSubsetRefusalAppliesToRepositoryAndUserDefinitions(t *testing.T) {
+	for _, user := range []bool{false, true} {
+		for _, body := range []string{"name: demo\nname: demo", "!<t>name: demo"} {
+			t.Run(fmt.Sprintf("%t/%s", user, body), func(t *testing.T) {
+				dir := t.TempDir()
+				gitTestNative(t, dir, "init", "-q")
+				root := filepath.Join(dir, ".claude")
+				if user {
+					root = t.TempDir()
+					t.Setenv("CLAUDE_CONFIG_DIR", root)
+				}
+				path := filepath.Join(root, "agents/demo.md")
+				if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte("---\n"+body+"\n---\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+				gitTestNative(t, dir, "add", ".")
+				gitTestNative(t, dir, "commit", "--allow-empty", "-qm", "base")
+				_, err := ResolveNativeDefinition(dir, Chair{NativeAgent: "demo"}, !user)
+				if err == nil || !strings.Contains(err.Error(), "demo.md:") || !strings.Contains(err.Error(), "could not read the front matter") {
+					t.Fatal(err)
+				}
+			})
+		}
+	}
+}
+
+func TestDefinitionsClaudeCodeWouldNotLoadAreRefusedByTargetAndUserPaths(t *testing.T) {
+	for _, fixture := range []string{"no-closing-delimiter", "lenient-with-block-scalar", "lenient-with-commented-empty-key", "crlf-lenient", "nul-in-plain-value", "lenient-trailing-space-name", "lenient-under-digit-key"} {
+		for _, user := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/user=%v", fixture, user), func(t *testing.T) {
+				data, err := os.ReadFile(filepath.Join("testdata/native-front-matter/refused", fixture+".md"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				dir := t.TempDir()
+				gitTestNative(t, dir, "init", "-q")
+				path := filepath.Join(dir, ".claude/agents/demo.md")
+				if user {
+					config := t.TempDir()
+					t.Setenv("CLAUDE_CONFIG_DIR", config)
+					path = filepath.Join(config, "agents/demo.md")
+				}
+				if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, data, 0644); err != nil {
+					t.Fatal(err)
+				}
+				gitTestNative(t, dir, "commit", "--allow-empty", "-qm", "base")
+				if !user {
+					gitTestNative(t, dir, "add", ".")
+					gitTestNative(t, dir, "commit", "-qm", "definition")
+				}
+				_, err = ResolveNativeDefinition(dir, Chair{NativeAgent: "demo"}, !user)
+				if err == nil || !strings.Contains(err.Error(), pathForTest(dir, path)) || (user && !strings.Contains(err.Error(), "could not read the front matter")) {
+					t.Fatalf("got %v", err)
+				}
+			})
+		}
+	}
+}
+func pathForTest(dir, path string) string {
+	if strings.HasPrefix(path, dir+string(os.PathSeparator)) {
+		p, _ := filepath.Rel(dir, path)
+		return filepath.ToSlash(p)
+	}
+	return path
+}
+
+func TestAControlCharacterInFrontMatterIsRefusedButATabAndTheBodyAreNot(t *testing.T) {
+	for _, tc := range []struct {
+		text string
+		bad  bool
+	}{
+		{"---\nname: demo\n---\r\n", true}, {"---\r\nname: demo\n---\n", true}, {"---\nname: demo\nx: a\x7fb\n---\n", true}, {"---\nname: demo\n# a\x00b\n---\n", true},
+		{"---\nname: demo\t\n---\t\n", false}, {"---\nname: demo\n---\n\r\x00", false},
+	} {
+		t.Run(fmt.Sprintf("%q", tc.text), func(t *testing.T) {
+			_, err := nativeName("x", []byte(tc.text))
+			if (err != nil) != tc.bad {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestEveryAgentFileOverTheSizeCapIsRefused(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		user, exact bool
+	}{{"other.md", false, false}, {"other.txt", false, false}, {"demo.md", false, false}, {"demo.md", true, false}, {"other.txt", false, true}} {
+		t.Run(fmt.Sprintf("%s/user=%v/exact=%v", tc.name, tc.user, tc.exact), func(t *testing.T) {
+			dir := t.TempDir()
+			gitTestNative(t, dir, "init", "-q")
+			base := filepath.Join(dir, ".claude/agents")
+			os.MkdirAll(base, 0755)
+			os.WriteFile(filepath.Join(base, "demo.md"), []byte("---\nname: demo\n---\n"), 0644)
+			path := filepath.Join(base, tc.name)
+			if tc.user {
+				config := t.TempDir()
+				t.Setenv("CLAUDE_CONFIG_DIR", config)
+				path = filepath.Join(config, "agents/demo.md")
+				os.MkdirAll(filepath.Dir(path), 0755)
+				os.Remove(filepath.Join(base, "demo.md"))
+			}
+			size := 256*1024 + 1
+			if tc.exact {
+				size--
+			}
+			os.WriteFile(path, bytes.Repeat([]byte("x"), size), 0644)
+			gitTestNative(t, dir, "add", ".")
+			gitTestNative(t, dir, "commit", "--allow-empty", "-qm", "base")
+			_, err := ResolveNativeDefinition(dir, Chair{NativeAgent: "demo"}, !tc.user)
+			if tc.exact {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "exceeds 256 KiB") || !strings.Contains(err.Error(), pathForTest(dir, path)) {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestTheSizeCapIsAppliedBeforeAFileIsRead(t *testing.T) {
+	t.Run("base", func(t *testing.T) {
+		dir := t.TempDir()
+		gitTestNative(t, dir, "init", "-q")
+		path := filepath.Join(dir, ".claude/agents/demo.md")
+		os.MkdirAll(filepath.Dir(path), 0755)
+		os.WriteFile(path, []byte("---\nname: demo\n---\n"), 0644)
+		gitTestNative(t, dir, "add", ".")
+		gitTestNative(t, dir, "commit", "-qm", "base")
+		oid := strings.TrimSpace(gitTestNative(t, dir, "rev-parse", "HEAD:.claude/agents/demo.md"))
+		obj := filepath.Join(dir, ".git/objects", oid[:2], oid[2:])
+		var b bytes.Buffer
+		z := zlib.NewWriter(&b)
+		content := bytes.Repeat([]byte("x"), 256*1024+1)
+		fmt.Fprintf(z, "blob %d\x00", len(content))
+		z.Write(content)
+		z.Close()
+		os.Chmod(obj, 0644)
+		os.WriteFile(obj, b.Bytes(), 0444)
+		_, err := ResolveNativeDefinition(dir, Chair{NativeAgent: "demo"}, true)
+		if err == nil || !strings.Contains(err.Error(), "exceeds 256 KiB") {
+			t.Fatal(err)
+		}
+	})
+	t.Run("user", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root can read mode 0000")
+		}
+		dir := t.TempDir()
+		gitTestNative(t, dir, "init", "-q")
+		gitTestNative(t, dir, "commit", "--allow-empty", "-qm", "base")
+		config := t.TempDir()
+		t.Setenv("CLAUDE_CONFIG_DIR", config)
+		path := filepath.Join(config, "agents/demo.md")
+		os.MkdirAll(filepath.Dir(path), 0755)
+		os.WriteFile(path, bytes.Repeat([]byte("x"), 256*1024+1), 0000)
+		_, err := ResolveNativeDefinition(dir, Chair{NativeAgent: "demo"}, false)
+		if err == nil || !strings.Contains(err.Error(), "exceeds 256 KiB") {
+			t.Fatal(err)
+		}
+	})
 }

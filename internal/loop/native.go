@@ -8,30 +8,43 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 )
 
 var ErrNativeDefinition = errors.New("native agent definition")
-var nameLine = regexp.MustCompile(`^([ \t]*)(?:name|"name"|'name')[ \t]*:[ \t]*(.*)$`)
 
-type nativeEntry struct{ mode, oid string }
+const nativeSizeLimit = 256 * 1024
+
+type nativeEntry struct {
+	mode, oid string
+	size      int64
+}
 type NativeDifference struct{ Path, Reason string }
 type NativeManifest struct {
 	Entries []NativeManifestEntry `json:"entries"`
 }
 type NativeManifestEntry struct {
-	Path     []byte `json:"path"`
-	Mode     string `json:"mode"`
-	SHA256   string `json:"sha256"`
-	LFSHA256 string `json:"lf_sha256"`
+	Path   []byte `json:"path"`
+	Size   int64  `json:"size"`
+	SHA256 string `json:"sha256"`
 }
 
 func nativeHash(data []byte) string { return fmt.Sprintf("%x", sha256.Sum256(data)) }
-func nativeLF(data []byte) []byte   { return bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n")) }
+func (m *NativeManifest) Pinned() bool {
+	if m == nil {
+		return false
+	}
+	for _, e := range m.Entries {
+		if e.Size == 0 && e.SHA256 != nativeHash(nil) {
+			return false
+		}
+	}
+	return true
+}
 func (c Chair) WithDefinitionOf(o Chair) Chair {
 	c.Definition, c.DefinitionBase, c.Manifest = o.Definition, o.DefinitionBase, o.Manifest
 	return c
@@ -44,41 +57,8 @@ func nativePaths(paths []string) string {
 	return strings.Join(quoted, ", ")
 }
 
-func nativeNames(data []byte, strict bool) []string {
-	s := strings.TrimPrefix(string(data), "\ufeff")
-	lines := strings.Split(s, "\n")
-	if len(lines) < 2 || strings.TrimRight(lines[0], " \t\r") != "---" {
-		return nil
-	}
-	var names []string
-	for _, line := range lines[1:] {
-		line = strings.TrimSuffix(line, "\r")
-		if strings.TrimRight(line, " \t") == "---" {
-			return names
-		}
-		m := nameLine.FindStringSubmatch(line)
-		if m == nil || (strict && m[1] != "") {
-			continue
-		}
-		v := strings.TrimSpace(m[2])
-		if len(v) > 0 && (v[0] == '\'' || v[0] == '"') {
-			if n := strings.IndexByte(v[1:], v[0]); n >= 0 {
-				v = v[1 : 1+n]
-			}
-		} else {
-			for i := 1; i < len(v); i++ {
-				if v[i] == '#' && (v[i-1] == ' ' || v[i-1] == '\t') {
-					v = strings.TrimSpace(v[:i])
-					break
-				}
-			}
-		}
-		names = append(names, v)
-	}
-	return nil
-}
 func nativeTree(e *Engine, base string) (map[string]nativeEntry, error) {
-	out, err := e.gitOutput("--no-replace-objects", "ls-tree", "-r", "-z", base, "--", ".claude/agents")
+	out, err := e.gitOutput("--no-replace-objects", "ls-tree", "-r", "-l", "-z", base, "--", ".claude/agents")
 	if err != nil {
 		return nil, err
 	}
@@ -89,10 +69,17 @@ func nativeTree(e *Engine, base string) (map[string]nativeEntry, error) {
 		}
 		meta, path, ok := strings.Cut(row, "\t")
 		f := strings.Fields(meta)
-		if !ok || len(f) != 3 {
+		if !ok || len(f) != 4 {
 			return nil, fmt.Errorf("invalid git tree entry")
 		}
-		entries[path] = nativeEntry{f[0], f[2]}
+		size := int64(0)
+		if f[3] != "-" {
+			size, err = strconv.ParseInt(f[3], 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid git tree entry size")
+			}
+		}
+		entries[path] = nativeEntry{f[0], f[2], size}
 	}
 	return entries, nil
 }
@@ -167,17 +154,17 @@ func NativeTreeDiff(worktree string, manifest *NativeManifest) ([]NativeDifferen
 				diff[rel] = "is not in the base commit"
 				return nil
 			}
+			if info.Size() != entry.Size {
+				diff[rel] = "differs from the base commit"
+				return nil
+			}
 			data, er := os.ReadFile(path)
 			if er != nil {
 				diff[rel] = "unreadable"
 				return nil
 			}
 			if nativeHash(data) != entry.SHA256 {
-				reason := "differs from the base commit"
-				if nativeHash(nativeLF(data)) == entry.LFSHA256 {
-					reason += " only in line endings (CR)"
-				}
-				diff[rel] = reason
+				diff[rel] = "differs from the base commit"
 			}
 			return nil
 		})
@@ -302,6 +289,9 @@ func ResolveNativeDefinitionAt(worktree, base string, chair Chair, portable bool
 		if entry.mode != "100644" && entry.mode != "100755" {
 			return chair, fmt.Errorf("%s: not a regular file", nativePath(p))
 		}
+		if entry.size > nativeSizeLimit {
+			return chair, fmt.Errorf("%s at %s: exceeds 256 KiB", nativePath(p), base)
+		}
 		data, err := nativeBlob(&e, entry.oid)
 		if err != nil {
 			return chair, err
@@ -309,28 +299,29 @@ func ResolveNativeDefinitionAt(worktree, base string, chair Chair, portable bool
 		if !nativeBlobMatches(data, entry.oid) {
 			return chair, fmt.Errorf("%s at %s: content does not match its object ID", nativePath(p), base)
 		}
-		manifest.Entries = append(manifest.Entries, NativeManifestEntry{Path: []byte(p), Mode: entry.mode, SHA256: nativeHash(data), LFSHA256: nativeHash(nativeLF(data))})
+		manifest.Entries = append(manifest.Entries, NativeManifestEntry{Path: []byte(p), Size: int64(len(data)), SHA256: nativeHash(data)})
 		if p == path || !strings.HasSuffix(p, ".md") {
 			continue
 		}
-		for _, n := range nativeNames(data, false) {
-			if n == chair.NativeAgent {
-				matches = append(matches, p)
-				break
-			}
+		name, err := nativeName(p, data)
+		if err != nil {
+			return chair, err
+		}
+		if name == chair.NativeAgent {
+			matches = append(matches, p)
 		}
 	}
 	sort.Strings(matches)
 	check := func(p string, data []byte) error {
-		names := nativeNames(data, true)
-		if len(names) != 1 || names[0] != chair.NativeAgent {
-			if len(names) == 0 {
-				return fmt.Errorf("%s declares no name, not %q; Claude Code finds an agent by its front-matter name", nativePath(p), chair.NativeAgent)
-			}
-			if len(names) == 1 {
-				return fmt.Errorf("%s declares name %q, not %q; Claude Code finds an agent by its front-matter name", nativePath(p), names[0], chair.NativeAgent)
-			}
-			return fmt.Errorf("%s declares names %q, not one name %q; Claude Code finds an agent by its front-matter name", nativePath(p), names, chair.NativeAgent)
+		name, err := nativeName(p, data)
+		if err != nil {
+			return err
+		}
+		if name == "" {
+			return fmt.Errorf("%s declares no name, not %q; Claude Code finds an agent by its front-matter name", nativePath(p), chair.NativeAgent)
+		}
+		if name != chair.NativeAgent {
+			return fmt.Errorf("%s declares name %q, not %q; Claude Code finds an agent by its front-matter name", nativePath(p), name, chair.NativeAgent)
 		}
 		return nil
 	}
@@ -345,9 +336,6 @@ func ResolveNativeDefinitionAt(worktree, base string, chair Chair, portable bool
 				}
 			}
 			return chair, fmt.Errorf("%s at %s: %s", path, base, reason)
-		}
-		if len(blob.text) > 256*1024 {
-			return chair, fmt.Errorf("%s at %s: exceeds 256 KiB", path, base)
 		}
 		if err := check(path, []byte(blob.text)); err != nil {
 			return chair, err
@@ -374,6 +362,9 @@ func ResolveNativeDefinitionAt(worktree, base string, chair Chair, portable bool
 		info, err := os.Stat(userPath)
 		if err != nil || !info.Mode().IsRegular() {
 			return chair, fmt.Errorf("native agent definition missing at %s in base commit %s and %s", nativePath(path), base, nativePath(userPath))
+		}
+		if info.Size() > nativeSizeLimit {
+			return chair, fmt.Errorf("%s: exceeds 256 KiB", nativePath(userPath))
 		}
 		data, err := os.ReadFile(userPath)
 		if err != nil {

@@ -7,11 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -572,9 +575,15 @@ func TestAStandingRecordWithoutAManifestIsRefusedByReseatAndPlay(t *testing.T) {
 	s.Chairs[0].Binding.Definition = "repository"
 	s.Chairs[0].Binding.DefinitionBase = "base"
 	savePlayStanding(t, s)
-	for _, call := range []func() error{func() error { return reseatCommand([]string{s.Session, s.Chairs[0].Address}) }, func() error { return playCommand([]string{s.Session}) }} {
-		if err := call(); err == nil || !strings.Contains(err.Error(), "rehearse again") {
+	var count atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { count.Add(1) }))
+	defer srv.Close()
+	for _, call := range []func() error{func() error { return reseatCommand([]string{s.Session, s.Chairs[0].Address, "-cao", srv.URL}) }, func() error { return playCommand([]string{s.Session, "-cao", srv.URL}) }} {
+		if err := call(); err == nil || !strings.Contains(err.Error(), "rehearse again") || !strings.Contains(err.Error(), "no pinned agent definitions") {
 			t.Fatalf("%v", err)
+		}
+		if count.Load() != 0 {
+			t.Fatalf("received %d requests", count.Load())
 		}
 	}
 }
@@ -603,5 +612,36 @@ func TestADefinitionErrorInACandidateRoundDeletesBlockedSessions(t *testing.T) {
 	defer f.mu.Unlock()
 	if !slices.Contains(f.deleted, "seat-0") {
 		t.Fatalf("deleted %v, launches %v", f.deleted, f.launches)
+	}
+}
+
+func TestReseatingANativeChairRefusesAnUnsafeProfileBeforeInstalling(t *testing.T) {
+	var requests atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1) }))
+	defer srv.Close()
+	m := ensemble.Member{Chair: loop.Chair{NativeAgent: "demo", Definition: "repository", DefinitionBase: "base", Manifest: &loop.NativeManifest{}}}
+	_, err := prepareMember(context.Background(), cao.NewClient(srv.URL), loop.DefaultPolicy(), loop.BuiltInAgents(), "claude_code:x/../y", m)
+	if err == nil || !strings.Contains(err.Error(), "[A-Za-z0-9_-]") || requests.Load() != 0 {
+		t.Fatalf("error %v, requests %d", err, requests.Load())
+	}
+}
+
+func TestAStandingRecordWhoseManifestHasNoSizesIsRefusedByReseatAndPlay(t *testing.T) {
+	s := playStanding(t)
+	s.Chairs[0].Binding.NativeAgent = "demo"
+	s.Chairs[0].Binding.Definition = "repository"
+	s.Chairs[0].Binding.DefinitionBase = "base"
+	s.Chairs[0].Binding.Manifest = &loop.NativeManifest{Entries: []loop.NativeManifestEntry{{Path: []byte("demo.md"), SHA256: "hash"}}}
+	savePlayStanding(t, s)
+	var count atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { count.Add(1) }))
+	defer srv.Close()
+	for _, call := range []func() error{func() error { return reseatCommand([]string{s.Session, s.Chairs[0].Address, "-cao", srv.URL}) }, func() error { return playCommand([]string{s.Session, "-cao", srv.URL}) }} {
+		if err := call(); err == nil || !strings.Contains(err.Error(), "rehearse again") || !strings.Contains(err.Error(), "no pinned agent definitions") {
+			t.Fatalf("%v", err)
+		}
+		if count.Load() != 0 {
+			t.Fatalf("received %d requests", count.Load())
+		}
 	}
 }

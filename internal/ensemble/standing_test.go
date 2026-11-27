@@ -151,7 +151,7 @@ func TestMissingOccupantsNamesEveryChairCAOReports404For(t *testing.T) {
 }
 
 func TestStandingManifestRoundTripsWithoutMutatingItsCaller(t *testing.T) {
-	for _, manifest := range []*loop.NativeManifest{{Entries: []loop.NativeManifestEntry{}}, {Entries: []loop.NativeManifestEntry{{Path: []byte{0xff, 'x'}, Mode: "100644", SHA256: "hash", LFSHA256: "lf"}}}} {
+	for _, manifest := range []*loop.NativeManifest{{Entries: []loop.NativeManifestEntry{}}, {Entries: []loop.NativeManifestEntry{{Path: []byte{0xff, 'x'}, Size: 42, SHA256: "hash"}}}} {
 		dir := t.TempDir()
 		s := Standing{Session: "test", Chairs: []StandingChair{{Binding: loop.Chair{NativeAgent: "demo", Manifest: manifest}}}}
 		if err := s.Save(dir); err != nil {
@@ -174,5 +174,21 @@ func TestChairJSONOmitsItsNativeManifest(t *testing.T) {
 	}
 	if strings.Contains(string(data), "manifest") || strings.Contains(string(data), "secret") {
 		t.Fatalf("%s", data)
+	}
+}
+
+func TestOnlyAStandingManifestWithoutSizesCountsAsUnpinned(t *testing.T) {
+	for _, tc := range []struct {
+		manifest *loop.NativeManifest
+		unpinned bool
+	}{
+		{&loop.NativeManifest{Entries: []loop.NativeManifestEntry{{SHA256: "hash"}}}, true},
+		{&loop.NativeManifest{}, false}, {&loop.NativeManifest{Entries: []loop.NativeManifestEntry{{Size: 1, SHA256: "hash"}}}, false},
+		{&loop.NativeManifest{Entries: []loop.NativeManifestEntry{{SHA256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}}, false},
+	} {
+		s := Standing{Chairs: []StandingChair{{Address: "seat", Binding: loop.Chair{NativeAgent: "demo", Manifest: tc.manifest}}}}
+		if (len(s.Unpinned()) > 0) != tc.unpinned {
+			t.Fatalf("%+v: %v", tc, s.Unpinned())
+		}
 	}
 }
