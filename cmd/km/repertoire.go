@@ -23,12 +23,18 @@ type repertoireEnsemble struct {
 	Reason      string `json:"reason,omitempty"`
 	Description string `json:"description,omitempty"`
 }
+type borrowedPart struct {
+	Part        string `json:"part"`
+	From        string `json:"from"`
+	FrontMatter string `json:"front_matter,omitempty"`
+}
 type repertoireScore struct {
-	Name        string   `json:"name"`
-	Source      string   `json:"source"`
-	Steps       []string `json:"steps"`
-	Description string   `json:"description,omitempty"`
-	Error       string   `json:"error,omitempty"`
+	Borrowed    []borrowedPart `json:"borrowed,omitempty"`
+	Name        string         `json:"name"`
+	Source      string         `json:"source"`
+	Steps       []string       `json:"steps"`
+	Description string         `json:"description,omitempty"`
+	Error       string         `json:"error,omitempty"`
 }
 
 func repertoireCommand(args []string, out, stderr io.Writer) error {
@@ -93,7 +99,15 @@ func repertoireCommand(args []string, out, stderr io.Writer) error {
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", s.Name, s.Source, value(strings.Join(s.Steps, ", ")), value(description))
 	}
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	for _, score := range scores {
+		for _, b := range score.Borrowed {
+			fmt.Fprintf(out, "borrowed  %s  %s  from %s\n", plain(score.Name), plain(b.Part), plain(b.From))
+		}
+	}
+	return nil
 }
 
 func repertoireScores(entries []loop.ScoreEntry) ([]repertoireScore, map[string]loop.ScoreEntry) {
@@ -103,6 +117,11 @@ func repertoireScores(entries []loop.ScoreEntry) ([]repertoireScore, map[string]
 		row := repertoireScore{Name: entry.Name, Source: entry.Source, Steps: []string{}, Description: entry.Score.Description}
 		if entry.Err != nil {
 			row.Error = entry.Err.Error()
+		}
+		for _, part := range entry.Score.Parts {
+			if part.From != "" {
+				row.Borrowed = append(row.Borrowed, borrowedPart{Part: part.Name, From: part.From})
+			}
 		}
 		for _, step := range entry.Score.Steps {
 			row.Steps = append(row.Steps, step.Name)

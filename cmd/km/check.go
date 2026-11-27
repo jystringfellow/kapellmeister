@@ -15,13 +15,14 @@ import (
 )
 
 type checkResult struct {
-	Schema int      `json:"schema"`
-	Kind   string   `json:"kind"`
-	Name   string   `json:"name"`
-	OK     bool     `json:"ok"`
-	Ready  *bool    `json:"ready,omitempty"`
-	Reason string   `json:"reason"`
-	Errors []string `json:"errors"`
+	Borrowed []borrowedPart `json:"borrowed,omitempty"`
+	Schema   int            `json:"schema"`
+	Kind     string         `json:"kind"`
+	Name     string         `json:"name"`
+	OK       bool           `json:"ok"`
+	Ready    *bool          `json:"ready,omitempty"`
+	Reason   string         `json:"reason"`
+	Errors   []string       `json:"errors"`
 }
 
 func checkCommand(kind string, args []string, in io.Reader, out, stderr io.Writer, labelOverride string) error {
@@ -80,10 +81,19 @@ func checkCommand(kind string, args []string, in io.Reader, out, stderr io.Write
 		for _, e := range result.Errors {
 			fmt.Fprintln(out, plain(e))
 		}
-	} else if result.Reason != "" {
-		fmt.Fprintf(out, "ok, not ready: %s\n", plain(result.Reason))
 	} else {
-		fmt.Fprintln(out, "ok")
+		for _, b := range result.Borrowed {
+			fmt.Fprintf(out, "part %s  from %s", plain(b.Part), plain(b.From))
+			if b.FrontMatter != "" {
+				fmt.Fprintf(out, "  %s", b.FrontMatter)
+			}
+			fmt.Fprintln(out)
+		}
+		if result.Reason != "" {
+			fmt.Fprintf(out, "ok, not ready: %s\n", plain(result.Reason))
+		} else {
+			fmt.Fprintln(out, "ok")
+		}
 	}
 	if !result.OK {
 		return &exitStatusError{code: 1}
@@ -104,7 +114,12 @@ func checkContent(result *checkResult, label, content, worktree string, stderr i
 		}
 	}
 	if result.Kind == "score" {
-		_, n, err := loop.CheckScore(result.Name, label, content, source)
+		loaded, n, err := loop.CheckScore(result.Name, label, content, source)
+		for _, f := range loaded.Files {
+			if f.From != "" {
+				result.Borrowed = append(result.Borrowed, borrowedPart{Part: f.Name, From: f.From, FrontMatter: f.FrontMatter})
+			}
+		}
 		note(n)
 		if err != nil && !strings.HasPrefix(err.Error(), label+": ") {
 			return fmt.Errorf("%s: %w", label, err)

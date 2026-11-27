@@ -198,10 +198,37 @@ func addressedChairs(worktree, name string, chairs loop.Chairs, members []ensemb
 	return ensemble.ChairsFor(score, seated)
 }
 
-func printScoreFiles(w io.Writer, files []loop.ScoreFile) {
+func printScoreFiles(w io.Writer, files []loop.ScoreFile, chairs loop.Chairs) {
 	for _, file := range files {
 		if file.Source == "repository" {
-			fmt.Fprintf(w, "%s  %s  repository  %s  %.12s\n", file.Kind, file.Name, file.Path, file.SHA256)
+			if file.From == "" {
+				fmt.Fprintf(w, "%s  %s  repository  %s  %.12s\n", file.Kind, file.Name, file.Path, file.SHA256)
+				continue
+			}
+			fmt.Fprintf(w, "%s  %s  repository  from %s  %.12s", file.Kind, file.Name, plain(file.From), file.SHA256)
+			if file.FrontMatter != "" {
+				fmt.Fprintf(w, "  %s", file.FrontMatter)
+			}
+			occupants := chairs.Of(file.Name)
+			var matches []loop.Chair
+			for _, c := range occupants {
+				if c.SuppliesPart(file.From) {
+					matches = append(matches, c)
+				}
+			}
+			if len(matches) > 0 {
+				fmt.Fprintf(w, "  part text supplied by agent %s", plain(matches[0].NativeAgent))
+				var addresses []string
+				for _, c := range matches {
+					if c.Address != "" {
+						addresses = append(addresses, plain(c.Address))
+					}
+				}
+				if len(matches) < len(occupants) && len(addresses) > 0 {
+					fmt.Fprintf(w, " for %s", strings.Join(addresses, ", "))
+				}
+			}
+			fmt.Fprintln(w)
 		}
 	}
 }

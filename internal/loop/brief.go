@@ -36,15 +36,34 @@ func (e *Engine) brief(spec ScoreStep, h handoff, path string, chair Chair) stri
 		return testPrompt(cfg.Task, h.path(0), h.path(1), h.path(2), cfg.VerifyCommand, h.verify, h.verifyPath, cfg.ScratchDir, path, e.chairTimeout(chair), os.Getpid(), lessons, cfg.CAOURL, cfg.StateDir, e.measurements) + FocusBlock(chair.Focus)
 	}
 	part, _ := e.playingScore().Part(spec.Part)
-	instructions := strings.NewReplacer("{reply}", path, "{inputs}", strings.Join(h.files, ", "), "{plan}", h.path(0), "{verify}", h.verifyPath, "{verification}", strings.TrimRight(verifyLine(cfg.VerifyCommand, h.verify, h.verifyPath), "\n"), "{check}", cfg.CheckCommand, "{scratch}", cfg.ScratchDir).Replace(part.Prompt[spec.Name])
-	prompt := preamble(spec.Part) + taskBlock(cfg.Task) + lessons + instructions + "\n" + FocusBlock(chair.Focus)
+	instructions := part.Prompt[spec.Name]
+	if part.From == "" {
+		instructions = strings.NewReplacer("{reply}", path, "{inputs}", strings.Join(h.files, ", "), "{plan}", h.path(0), "{verify}", h.verifyPath, "{verification}", strings.TrimRight(verifyLine(cfg.VerifyCommand, h.verify, h.verifyPath), "\n"), "{check}", cfg.CheckCommand, "{scratch}", cfg.ScratchDir).Replace(instructions)
+	} else if chair.SuppliesPart(part.From) {
+		instructions = ""
+	}
+	prompt := preamble(spec.Part) + taskBlock(cfg.Task) + lessons
+	if instructions != "" || part.From == "" {
+		prompt += instructions + "\n"
+	}
+	prompt += FocusBlock(chair.Focus)
 	prompt += inputNotes(h)
+	if part.From != "" && (cfg.VerifyCommand == "" || h.verifyPath != "") {
+		prompt += verifyLine(cfg.VerifyCommand, h.verify, h.verifyPath)
+	}
 	if spec.Kind == KindTest {
 		prompt += "Everything you create stays under " + cfg.ScratchDir + ".\n"
 	}
-	prompt += "Write your reply to " + path + ".\n"
+	prompt += replyLine(path)
+	if part.From != "" && (spec.Kind != KindProduce || spec.Writes == "reply") {
+		if spec.Kind == KindTest {
+			prompt += "Do not modify any file other than " + path + ", apart from what you create under " + cfg.ScratchDir + ".\n"
+		} else {
+			prompt += "Do not modify any file other than " + path + ".\n"
+		}
+	}
 	if spec.Kind != KindProduce {
-		prompt += "Put APPROVE or CHANGES alone on the last line of the reply file.\n"
+		prompt += verdictLine()
 	}
 	return prompt
 }
@@ -80,4 +99,9 @@ func inputNotes(h handoff) string {
 		out += "These chairs failed to finish their reply: " + strings.Join(failed, ", ") + ". Their reply files are missing.\n"
 	}
 	return out
+}
+
+func replyLine(path string) string { return "Write your reply to " + path + ".\n" }
+func verdictLine() string {
+	return "Put APPROVE or CHANGES alone on the last line of the reply file.\n"
 }

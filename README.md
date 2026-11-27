@@ -177,7 +177,7 @@ km mcp                                                  # serve run tools over M
 km preflight -worktree DIR [-agents NAME,...] [-tier large]  # check the available agents
 km config [-worktree DIR] [-cao URL]              # show the effective settings and their files
 km profiles install [-cao URL] [-replace] [AGENT ...]  # install base chair profiles
-km score show NAME                               # print default as TOML, or review with its part texts
+km score show [-worktree DIR] NAME               # print a score and built-in part texts
 km version                                       # print the version
 ```
 
@@ -1099,7 +1099,7 @@ built-in score, role flags outside the score are refused and unused roles from c
 The only score keys are `description`, `rounds`, `[parts.NAME]` and `[[steps]]`.
 The optional `description` is nonempty text of at most 512 bytes, shown by
 `km repertoire` and `km score show`; it does not change how a run plays. Part tables accept `memory`
-(`fresh`, the default, or `resume`), `resume_tokens`, `resume_steps` and `optional` (default false).
+(`fresh`, the default, or `resume`), `resume_tokens`, `resume_steps`, `optional` (default false), and `from`.
 A part with a review-kind step or a `chairs = "all"` step is always fresh and is refused if
 it declares resume. Optional parts may play only test steps or the background step.
 
@@ -1170,7 +1170,7 @@ checked like review steps. Background steps are not checked because other steps 
 worktree while they run. Baseline verify, verify after worktree-writing produce steps and strict
 after approval stay under the conductor's control. A decide step takes `changes` while verify is failing.
 
-A part file is plain Markdown, without front matter. With no step headings its text applies to
+A file in `parts/` is plain Markdown, without front matter. With no step headings its text applies to
 every step it plays. A part playing several steps can separate their instructions with exact
 `## step: NAME` headings; text above the first heading applies to every step. Headings must name
 steps the part plays, cannot repeat, and must leave nonempty instructions for each step.
@@ -1243,6 +1243,29 @@ A repository already supplies instruction files and commands. To refuse its scor
 set `[run] repository_scores = false` in your own config. This setting defaults to true and is
 refused in repository config. The refusal names the repository file; a user file that shadows
 it remains usable. No approval prompt is added inside the run.
+
+#### Borrow an existing prompt file
+
+A custom part can use a repository file with `from = ".claude/agents/reviewer.md"` in
+its `[parts.NAME]` table. Built-in part names are reserved. The path must be a clean relative
+repository path ending in `.md`, with no empty, `.` or `..` segments, backslashes, or `.git/`
+prefix. It must be a regular file in the base commit and at most 256 KiB. User scores can borrow
+repository files too; `[run] repository_scores = false` refuses them.
+
+A leading block between lines containing only `---` is ignored, and an unclosed block is refused.
+The opening line must be the file's first line and each delimiter exactly `---`; a delimiter
+with surrounding whitespace, or one after leading blank lines, is refused and named by line.
+The source line identifies ignored front matter and names `tools`, `disallowedTools` and `model`
+when present as top-level keys. The remaining text must be nonempty. It is quoted as written:
+placeholders are not substituted and `## step:` headings are not split. Every step receives the
+whole text followed by a fixed block with its input files, verification result when available,
+reply instructions and contract. When no verify output is available yet for the step, its line is
+omitted. The source line and run result record the path and SHA-256; the summary names a borrowed
+file changed by the run. `km score check`, `km score show` and `km repertoire` show the path.
+
+If a chair sets `native_agent = "NAME"` and borrows `.claude/agents/NAME.md`, Claude Code supplies
+the part text through the agent definition. The prompt keeps the fixed block and records that the
+agent supplied the text.
 
 ## Configuration
 
