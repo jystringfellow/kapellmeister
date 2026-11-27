@@ -21,6 +21,7 @@ func TestPreflightWithATierInstallsItsEffortVariantsAndWithoutOneSeatsTheBasePro
 	for _, tier := range []string{"", "medium"} {
 		t.Run("tier="+tier, func(t *testing.T) {
 			root, args, f := tuneEffortFixture(t)
+			f.listInstalled = true
 			srv := f.serve(t)
 			flags := []string{"-worktree", root, "-cao", srv.URL}
 			want := "km-claude"

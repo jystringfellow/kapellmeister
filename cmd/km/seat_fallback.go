@@ -79,7 +79,7 @@ func preflightSeats(ctx context.Context, client *cao.Client, wt string, s loop.S
 	remember := func(rs []loop.PreflightResult) {
 		for _, r := range rs {
 			cache[loop.ChairConfigKey(r.Chair)] = r
-			if !r.OK {
+			if !r.OK && !r.ProfileMissing {
 				blocked[r.Chair.Provider] = true
 			}
 		}

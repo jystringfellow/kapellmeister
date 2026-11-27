@@ -110,6 +110,20 @@ func (f *fallbackCAO) serve(t *testing.T) *httptest.Server {
 			return
 		}
 		defer resp.Body.Close()
+		if r.URL.Path == "/agents/profiles" && f.profileURL != "" && resp.StatusCode == http.StatusOK {
+			var profiles []cao.Profile
+			if json.NewDecoder(resp.Body).Decode(&profiles) == nil {
+				for _, name := range []string{"a", "b", "other", "blocked"} {
+					profiles = append(profiles, cao.Profile{Name: name, Loadable: true})
+				}
+				paths, _ := filepath.Glob(filepath.Join(os.Getenv("CAO_HOME_DIR"), "agent-store", "*.md"))
+				for _, path := range paths {
+					profiles = append(profiles, cao.Profile{Name: strings.TrimSuffix(filepath.Base(path), ".md"), Loadable: false})
+				}
+				json.NewEncoder(w).Encode(profiles)
+				return
+			}
+		}
 		w.WriteHeader(resp.StatusCode)
 		io.Copy(w, resp.Body)
 	}))

@@ -43,7 +43,7 @@ func TestPreflightWithTrustFolderOnRecordsCodexAndOffDoesNot(t *testing.T) {
 			codexHome := t.TempDir()
 			t.Setenv("CODEX_HOME", codexHome)
 			writeFile(t, loop.UserConfigPath(home), fmt.Sprintf("[agents]\navailable=['codex']\n[run]\ntrust_folder=%t\n", on))
-			srv := (&tuneCAO{mode: "timeout"}).serve(t)
+			srv := (&tuneCAO{mode: "timeout", profiles: []cao.Profile{{Name: "km-codex", Loadable: true}}}).serve(t)
 			out, _ := captureStdout(t, func() error {
 				return preflightCommand([]string{"-worktree", root, "-agents", "codex", "-cao", srv.URL, "-timeout", "1s"})
 			})
