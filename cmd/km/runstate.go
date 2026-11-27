@@ -12,6 +12,7 @@ import (
 )
 
 type runState struct {
+	ReplySource    string                   `json:"reply_source,omitempty"`
 	SeatsChanged   []ensemble.SeatChange    `json:"seats_changed,omitempty"`
 	ProvidersLost  []ensemble.ProvidersLost `json:"providers_lost,omitempty"`
 	EnsembleSource string                   `json:"ensemble_source,omitempty"`

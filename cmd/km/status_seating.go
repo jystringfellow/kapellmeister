@@ -65,7 +65,7 @@ func recordSeating(p ensembleRun, score loop.Score) *statusSeating {
 			}
 		}
 		seating.Sections[index].Chairs = append(seating.Sections[index].Chairs, statusChair{
-			Definition: member.Chair.Definition, NativeAgent: member.Chair.NativeAgent, ModelSource: nativeModelSource(member.Chair), Focus: member.Chair.Focus, Address: address, Name: name, Part: member.Part, Agent: agent, Provider: member.Chair.Provider, Model: chair.Model, Tier: firstNonEmpty(assignment.Tier, chair.Tier), Memory: memory, Terminal: p.Terminals[address],
+			Reply: member.Chair.Reply, Definition: member.Chair.Definition, NativeAgent: member.Chair.NativeAgent, ModelSource: nativeModelSource(member.Chair), Focus: member.Chair.Focus, Address: address, Name: name, Part: member.Part, Agent: agent, Provider: member.Chair.Provider, Model: chair.Model, Tier: firstNonEmpty(assignment.Tier, chair.Tier), Memory: memory, Terminal: p.Terminals[address],
 		})
 	}
 	return seating

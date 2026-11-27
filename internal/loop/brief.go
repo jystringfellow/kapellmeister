@@ -13,6 +13,9 @@ func FocusBlock(focus string) string {
 }
 
 func (e *Engine) brief(spec ScoreStep, h handoff, path string, chair Chair) string {
+	if chair.Reply == ReplyMessage {
+		path = finalMessage
+	}
 	cfg := e.Config
 	lessons := e.lessonsFor(spec.Name, chair)
 	switch spec.Brief {
@@ -36,15 +39,25 @@ func (e *Engine) brief(spec ScoreStep, h handoff, path string, chair Chair) stri
 		return testPrompt(cfg.Task, h.path(0), h.path(1), h.path(2), cfg.VerifyCommand, h.verify, h.verifyPath, cfg.ScratchDir, path, e.chairTimeout(chair), os.Getpid(), lessons, cfg.CAOURL, cfg.StateDir, e.measurements) + FocusBlock(chair.Focus)
 	}
 	part, _ := e.playingScore().Part(spec.Part)
-	instructions := strings.NewReplacer("{reply}", path, "{inputs}", strings.Join(h.files, ", "), "{plan}", h.path(0), "{verify}", h.verifyPath, "{verification}", strings.TrimRight(verifyLine(cfg.VerifyCommand, h.verify, h.verifyPath), "\n"), "{check}", cfg.CheckCommand, "{scratch}", cfg.ScratchDir).Replace(part.Prompt[spec.Name])
+	template := part.Prompt[spec.Name]
+	if chair.Reply == ReplyMessage && e.playingScore().Source == "built-in" {
+		template = strings.NewReplacer("Do not modify any file other than {reply}. When done, reply with one short sentence.", "Do not write or modify any file; your reply goes in {reply}.", "Write your review to {reply}", "Give your review in {reply}", "Write to {reply}", "Give in {reply}").Replace(template)
+	}
+	instructions := strings.NewReplacer("{reply}", path, "{inputs}", strings.Join(h.files, ", "), "{plan}", h.path(0), "{verify}", h.verifyPath, "{verification}", strings.TrimRight(verifyLine(cfg.VerifyCommand, h.verify, h.verifyPath), "\n"), "{check}", cfg.CheckCommand, "{scratch}", cfg.ScratchDir).Replace(template)
 	prompt := preamble(spec.Part) + taskBlock(cfg.Task) + lessons + instructions + "\n" + FocusBlock(chair.Focus)
 	prompt += inputNotes(h)
 	if spec.Kind == KindTest {
 		prompt += "Everything you create stays under " + cfg.ScratchDir + ".\n"
 	}
-	prompt += "Write your reply to " + path + ".\n"
+	if chair.Reply != ReplyMessage {
+		prompt += "Write your reply to " + path + ".\n"
+	}
 	if spec.Kind != KindProduce {
-		prompt += "Put APPROVE or CHANGES alone on the last line of the reply file.\n"
+		if chair.Reply == ReplyMessage {
+			prompt += "Put APPROVE or CHANGES alone on the last line before the closing km-end line.\n"
+		} else {
+			prompt += "Put APPROVE or CHANGES alone on the last line of the reply file.\n"
+		}
 	}
 	return prompt
 }
@@ -58,6 +71,9 @@ func (e *Engine) classifierChair() Chair {
 }
 
 func (e *Engine) classifyBrief(subject, path, out string) string {
+	if e.classifierChair().Reply == ReplyMessage {
+		out = finalMessage
+	}
 	score := e.playingScore()
 	part, ok := score.Part(score.Classifier)
 	if !ok || part.Prompt["classify"] == "" {

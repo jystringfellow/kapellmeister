@@ -74,7 +74,7 @@ func preflightSeats(ctx context.Context, client *cao.Client, wt string, s loop.S
 			cleanup()
 		}
 	}()
-	cache := map[[4]string]loop.PreflightResult{}
+	cache := map[[5]string]loop.PreflightResult{}
 	blocked := map[string]bool{}
 	remember := func(rs []loop.PreflightResult) {
 		for _, r := range rs {
@@ -104,7 +104,7 @@ func preflightSeats(ctx context.Context, client *cao.Client, wt string, s loop.S
 	for i, m := range members {
 		if r := failure(m); r != nil {
 			first, later := spec.Listed(m.Section, m.Name, s.Agents, s.Defined)
-			pending = append(pending, pendingSeat{index: i, later: slices.Clone(later), change: ensemble.SeatChange{Address: m.Address(spec.Name), BlockedAgent: first, BlockedProvider: m.Chair.Provider, Reason: r.Reason(), NativeAgent: m.Chair.NativeAgent}})
+			pending = append(pending, pendingSeat{index: i, later: slices.Clone(later), change: ensemble.SeatChange{Address: m.Address(spec.Name), BlockedAgent: first, BlockedProvider: m.Chair.Provider, Reason: r.Reason(), NativeAgent: m.Chair.NativeAgent, Reply: m.Chair.Reply}})
 		}
 	}
 	if !s.SeatFallback {

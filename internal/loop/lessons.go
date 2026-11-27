@@ -71,9 +71,13 @@ func ReadLessonsReply(path string) (string, error) {
 	return string(data), nil
 }
 
+func unprintableRune(r rune) bool {
+	return unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp)
+}
+
 func cleanText(text string) string {
 	text = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) {
+		if unprintableRune(r) {
 			return ' '
 		}
 		return r
@@ -191,8 +195,12 @@ func (e *Engine) proposeLessons(ctx context.Context, res Result) (lessons []Less
 		report.Reason = "lessons step skipped: no chair plays its part"
 		return
 	}
+	promptPath := path
+	if chairs[0].Reply == ReplyMessage {
+		promptPath = finalMessage
+	}
 	errs, guardErr := e.readOnlySteps(ctx, []Step{{Name: "lessons", Round: res.Rounds, Chair: chairs[0], ReplyPath: path, Timeout: limit, FreshTerminal: true,
-		Prompt: lessonsPartPrompt(e.playingScore().LessonsBy, e.Config.Task, res, e.lessonFiles(), path, e.seatedParts())}})
+		Prompt: lessonsPartPrompt(e.playingScore().LessonsBy, e.Config.Task, res, e.lessonFiles(), promptPath, e.seatedParts())}})
 	if guardErr != nil {
 		report.Reason = "lessons step failed: " + guardErr.Error()
 		if strings.Contains(guardErr.Error(), "modified the worktree") {

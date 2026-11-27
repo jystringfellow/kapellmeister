@@ -905,6 +905,29 @@ Only `km run` substitutes: `km preflight`, `km audition`, `km rehearse`, `km pla
 are unchanged. `[chairs]`, `[ensembles]` and role flags name one agent per chair and do not
 provide fallback lists.
 
+### Message replies
+
+A chair that cannot write a reply file can opt into `reply = "message"` in its
+ensemble file. Only `claude_code` is allowed until other providers are proven live.
+Message replies are allowed for review, decide, test, and produce steps that write
+only their reply; a chair that may change the worktree must use a file reply.
+
+For each step km asks the chair to put its whole reply between lines
+`km-begin <nonce>` and `km-end <nonce>` in its final message. Both lines must
+arrive: a missing or mismatched marker makes the whole reply fail as no reply,
+and a nudge asks for the complete bracketed message again. A file chair never
+falls back to its final message when its reply file is missing.
+
+The reply comes from the agent's screen: Markdown is rendered, lines may be
+re-wrapped, and leading indentation is dropped. A full-width rule of 20 or more
+`─` characters cuts off the closing marker and causes no reply. Brackets prove both
+ends arrived, not that the screen preserved everything between them. Records mark such a
+reply with `reply_source: "screen"`; the run summary also discloses it.
+
+Preflight asks the chair for a bracketed `ready` and blocks it unless that exact
+word is captured. With `preflight_timeout = "0s"`, or when using `play` or
+`reseat`, no capture proof runs.
+
 ## Scores and parts as files
 
 A score names steps and their exits; parts hold the instructions each chair follows. An ensemble

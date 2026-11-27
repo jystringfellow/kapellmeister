@@ -23,6 +23,7 @@ type statusStep struct {
 }
 
 type statusRun struct {
+	ReplySource    string                   `json:"reply_source,omitempty"`
 	SeatsChanged   []ensemble.SeatChange    `json:"seats_changed,omitempty"`
 	ProvidersLost  []ensemble.ProvidersLost `json:"providers_lost,omitempty"`
 	EnsembleSource string                   `json:"ensemble_source,omitempty"`
@@ -81,6 +82,7 @@ func statusAt(args []string, stdout, stderr io.Writer, now time.Time) error {
 			if state.Seating != nil {
 				run.Ensemble.Sections = state.Seating.Sections
 			}
+			run.ReplySource = state.ReplySource
 			run.SeatsChanged, run.ProvidersLost = state.SeatsChanged, state.ProvidersLost
 			run.Command, run.Round, run.MaxRounds = state.Command, state.Round, state.MaxRounds
 			run.EnsembleSource, run.Why = state.EnsembleSource, state.Why
@@ -199,6 +201,11 @@ func printStatus(stdout io.Writer, runs []statusRun, now time.Time) error {
 	for _, run := range runs {
 		for _, section := range run.Ensemble.Sections {
 			for _, chair := range section.Chairs {
+				if chair.Reply == loop.ReplyMessage {
+					if _, err := fmt.Fprintf(stdout, "chair %s: %s reply message\n", plain(run.RunID), plain(chair.Address)); err != nil {
+						return err
+					}
+				}
 				if chair.NativeAgent != "" {
 					if _, err := fmt.Fprintf(stdout, "native %s: %s native agent %s\n", plain(run.RunID), plain(chair.Address), plain(chair.NativeAgent)); err != nil {
 						return err

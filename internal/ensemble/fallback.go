@@ -12,6 +12,7 @@ type TriedAgent struct {
 	Reason string `json:"reason"`
 }
 type SeatChange struct {
+	Reply           string       `json:"reply,omitempty"`
 	NativeAgent     string       `json:"native_agent,omitempty"`
 	Address         string       `json:"address"`
 	BlockedAgent    string       `json:"blocked_agent"`
@@ -106,6 +107,9 @@ func SeatLines(changes []SeatChange, lost []ProvidersLost) []string {
 		line := fmt.Sprintf("%s: %s was BLOCKED (untrusted text from the agent's pane: %s); %s takes the seat", c.Address, c.BlockedAgent, c.Reason, c.SeatedAgent)
 		if c.NativeAgent != "" {
 			line += " (native agent " + c.NativeAgent + ")"
+		}
+		if c.Reply == "message" {
+			line += " reply message"
 		}
 		lines = append(lines, line)
 		lines = append(lines, c.Overlaps...)
