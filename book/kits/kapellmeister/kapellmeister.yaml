@@ -11,15 +11,15 @@ description: >-
 
 args:
   km:
-    default: "v0.0.1-rc.8"
+    default: "v0.0.1-rc.9"
     pattern: '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
     description: km release tag
   kmSha256Arm64:
-    default: "d2929e95568f78384d0a8d2fed0cc5ee3068ec4fa50e5e52506436ac59b09c25"
+    default: "1b38a080b786b33fe75ffa714884231cde15d1fbe388c807f411c3e9795a10cb"
     pattern: '^[0-9a-f]{64}$'
     description: SHA-256 of the release's linux_arm64 archive
   kmSha256Amd64:
-    default: "4d6b7bb00315ecc8f285838070de2d595251cd8e00b0a088b7384ef7320e2846"
+    default: "e47b2b6b8f491d3507b0868e521697782266a3a4f1792acd5bd14206eb2238c5"
     pattern: '^[0-9a-f]{64}$'
     description: SHA-256 of the release's linux_amd64 archive
   cao:
