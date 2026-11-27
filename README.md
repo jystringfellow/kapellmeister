@@ -674,7 +674,9 @@ Sizing and tier escalation are off: each occupant keeps its recorded provider, p
 Before planning, km refuses an ensemble with any chair that did not close its rehearsal briefing,
 naming those chairs, and then checks every occupant with CAO; if any is missing, it names the chairs and asks
 you to replace each occupant with `km reseat SESSION ADDRESS`, or take the session down and rehearse again. Records from an older km without bindings also
-need a new rehearsal. Verify, check, progress and run records work as with `km run -worktree`.
+need a new rehearsal. Before play starts, a native chair that would be reseated must still match its
+rehearsal definition; if it does not, take the session down and rehearse again. Verify, check,
+progress and run records work as with `km run -worktree`.
 
 The session and its record stay standing on success, failure and interrupt. Take it down with
 `km ensemble down SESSION`. If a step times out or is interrupted, CAO may leave its occupant
@@ -1313,8 +1315,9 @@ path ending in `.md`, with no empty, `.` or `..` segments, backslashes, or `.git
 prefix. It must be a regular file in the base commit and at most 256 KiB. User scores can borrow
 repository files too; `[run] repository_scores = false` refuses them. Paths resolve from the
 directory given as the worktree, like repository `.kapellmeister/` scores and parts: with
-`-worktree repo/sub`, `a.md` means `repo/sub/a.md`. Files with CRLF line endings or a byte
-order mark are refused; convert them to LF or remove the BOM.
+`-worktree repo/sub`, `a.md` means `repo/sub/a.md`. Files must be UTF-8 with LF endings and
+no BOM, control or invisible characters. Refusals name the line and fix; CRLF is reported together
+with any other problem, and UTF-16 and UTF-32 encodings are named with a conversion instruction.
 
 A leading block between lines containing only `---` is ignored, and an unclosed block is refused.
 The opening line must be the file's first line and each delimiter exactly `---`; a delimiter
@@ -1323,7 +1326,8 @@ The source line identifies ignored front matter and names `tools`, `disallowedTo
 when unindented, quoted or unquoted, with or without spaces before the colon. The remaining text
 must be nonempty. It is quoted as written:
 placeholders are not substituted and `## step:` headings are not split. Every step receives the
-whole text between begin and end lines naming the file, followed by a fixed block with its input
+whole text between begin and end lines naming the file. A body containing its `End of PATH.`
+line is refused with its line number, ignoring surrounding whitespace. A fixed block follows with its input
 files, verification result when available,
 reply instructions and contract; for a `reply = "message"` chair it asks for the bracketed final
 message and no file. When no verify output is available yet for the step, its line is

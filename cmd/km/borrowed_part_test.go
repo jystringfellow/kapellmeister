@@ -252,3 +252,29 @@ func TestBorrowedSourceLineNamesChairsWithDifferentPinnedDefinitions(t *testing.
 		}
 	}
 }
+
+func TestScoreCheckNamesTheScorePartPathLineAndFixForACRLFBorrowedFile(t *testing.T) {
+	_, _, _, wt := smallRepositoryScore(t)
+	scorePath := filepath.Join(loop.Home(), "scores/small.toml")
+	writeFile(t, scorePath, strings.Replace(repositorySmallScore, "rounds = 2", "rounds = 2\n[parts.drafter]\nfrom = \"agent.md\"", 1))
+	writeFile(t, filepath.Join(wt, "agent.md"), "one\ntwo\r\n")
+	for _, args := range [][]string{{"config", "core.autocrlf", "false"}, {"add", "-f", "agent.md"}, {"commit", "-qm", "borrowed"}} {
+		if out, err := exec.Command("git", append([]string{"-C", wt}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git: %s: %v", out, err)
+		}
+	}
+	var diag bytes.Buffer
+	code := 0
+	out, err := captureStdout(t, func() error {
+		code = execute([]string{"score", "check", "-worktree", wt, scorePath}, &diag)
+		return nil
+	})
+	if err != nil || code != 1 {
+		t.Fatalf("code %d: %v %s %s", code, err, out, diag.String())
+	}
+	for _, want := range []string{scorePath, "part drafter", "agent.md", "line 2", "has CRLF line endings; convert the file to LF"} {
+		if !strings.Contains(out+diag.String(), want) {
+			t.Errorf("missing %q: %s %s", want, out, diag.String())
+		}
+	}
+}

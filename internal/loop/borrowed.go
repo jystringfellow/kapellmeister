@@ -53,15 +53,8 @@ func (r scoreReader) borrowed(score, name, path string) (string, ScoreFile, erro
 	blob := r.engine.readTextBlob(fields[0], fields[2])
 	if blob.reason != "" {
 		reason := blob.reason
-		if reason == "control characters" || reason == "invisible or direction-changing characters" {
-			text, err := r.engine.gitOutput("cat-file", "blob", fields[2])
-			if err == nil {
-				if i := strings.Index(text, "\ufeff"); i >= 0 {
-					reason = fmt.Sprintf("line %d: has a byte order mark; remove the BOM", 1+strings.Count(text[:i], "\n"))
-				} else if i := strings.Index(text, "\r\n"); i >= 0 {
-					reason = fmt.Sprintf("line %d: has CRLF line endings; convert the file to LF", 1+strings.Count(text[:i], "\n"))
-				}
-			}
+		if blob.fault != faultNone {
+			reason = diagnoseText(blob.raw)
 		}
 		return fail("%s", reason)
 	}
@@ -69,6 +62,13 @@ func (r scoreReader) borrowed(score, name, path string) (string, ScoreFile, erro
 	body, note, err := stripBorrowedFrontMatter(blob.text)
 	if err != nil {
 		return fail("%v", err)
+	}
+	start := strings.LastIndex(blob.text, body)
+	line := 1 + strings.Count(blob.text[:start], "\n")
+	for i, text := range strings.Split(body, "\n") {
+		if strings.TrimSpace(text) == borrowedEndLine(path) {
+			return fail("line %d: is %q, the line that ends the quotation in a prompt; reword or remove it", line+i, borrowedEndLine(path))
+		}
 	}
 	file.FrontMatter = note
 	return body, file, nil
@@ -134,3 +134,5 @@ func stripBorrowedFrontMatter(text string) (string, string, error) {
 func inexactDelimiter(i int) error {
 	return fmt.Errorf("line %d: a front matter delimiter must be exactly --- on the first line", i+1)
 }
+
+func borrowedEndLine(path string) string { return "End of " + path + "." }

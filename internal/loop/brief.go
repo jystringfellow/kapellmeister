@@ -48,7 +48,7 @@ func (e *Engine) brief(spec ScoreStep, h handoff, path string, chair Chair) stri
 	} else if chair.SuppliesPart(part.From, part.FromSHA256) {
 		instructions = ""
 	} else {
-		instructions = "Instructions from " + part.From + " follow, quoted as written:\n" + instructions + "\nEnd of " + part.From + "."
+		instructions = "Instructions from " + part.From + " follow, quoted as written:\n" + instructions + "\n" + borrowedEndLine(part.From)
 	}
 	prompt := preamble(spec.Part) + taskBlock(cfg.Task) + lessons
 	if instructions != "" || part.From == "" {

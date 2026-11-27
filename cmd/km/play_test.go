@@ -582,3 +582,70 @@ func TestPlayAsksForLessonsInAFreshTerminalBesideTheStandingGateAndReleasesIt(t 
 	}
 	requirePlayStillStanding(t, s, fake, out)
 }
+
+func TestPlayRefusesBeforeAnyStepWhenAReseatedNativeChairsDefinitionHasChanged(t *testing.T) {
+	testPlayNativeDefinitionMove(t, true)
+}
+
+func TestPlayReseatsNativeChairsWhenHEADMovesWithoutChangingTheirDefinitions(t *testing.T) {
+	testPlayNativeDefinitionMove(t, false)
+}
+
+func testPlayNativeDefinitionMove(t *testing.T, changed bool) {
+	t.Helper()
+	s := playStanding(t)
+	git := func(args ...string) {
+		t.Helper()
+		out, err := exec.Command("git", append([]string{"-C", s.Worktree}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git: %s: %v", out, err)
+		}
+	}
+	path := ".claude/agents/critic.md"
+	writeFile(t, filepath.Join(s.Worktree, path), "---\nname: critic\n---\noriginal\n")
+	git("add", "-f", path)
+	git("commit", "-qm", "native")
+	for i := range s.Chairs {
+		if s.Chairs[i].Part == "reviewer" {
+			c := s.Chairs[i].Binding
+			c.Provider = "claude_code"
+			c.NativeAgent = "critic"
+			c.Model = ""
+			c.Tier = ""
+			var err error
+			c, err = loop.ResolveNativeDefinition(s.Worktree, c, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.Chairs[i].Binding = c
+		}
+	}
+	savePlayStanding(t, s)
+	if changed {
+		writeFile(t, filepath.Join(s.Worktree, path), "---\nname: critic\n---\nchanged\n")
+		git("add", "-f", path)
+	} else {
+		writeFile(t, filepath.Join(s.Worktree, "unrelated"), "change")
+		git("add", "unrelated")
+	}
+	git("commit", "-qm", "changed")
+	fake := &playCAO{}
+	out, err := capturePlay(t, []string{s.Session, "-cao", fake.serve(t).URL})
+	if !changed {
+		if err != nil || len(fake.launches) < 2 {
+			t.Fatalf("out %s: %v launches %d", out, err, len(fake.launches))
+		}
+		return
+	}
+	if err == nil {
+		t.Fatalf("out %s", out)
+	}
+	for _, want := range []string{s.Chairs[2].Address, path, "km ensemble down cao-standing", "rehearse again"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("missing %q: %v", want, err)
+		}
+	}
+	if len(fake.requests) != 0 || len(fake.launches) != 0 {
+		t.Errorf("steps %d launches %d", len(fake.requests), len(fake.launches))
+	}
+}
